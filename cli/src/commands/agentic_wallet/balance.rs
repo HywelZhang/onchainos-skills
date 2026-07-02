@@ -254,8 +254,7 @@ fn enrich_with_usd_value(data: &mut Value) {
 /// defaults to `Null` and is dropped from output, while an empty string (e.g. a
 /// native-token address) is kept. `serde_json` is built without `preserve_order`,
 /// so keys emit in deterministic alphabetical order. The contract-address field is
-/// emitted as `tokenAddress` and also accepts the raw endpoint key
-/// `tokenContractAddress` on input (alias).
+/// emitted as `tokenAddress`.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TokenBalanceResponse {
     #[serde(default, skip_serializing_if = "Value::is_null")]
@@ -264,12 +263,7 @@ struct TokenBalanceResponse {
     token_name: Value,
     #[serde(default, rename = "chainIndex", skip_serializing_if = "Value::is_null")]
     chain_index: Value,
-    #[serde(
-        default,
-        rename = "tokenAddress",
-        alias = "tokenContractAddress",
-        skip_serializing_if = "Value::is_null"
-    )]
+    #[serde(default, rename = "tokenAddress", skip_serializing_if = "Value::is_null")]
     token_address: Value,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     balance: Value,
@@ -1210,7 +1204,7 @@ mod tests {
             "symbol": "ETH",
             "tokenName": "Ethereum",
             "chainIndex": "1",
-            "tokenContractAddress": "",
+            "tokenAddress": "",
             "balance": "1.5",
             "rawBalance": "1500000000000000000",
             "decimal": "18",
@@ -1337,7 +1331,7 @@ mod tests {
         let mut data = Value::Array(vec![json!({
             "tokenAssets": [{
                 "symbol": "ETH",
-                "tokenContractAddress": "",   // native → empty string preserved (via alias)
+                "tokenAddress": "",           // native → empty string preserved
                 "usdValue": 4500.0,           // numeric → stays a JSON number
                 "balance": "1.5"
             }]

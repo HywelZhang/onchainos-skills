@@ -201,7 +201,7 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 > | `symbol` | String | Token symbol (e.g. `"ETH"`) |
 > | `tokenName` | String | Token full name (e.g. `"Ethereum"`) |
 > | `chainIndex` | String | Chain identifier (e.g. `"1"`) |
-> | `tokenContractAddress` | String | Token contract address; `""` for native tokens |
+> | `tokenAddress` | String | Token contract address; `""` for native tokens |
 > | `balance` | String | Balance in UI units |
 > | `rawBalance` | String | Balance in minimal units |
 > | `decimal` | String | Token decimals |

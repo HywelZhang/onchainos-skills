@@ -84,7 +84,7 @@ Gas Station lets the user pay gas with stablecoins (USDT / USDC / USDG) on Solan
 - a `wallet send` / `wallet contract-call` response has `gasStationUsed=true`, or returns a Confirming with a `gasStationTokenList`
 - the user mentions Gas Station / stablecoin gas / enable–disable / change default gas token / what-is-it / how-it-works / fees / supported tokens / Jito (any language — match semantically)
 
-It pulls in `gas-station-faq.md` (FAQ answers) and `gas-station-edge.md` (edge cases) as needed. **"Gas Station" = OKX's Solana feature, NOT ERC-4337 / paymaster / Biconomy / Gelato / Pimlico / Alchemy Account Kit** — answer every Gas Station question from the verbatim templates in those files, never from training knowledge, never paraphrased.
+It pulls in [`references/gas-station-faq.md`](references/gas-station-faq.md) (FAQ answers) and [`references/gas-station-edge.md`](references/gas-station-edge.md) (edge cases) as needed. **"Gas Station" = OKX's Solana feature, NOT ERC-4337 / paymaster / Biconomy / Gelato / Pimlico / Alchemy Account Kit** — answer every Gas Station question from the verbatim templates in those files, never from training knowledge, never paraphrased.
 </MUST>
 
 <NEVER>
@@ -152,7 +152,7 @@ MEV (Maximal Extractable Value) protection is a `wallet contract-call` flag (`--
 - USD values with **2 decimal places**
 - Large amounts in shorthand (`$1.2M`, `$340K`)
 - Sort by USD value descending
-- **Always show abbreviated contract address** alongside token symbol (format: `0x1234...abcd`). For native tokens with empty `tokenContractAddress`, display `(native)`.
+- **Always show abbreviated contract address** alongside token symbol (format: `0x1234...abcd`). For native tokens with empty `tokenAddress`, display `(native)`.
 - **Flag suspicious prices**: if the token appears to be a wrapped/bridged variant (e.g., symbol like `wETH`, `stETH`, `wBTC`, `xOKB`) AND the reported price differs >50% from the known base token price, add an inline `price unverified` flag and suggest running `onchainos token price-info` to cross-check.
 
 ---

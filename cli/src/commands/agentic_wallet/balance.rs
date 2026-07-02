@@ -247,28 +247,15 @@ fn enrich_with_usd_value(data: &mut Value) {
 
 /// The fixed 9-field whitelist emitted per token by `wallet balance`.
 ///
-/// Drop mechanism: serde silently ignores unknown input keys on deserialize, so
-/// round-tripping a raw token object through this struct strips the 12 dropped
-/// fields (`address`, `absSpendingPendingBalance`, `spendingPendingBalance`,
-/// `receivedPendingBalance`, `activeBuy`, `coinTypeNo`, `customName`,
-/// `customSymbol`, `multiplier`, `tokenType`, `imageUrl`, `priceChangeRate24H`).
-/// Every field is `serde_json::Value` (NOT String/f64) so numeric-form values
-/// round-trip unchanged with no string↔number coercion.
-///
-/// `skip_serializing_if = "Value::is_null"` + `#[serde(default)]`:
-///   - a key MISSING in the input → field defaults to `Value::Null` → dropped
-///     from output (so we never invent a `null` key the API did not send).
-///   - a key present as empty string (`""`, e.g. native-token contract address)
-///     → NOT null → PRESERVED.
-///
-/// `serde_json` is built without `preserve_order` in this crate, so the emitted
-/// object is BTreeMap-backed → keys come out in deterministic alphabetical order
-/// (the 9-key *set* is the contract; every spec `jq` shape uses `keys|sort`).
-///
-/// The contract-address field is `tokenContractAddress`: this is the key the OKX
-/// agentic balance endpoint emits (see `references/cli-reference.md` §B1 and the
-/// sibling `tokenAssets[]` consumers in `cross_chain.rs` / `security.rs`). Naming
-/// it anything else would make serde silently drop the address (data loss).
+/// Round-tripping a raw token through this struct drops every non-whitelisted key
+/// (serde ignores unknown input keys). Fields are `serde_json::Value` so
+/// numeric-form values round-trip with no string↔number coercion. With
+/// `#[serde(default)]` and `skip_serializing_if = "Value::is_null"` a missing key
+/// defaults to `Null` and is dropped from output, while an empty string (e.g. a
+/// native-token address) is kept. `serde_json` is built without `preserve_order`,
+/// so keys emit in deterministic alphabetical order. The contract-address field is
+/// emitted as `tokenAddress` and also accepts the raw endpoint key
+/// `tokenContractAddress` on input (alias).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TokenBalanceResponse {
     #[serde(default, skip_serializing_if = "Value::is_null")]
@@ -279,10 +266,11 @@ struct TokenBalanceResponse {
     chain_index: Value,
     #[serde(
         default,
-        rename = "tokenContractAddress",
+        rename = "tokenAddress",
+        alias = "tokenContractAddress",
         skip_serializing_if = "Value::is_null"
     )]
-    token_contract_address: Value,
+    token_address: Value,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     balance: Value,
     #[serde(default, rename = "rawBalance", skip_serializing_if = "Value::is_null")]
@@ -1194,7 +1182,7 @@ mod tests {
         "decimal",
         "rawBalance",
         "symbol",
-        "tokenContractAddress",
+        "tokenAddress",
         "tokenName",
         "tokenPrice",
         "usdValue",
@@ -1349,14 +1337,14 @@ mod tests {
         let mut data = Value::Array(vec![json!({
             "tokenAssets": [{
                 "symbol": "ETH",
-                "tokenContractAddress": "",   // native → empty string preserved
+                "tokenContractAddress": "",   // native → empty string preserved (via alias)
                 "usdValue": 4500.0,           // numeric → stays a JSON number
                 "balance": "1.5"
             }]
         })]);
         project_token_fields(&mut data);
         let token = &data[0]["tokenAssets"][0];
-        assert_eq!(token["tokenContractAddress"], json!(""));
+        assert_eq!(token["tokenAddress"], json!(""));
         assert!(token["usdValue"].is_number());
         assert_eq!(token["usdValue"].as_f64().unwrap(), 4500.0);
         // a missing key (tokenName here) must NOT be emitted as null

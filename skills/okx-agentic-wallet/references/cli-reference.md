@@ -192,6 +192,25 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 
 ---
 
+> **Token object shape (all scenarios).** Every token in `details[].tokenAssets[]`
+> (or `assets[]`, or `details.<accountId>.data[].tokenAssets[]` for `--all`)
+> contains **exactly these 9 fields**, in this order:
+>
+> | Field | Type | Description |
+> |---|---|---|
+> | `symbol` | String | Token symbol (e.g. `"ETH"`) |
+> | `tokenName` | String | Token full name (e.g. `"Ethereum"`) |
+> | `chainIndex` | String | Chain identifier (e.g. `"1"`) |
+> | `tokenContractAddress` | String | Token contract address; `""` for native tokens |
+> | `balance` | String | Balance in UI units |
+> | `rawBalance` | String | Balance in minimal units |
+> | `decimal` | String | Token decimals |
+> | `tokenPrice` | String | Token price in USD |
+> | `usdValue` | String\|Number | Token value in USD (representation preserved as returned) |
+>
+> No other per-token fields are emitted (previously ~21). Group-level fields
+> (`accountId`, `totalValueUsd`, …) are unchanged.
+
 **Scenario 1: No flags — active account balance (default)**
 
 Returns the active account's EVM/SOL addresses, all-chain token list, and total USD value.
@@ -204,7 +223,7 @@ Returns the active account's EVM/SOL addresses, all-chain token list, and total 
 | `evmAddress` | String | EVM address for this account |
 | `solAddress` | String | Solana address for this account |
 | `accountCount` | Number | Total number of wallet accounts |
-| `details` | Array | Token balance groups from the API, enriched with `usdValue` |
+| `details` | Array | Token balance groups; each `tokenAssets[]` token trimmed to the 9-field shape above |
 
 ---
 
@@ -218,7 +237,7 @@ Returns `totalValueUsd` plus a `details` map of per-account balance cache entrie
 | `details` | Object | Map of `accountId` → balance cache entry |
 | `details.<accountId>.totalValueUsd` | String | Per-account total USD value |
 | `details.<accountId>.updatedAt` | Number | Unix timestamp of last cache update |
-| `details.<accountId>.data` | Array | Raw token balance data for this account |
+| `details.<accountId>.data` | Array | Token balance groups for this account; each `tokenAssets[]` token trimmed to the 9-field shape above (also stored trimmed in the 60s cache) |
 
 ---
 
@@ -229,14 +248,8 @@ Returns token balances for the active account on the specified chain.
 | Field | Type | Description |
 |---|---|---|
 | `totalValueUsd` | String | Total USD value on that chain |
-| `details` | Array | Token balance groups from the API, enriched with `usdValue` |
-| `details[].tokenAssets[]` | Array | Tokens on this chain |
-| `details[].tokenAssets[].chainIndex` | String | Chain identifier |
-| `details[].tokenAssets[].symbol` | String | Token symbol (e.g., `"ETH"`) |
-| `details[].tokenAssets[].balance` | String | Token balance in UI units |
-| `details[].tokenAssets[].usdValue` | String | Token value in USD |
-| `details[].tokenAssets[].tokenContractAddress` | String | Contract address (empty for native) |
-| `details[].tokenAssets[].tokenPrice` | String | Token price in USD |
+| `details` | Array | Token balance groups; each `tokenAssets[]` token trimmed to the 9-field shape above |
+| `details[].tokenAssets[]` | Array | Tokens on this chain (9-field shape) |
 
 ---
 

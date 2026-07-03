@@ -47,10 +47,8 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 | Skill | When to Use |
 |-------|-------------|
 | `okx-wallet-portfolio` | Check wallet balance, token holdings, portfolio value |
-| `okx-dex-market` | Token prices, K-line charts, trade history |
+| `okx-dex` | Read-only on-chain DEX data: token prices/K-line/trade history, search tokens/trending rankings/holder analysis, crypto news/sentiment ranking/KOL/vibe chatter |
 | `okx-dex-swap` | Swap/trade/buy/sell tokens on-chain |
-| `okx-dex-token` | Search tokens, trending rankings, holder analysis |
-| `okx-dex-social` | Crypto news, sentiment ranking, KOL / vibe chatter |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
 | `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 
@@ -59,7 +57,7 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 Use OpenCode's native `skill` tool:
 
 ```
-use skill tool to load onchainos-skills/okx-dex-market
+use skill tool to load onchainos-skills/okx-dex
 ```
 
 ## Updating

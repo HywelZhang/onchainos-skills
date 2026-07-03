@@ -2,7 +2,7 @@
 
 Detailed parameter tables, return field schemas, and usage examples for all 4 portfolio commands.
 
-> PnL / DEX-history / per-token-PnL queries are NOT part of this skill — they live under `onchainos market portfolio-*` and are owned by `okx-dex-market`.
+> PnL / DEX-history / per-token-PnL queries are NOT part of this skill — they live under `onchainos market portfolio-*` and are owned by `okx-dex`.
 
 ## 1. onchainos portfolio chains
 

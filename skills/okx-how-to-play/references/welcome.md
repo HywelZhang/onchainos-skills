@@ -202,8 +202,7 @@ When a logged-out user replies `login` (or similar), route to **Login Method Cho
 
 Anything else (not a numbered pick, not `login`, not a hidden-pick keyword): answer in free zone, then route via the fallback table in `SKILL.md → Free-form fallback`. Notably:
 
-- Free-text **"smart money"** / whale tracking intent → route to `okx-dex-signal`.
-- Free-text **"new tokens"** / fresh on-chain launches intent → route to `okx-dex-trenches`.
+- Free-text **"smart money"** / whale tracking intent, or **"new tokens"** / fresh on-chain launches intent → route to `okx-dex`.
 
 These two descriptions are NOT in the numbered menu anymore, but the free-text fallback in `SKILL.md` still routes them correctly.
 

@@ -18,11 +18,7 @@ metadata:
 
 ## Skill Routing
 
-- For PnL analysis, win rate, DEX transaction history, realized/unrealized PnL → use `okx-dex-market`
-- For token prices / K-lines → use `okx-dex-market`
-- For token search / metadata → use `okx-dex-token`
-- For smart money / whale / KOL signals → use `okx-dex-signal`
-- For meme token scanning → use `okx-dex-trenches`
+- For PnL analysis / win rate / DEX transaction history, token prices / K-lines, token search / metadata, smart money / whale / KOL signals, or meme token scanning → use `okx-dex`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
 
@@ -51,7 +47,7 @@ The CLI accepts human-readable chain names and resolves them automatically (name
 - View all token holdings → `onchainos portfolio all-balances`
 - Check specific token balance → `onchainos portfolio token-balances`
 - Unsure which chains are supported for balance queries → `onchainos portfolio chains` first
-- PnL analysis, win rate, DEX transaction history → use `okx-dex-market` (`onchainos market portfolio-overview/portfolio-dex-history/portfolio-recent-pnl/portfolio-token-pnl`)
+- PnL analysis, win rate, DEX transaction history → use `okx-dex` (`onchainos market portfolio-overview/portfolio-dex-history/portfolio-recent-pnl/portfolio-token-pnl`)
 
 ### Step 2: Collect Parameters
 
@@ -74,8 +70,8 @@ After displaying results, suggest 2-3 relevant follow-up actions:
 
 | Just completed | Suggest |
 |---|---|
-| `portfolio total-value` | 1. View token-level breakdown → `onchainos portfolio all-balances` (this skill) 2. Check price trend for top holdings → `okx-dex-market` |
-| `portfolio all-balances` | 1. View detailed analytics for a token → `okx-dex-token` 2. Swap a token → `okx-dex-swap` 3. View PnL analysis → `okx-dex-market` (`onchainos market portfolio-overview`) |
+| `portfolio total-value` | 1. View token-level breakdown → `onchainos portfolio all-balances` (this skill) 2. Check price trend for top holdings → `okx-dex` |
+| `portfolio all-balances` | 1. View detailed analytics for a token → `okx-dex` 2. Swap a token → `okx-dex-swap` 3. View PnL analysis → `okx-dex` (`onchainos market portfolio-overview`) |
 | `portfolio token-balances` | 1. View full portfolio across all tokens → `onchainos portfolio all-balances` (this skill) 2. Swap this token → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the price chart for your top holding, or swap any of these tokens?" — never expose skill names or endpoint paths to the user.

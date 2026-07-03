@@ -37,7 +37,7 @@ Enable onchainos skills in OpenClaw via native skill discovery. Just clone, syml
 ls -la ~/.agents/skills/onchainos-skills
 ```
 
-You should see the skill directories: `okx-wallet-portfolio`, `okx-dex-market`, `okx-dex-swap`, `okx-dex-token`,
+You should see the skill directories: `okx-wallet-portfolio`, `okx-dex`, `okx-dex-swap`,
 `okx-onchain-gateway`, `okx-growth-competition`.
 
 ## Available Skills
@@ -45,10 +45,8 @@ You should see the skill directories: `okx-wallet-portfolio`, `okx-dex-market`, 
 | Skill                  | When to Use                                                          |
 |------------------------|----------------------------------------------------------------------|
 | `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value                      |
-| `okx-dex-market`       | Token prices, K-line charts, trade history                           |
+| `okx-dex`         | Read-only on-chain DEX data: token prices/K-line/trade history, token search/rankings/holder distribution, crypto news/sentiment ranking/vibe/KOL chatter |
 | `okx-dex-swap`         | Swap / trade / buy / sell tokens on-chain                            |
-| `okx-dex-token`        | Token search, rankings, holder distribution                          |
-| `okx-dex-social`       | Crypto news, sentiment ranking, vibe / KOL chatter                   |
 | `okx-onchain-gateway`  | Gas estimation, transaction simulation, broadcasting, order tracking |
 | `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 

@@ -55,11 +55,8 @@ You should see the Onchain OS skill set, including categories such as:
 - `okx-agentic-wallet`
 - `okx-wallet-portfolio`
 - `okx-security`
-- `okx-dex-market`
-- `okx-dex-signal`
+- `okx-dex`
 - `okx-dex-swap`
-- `okx-dex-token`
-- `okx-dex-social`
 - `okx-onchain-gateway`
 - `okx-defi`
 - `okx-growth-competition`

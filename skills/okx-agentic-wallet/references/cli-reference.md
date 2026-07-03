@@ -296,7 +296,7 @@ onchainos wallet balance --chain 1 --token-address "0x3883ec817f2a080cb035b0a383
 
 > Portfolio / balance commands (`portfolio chains`, `portfolio total-value`, `portfolio all-balances`, `portfolio token-balances`)
 > are handled by the **okx-wallet-portfolio** skill. See that skill's cli-reference for full documentation.
-> Wallet PnL / DEX-history commands live under `market portfolio-*` and are owned by **okx-dex-market**.
+> Wallet PnL / DEX-history commands live under `market portfolio-*` and are owned by **okx-dex**.
 
 ---
 

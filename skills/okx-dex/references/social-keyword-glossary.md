@@ -1,4 +1,4 @@
-# Keyword Glossary — okx-dex-social
+# Keyword Glossary — okx-dex (Social)
 
 | Chinese | English | Maps To |
 |---|---|---|
@@ -59,4 +59,4 @@ The `--time-frame` codes differ between endpoint groups — sentiment is short-w
 | `vibe-top-kols` `--sort-by` | `2` | mentions / 提及次数 |
 | `vibe-top-kols` `--sort-by` | `3` | impressions / 曝光量 |
 
-> **Symbol vs contract address**: news / sentiment commands take coin **symbols** (`BTC`, `ETH`). Vibe commands take a **contract address + chain** — if the user only gave a symbol, resolve to a contract address via `okx-dex-token` `onchainos token search` first; never guess the address.
+> **Symbol vs contract address**: news / sentiment commands take coin **symbols** (`BTC`, `ETH`). Vibe commands take a **contract address + chain** — if the user only gave a symbol, resolve to a contract address via the Token capability's `onchainos token search` first; never guess the address.

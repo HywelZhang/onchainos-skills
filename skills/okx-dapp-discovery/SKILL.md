@@ -29,7 +29,7 @@ The skill description gives the 5 firing patterns at a glance. Use this section 
 
 1. **Named DApp + action verb** — the DApp name beats every generic verb. Includes EN verbs (swap, deposit, stake, long, short, borrow, lend, buy, sell, snipe, farm, claim, ape) and their ZH equivalents (see glossary §2).
 2. **Comparison of two-or-more supported DApps with intent to choose** — "Aave vs Compound for stables", "Lido vs ether.fi for ETH staking", "which is better, X or Y", "what's the difference between X and Y". Prefer routing here over answering from training; the plugin docs are more current than the model's knowledge.
-3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `prediction market`, `place a bet on Polymarket` (ZH variants: glossary §4). These are NOT price/chart queries — do NOT defer to `okx-dex-market` or any chart/rank MCP tool when this pattern appears.
+3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `prediction market`, `place a bet on Polymarket` (ZH variants: glossary §4). These are NOT price/chart queries — do NOT defer to `okx-dex` or any chart/rank MCP tool when this pattern appears.
 4. **Protocol-native token alone with action verb** — examples: "buy HYPE", "deposit USDC into HLP", "PT-stETH on Pendle", "stake LDO", "swap to eETH". Full token list:
    - Hyperliquid: HYPE, HLP
    - PancakeSwap: CAKE, veCAKE, Syrup, IFO
@@ -51,14 +51,14 @@ The skill description gives the 5 firing patterns at a glance. Use this section 
 
 - **Conceptual / adversarial questions about a DApp** ("explain how X works", "is X safe / legit / a good investment", "what is X", "how does X compare to centralized exchanges") — let the model answer from general knowledge; do not invoke a plugin for an explainer.
 - **"Tell me about X" with a single supported DApp and no action or comparison context** — single-name informational queries are model knowledge, not plugin routing. (Comparison of two or more DApps DOES fire — see pattern 2.)
-- **pump.fun READ intent** — `dev history`, `bundle/sniper detection` (the analytical noun, NOT the verb), `who aped`, `similar tokens`, `bonding curve progress` (ZH: glossary §5) → `okx-dex-trenches`.
-- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY; ZH: glossary §2) → `okx-defi-invest` (yield) or `okx-dex-swap` (swap).
+- **pump.fun READ intent** — `dev history`, `bundle/sniper detection` (the analytical noun, NOT the verb), `who aped`, `similar tokens`, `bonding curve progress` (ZH: glossary §5) → `okx-dex`.
+- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY; ZH: glossary §2) → `okx-defi` (yield) or `okx-dex-swap` (swap).
 - **Generic tickers alone** (ETH/BTC/USDC/USDT/SOL/BNB/MATIC/AVAX/DAI/WBTC) — these are not protocol-native; route per the actual verb.
 - **Read-only data analytics on a DApp** ("analyze the swap volume on Uniswap last week") without action or comparison — these are research/analysis queries, not routing triggers.
 
 ### Not for
 
-Unnamed swap → `okx-dex-swap`. Generic yield discovery → `okx-defi-invest`. Price/chart/PnL → `okx-dex-market`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi-portfolio`. pump.fun read-only research → `okx-dex-trenches`.
+Unnamed swap → `okx-dex-swap`. Generic yield discovery → `okx-defi`. Price/chart/PnL, or pump.fun read-only research → `okx-dex`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi`.
 
 ---
 
@@ -242,7 +242,7 @@ Clanker, clanker.world, deploy on Clanker, Clanker token, $CLANKER, Base meme la
 **Keywords that raise confidence ≥ 75 (trade verbs — install `pump-fun-plugin`):**
 buy pump.fun token, sell pump.fun token, snipe pump.fun, ape pump.fun, pump.fun trading, pump.fun bot. (ZH: glossary §5.)
 
-**Do NOT install for (route to `okx-dex-trenches` instead — analytical/read-only):**
+**Do NOT install for (route to `okx-dex` instead — analytical/read-only):**
 scan new pump.fun launches, pump.fun dev history, who aped pump.fun, bundler analysis, bonding curve progress (analytical), similar tokens by dev. (ZH: glossary §5.)
 
 This is the load-bearing verb-split rule from the v3.1 description — the disambiguation must hold at body level too.
@@ -337,7 +337,7 @@ User-facing DApp names map to plugin-store IDs as follows. Use this table to set
 | Compound V3 | `compound-v3-plugin` | preserve V3; plain "Compound" silently defaults to V3 |
 | Pendle | `pendle-plugin` | |
 | Clanker | `clanker-plugin` | |
-| pump.fun (trade) | `pump-fun-plugin` | dot → hyphen; analysis verbs route to `okx-dex-trenches` |
+| pump.fun (trade) | `pump-fun-plugin` | dot → hyphen; analysis verbs route to `okx-dex` |
 | Lido | `lido-plugin` | |
 | GMX V2 | `gmx-v2-plugin` | preserve V2; plain "GMX" silently defaults to V2 |
 | ether.fi (Stake) | `etherfi-plugin` | drop the dot |
@@ -509,7 +509,7 @@ If the prompt contains **any** of:
 
 …then this skill wins regardless of any generic verb (swap / stake / lend / borrow / deposit / withdraw / LP / farm / mint / make liquidity / pool — ZH equivalents in glossary §2).
 
-**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-onchain-gateway`, or any other generic skill.
+**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi`, `okx-dex`, `okx-onchain-gateway`, or any other generic skill.
 
 **Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell`; ZH verbs in glossary §2) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — e.g. "on Lido", "on Curve" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
 
@@ -658,7 +658,7 @@ Reached only when the action verb is outside Top-5 coverage (e.g. a Solana DEX s
 > | Yield trading (PT/YT) | **Pendle** |
 > | Meme launchpad (trade) | **pump.fun**, **Clanker** |
 >
-> If your intent is more general — finding the best yield across protocols, rebalancing, or claiming rewards — `okx-defi-invest` (OKX-aggregated DeFi) is a better fit. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex-trenches`.
+> If your intent is more general — finding the best yield across protocols, rebalancing, or claiming rewards — `okx-defi` (OKX-aggregated DeFi) is a better fit. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex`.
 >
 > If you want to use a different DApp not listed above (e.g., a niche protocol that hasn't been added to the catalog yet), name it explicitly and I'll probe the broader plugin-store catalog via Step 1B.
 
@@ -731,8 +731,8 @@ Rules 1 and 2 above describe loading the plugin's SKILL.md and forwarding the us
 | User names a DApp in the Plugin Resolver Table → score ≥ 75 | Set `TARGET_PLUGIN` from the table; apply Rules 1–2 |
 | User mentions a DApp ambiguously (e.g. "perps", "lending on BNB") → score 50–74 | Apply Rule 4 — clarify before installing |
 | User compares 2+ DApps OR asks "what do you think / tell me about / which is better" without an action verb | Apply Rule 3b — clarify "set up X, set up Y, or discuss tradeoffs?" Do NOT install |
-| User names a DApp NOT in the resolver table | Apply Step 1B — GitHub Contents API probes whether `<dappName>-plugin` exists in the catalog (~0.1s). Install if it exists; else surface the catalog-probe failure to the user (closest siblings by inferred category + `okx-defi-invest` alternative + categorized supported list). Do NOT install `plugin-store` skill separately. |
-| pump.fun analysis / research / scan / dev-history / who-aped | Defer to `okx-dex-trenches` (do not invoke this skill) |
+| User names a DApp NOT in the resolver table | Apply Step 1B — GitHub Contents API probes whether `<dappName>-plugin` exists in the catalog (~0.1s). Install if it exists; else surface the catalog-probe failure to the user (closest siblings by inferred category + `okx-defi` alternative + categorized supported list). Do NOT install `plugin-store` skill separately. |
+| pump.fun analysis / research / scan / dev-history / who-aped | Defer to `okx-dex` (do not invoke this skill) |
 | pump.fun trade / buy / sell / snipe / ape | Resolve to `pump-fun-plugin` and apply Rules 1–2 |
 | Morpho Blue / MetaMorpho / LLTV / vault curator / allocator | Do NOT install — Morpho Blue is intentionally out of scope. Suggest `okx-defi` for generic yield. |
 | "What dapps are available?" / "Show me supported DApps" (ZH: glossary §9) | Apply Rule 5 — show the categorized supported-DApp table |

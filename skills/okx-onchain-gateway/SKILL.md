@@ -19,8 +19,7 @@ metadata:
 ## Skill Routing
 
 - For swap quote and execution → use `okx-dex-swap`
-- For market prices → use `okx-dex-market`
-- For token search → use `okx-dex-token`
+- For market prices or token search → use `okx-dex`
 - For wallet balances / portfolio → use `okx-wallet-portfolio`
 - For transaction broadcasting → use this skill (`okx-onchain-gateway`)
 
@@ -106,7 +105,7 @@ After displaying results, suggest 2-3 relevant follow-up actions:
 | `gateway gas-limit` | 1. Simulate the transaction → `onchainos gateway simulate` (this skill) 2. Proceed to broadcast → `onchainos gateway broadcast` (this skill) |
 | `gateway simulate` | 1. Broadcast the transaction → `onchainos gateway broadcast` (this skill) 2. Adjust and re-simulate if failed |
 | `gateway broadcast` | 1. Track order status → `onchainos gateway orders` (this skill) |
-| `gateway orders` | 1. View price of received token → `okx-dex-market` 2. Execute another swap → `okx-dex-swap` |
+| `gateway orders` | 1. View price of received token → `okx-dex` 2. Execute another swap → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Transaction broadcast! Would you like to track the order status?" — never expose skill names or endpoint paths to the user.
 

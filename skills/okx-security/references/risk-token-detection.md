@@ -317,7 +317,7 @@ Display:
 > User: "Is PEPE safe? If so, swap 1 ETH for it"
 
 ```
-1. (okx-dex-token) onchainos token search PEPE      -> find contract address
+1. (okx-dex) onchainos token search PEPE       -> find contract address
 2. Confirm which token with user
 3. onchainos security token-scan --tokens "<chainId>:<fromAddr>,<chainId>:<toAddr>"
        # If either token is native (e.g., ETH), omit it — scan only the non-native token

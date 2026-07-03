@@ -1,4 +1,4 @@
-# Keyword Glossary — okx-dex-token
+# Keyword Glossary — okx-dex (Token)
 
 Users may use Chinese crypto slang or platform-specific terms. Map them to the correct commands:
 

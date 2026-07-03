@@ -62,15 +62,10 @@ For script requests, append `--format json` to all CLI commands.
 | okx-agentic-wallet | Wallet auth, authenticated balance, send tokens, tx history, contract call | User wants to log in, check balance, send tokens, or view tx history |
 | okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings or token balances for a specific address |
 | okx-security | DApp/URL phishing detection, tx pre-execution scan, signature safety, approval management | User asks about DApp/URL safety, tx scan, signature safety, or token approvals |
-| okx-dex-market | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis |
-| okx-dex-signal | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying or wants signal alerts |
-| okx-dex-trenches | Meme/pump.fun token scanning, dev reputation, bundle detection | User asks about new meme launches, dev reputation, or bundle analysis |
-| okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants a WS script or real-time on-chain data stream |
+| okx-dex | Read-only on-chain DEX data: prices/charts/index/wallet PnL, smart money/KOL/whale tracking + buy signals + leaderboard, meme/pump.fun scanning + dev reputation + bundle detection (read-only), real-time WS monitoring/scripting, token search/metadata/rankings/liquidity/holders/top traders/cluster analysis, crypto news/sentiment/vibe | User asks for token prices, K-line data, wallet PnL, smart money/whale/KOL buying or signal alerts, new meme launches/dev reputation/bundle analysis, a WS script or real-time on-chain data stream, token rankings/holder info/cluster analysis, or news/sentiment/vibe score |
 | okx-dex-swap | DEX swap execution (market orders, immediate fill) | User wants to swap, trade, buy, or sell tokens at the current price |
 | okx-dex-bridge | Cross-chain bridging / transfer across Stargate, Across, Relay, Gas.zip | User wants to move tokens between chains, get cross-chain quotes, compare bridge fees, or check bridge status |
 | okx-dex-strategy | Limit-order strategy trading on Agentic Wallet TEE: create, cancel, list, resume | User wants to place a price-triggered limit order (buy dip, take profit, stop loss), manage pending orders, or recover orders suspended by TEE upgrades |
-| okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
-| okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
 | okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions overview | User wants to earn yield, stake, manage DeFi positions, or check DeFi positions across protocols |
@@ -159,7 +154,7 @@ Each session starts fresh. Workspace files are your memory — read them on star
 - **Transparency (mandatory):** Every response must cite its source. Before presenting results, always show:
   1. The **skill** or **workflow** that was invoked
   2. The exact **onchainos CLI command** that was executed
-  3. Example format: "Using **okx-dex-token** → `onchainos token search --query BONK`"
+  3. Example format: "Using **okx-dex** → `onchainos token search --query BONK`"
   4. If multiple commands were used, list each one
   This applies to **every** response — never present data without showing where it came from.
 - Use the **Output Template** from the matched workflow doc when running a workflow

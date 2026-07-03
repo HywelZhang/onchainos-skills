@@ -9,12 +9,8 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-agentic-wallet` | Wallet lifecycle: auth, balance, portfolio PnL, send, tx history, contract call |
 | `okx-wallet-portfolio` | Public address balance, token holdings, portfolio value |
 | `okx-security` | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management |
-| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis, address tracker activities |
-| `okx-dex-signal` | Smart money / whale / KOL signal tracking, leaderboard rankings |
-| `okx-dex-trenches` | Meme pump/trenches token scanning, dev reputation, bundle detection, aped wallets |
+| `okx-dex` | Read-only on-chain DEX data: real-time prices/K-line/index/wallet PnL, address tracker activities, smart money/whale/KOL signal tracking + leaderboard rankings, token search/metadata/market cap/rankings/liquidity/hot tokens/holder & cluster analysis/top traders/trade history, crypto news/sentiment/vibe/KOL leaderboard, meme pump/trenches scanning/dev reputation/bundle detection (read-only), and WS/script real-time streaming |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
-| `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
-| `okx-dex-social` | Crypto news (latest, by symbol, search, detail, source platforms), market-wide sentiment ranking + per-coin sentiment with trend, per-token vibe timeline + TOP50 KOL leaderboard |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
 | `okx-agent-payments-protocol` | Unified payment dispatcher across x402 (`exact` / `aggr_deferred` schemes — TEE or local-key sign), MPP (`charge` / `session` intents — open / voucher / topUp / close, transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes to per-scheme/intent references. |
 | `okx-defi` | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more, plus positions and holdings overview across protocols and chains |
@@ -87,21 +83,21 @@ Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchain
 
 The skills work together in typical DeFi flows:
 
-**Search and Buy**: `okx-dex-token` (find token) -> `okx-wallet-portfolio` (check funds) -> `okx-dex-swap` (execute trade)
+**Search and Buy**: `okx-dex` (find token) -> `okx-wallet-portfolio` (check funds) -> `okx-dex-swap` (execute trade)
 
-**Portfolio Overview**: `okx-wallet-portfolio` (holdings) -> `okx-dex-token` (enrich with analytics) -> `okx-dex-market` (price charts)
+**Portfolio Overview**: `okx-wallet-portfolio` (holdings) -> `okx-dex` (enrich with analytics + price charts)
 
-**Market Research**: `okx-dex-token` (trending/rankings) -> `okx-dex-market` (candles/history) -> `okx-dex-swap` (trade)
+**Market Research**: `okx-dex` (trending/rankings + candles/history) -> `okx-dex-swap` (trade)
 
 **Swap and Broadcast**: `okx-dex-swap` (get tx data) -> sign locally -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
 
 **Pre-flight Check**: `okx-onchain-gateway` (estimate gas) -> `okx-onchain-gateway` (simulate tx) -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
 
-**Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
+**Full Trading Flow**: `okx-dex` (search + price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
 
-**Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
+**Leaderboard → Research → Trade**: `okx-dex` (top traders by PnL/win rate + token analytics) -> `okx-dex-swap` (execute trade)
 
-**Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
+**Follow Smart Money**: `okx-dex` (KOL/smart money buys + token details/holder cluster + price chart) -> `okx-dex-swap` (trade)
 
 ## Workflows
 

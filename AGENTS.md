@@ -39,8 +39,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a signed tx, estimate gas fees, simulate a transaction before sending, or track a tx by hash |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred`), MPP (`charge` / `session`), and a2a-pay (paymentId). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / payment status |
 | okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
-| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols |
-| okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
+| okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions and holdings overview | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols — or check DeFi positions / view DeFi portfolio across protocols and chains |
 | okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
 | okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
 | okx-ai-guide | OKX.AI intro + runtime platform detection + route into identity registration (User / ASP / Evaluator) | User asks what/how about OKX.AI (是什么/能做什么/怎么用/怎么开始/求助/教程), types "OKX.AI 快速开始", or arrives from the welcome banner's "看看 OKX.AI 怎么玩" pick |
@@ -55,7 +54,7 @@ When the user names a specific third-party DApp/protocol as the destination of a
 
 Onchainos-skills intentionally does **not** enumerate which DApps are supported in this file or in `CLAUDE.md`. The supported set lives in `okx-dapp-discovery/SKILL.md` (currently Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer) and the per-DApp behavior lives in each installed plugin's own `SKILL.md`.
 
-**Quick tiebreaker vs `okx-defi-invest`**: if removing the DApp/protocol name from the request still leaves a coherent generic-yield question ("deposit USDC for yield", "find best APY"), prefer `okx-defi-invest` (OKX-aggregated DeFi). If the DApp name carries the intent ("place a bet on Polymarket", "use Hyperliquid for perps"), route via `okx-dapp-discovery`.
+**Quick tiebreaker vs `okx-defi`**: if removing the DApp/protocol name from the request still leaves a coherent generic-yield question ("deposit USDC for yield", "find best APY"), prefer `okx-defi` (OKX-aggregated DeFi). If the DApp name carries the intent ("place a bet on Polymarket", "use Hyperliquid for perps"), route via `okx-dapp-discovery`.
 
 ## Architecture
 

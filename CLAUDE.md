@@ -94,7 +94,7 @@ These envelope-based routes take absolute priority over the skill table below. D
 
 When the user names a third-party DApp/protocol as the destination of an action, route through `okx-dapp-discovery`. That skill applies a confidence framework to identify the matching plugin, installs it on demand, reads the plugin's `SKILL.md`, and forwards the user's original request to it. Onchainos-skills intentionally does not enumerate the supported DApp set here; that is owned by `okx-dapp-discovery/SKILL.md`.
 
-**Quick tiebreaker vs `okx-defi-invest`**: if removing the DApp name still leaves a coherent generic-yield question ("deposit USDC for yield"), prefer `okx-defi-invest`. If the DApp name carries the intent ("place a bet on Polymarket"), route via `okx-dapp-discovery`.
+**Quick tiebreaker vs `okx-defi`**: if removing the DApp name still leaves a coherent generic-yield question ("deposit USDC for yield"), prefer `okx-defi`. If the DApp name carries the intent ("place a bet on Polymarket"), route via `okx-dapp-discovery`.
 
 **Quick tiebreaker vs `okx-agent-payments-protocol`**: when the user mentions an **Agent ID or ASP ID** together with a service request, route by whether a **concrete endpoint URL** (`http(s)://…`) is present:
 - **URL present** (e.g. "使用 Agent 1506 的 A2MCP 服务，接口地址 https://…") → route to `okx-agent-payments-protocol` — this is a direct x402 pay-per-call, not a task.

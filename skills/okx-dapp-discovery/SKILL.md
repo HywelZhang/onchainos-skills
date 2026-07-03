@@ -99,7 +99,7 @@ When the user's message references a DApp directly or implicitly, score it again
 | $CLANKER, clanker.world | Clanker |
 | "X 5min" / "X 15min" / "X up or down" / "5min updown" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE; ZH variants in glossary §4) | Polymarket |
 
-**DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, or any other generic skill.
+**DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-dex-swap`, `okx-defi`, or any other generic skill.
 
 ### Top-5 cohort (used by Rule 5b fallback only)
 
@@ -198,7 +198,7 @@ Morpho, Morpho V1, Morpho Optimizer, Morpho AaveV3 Optimizer, Morpho AaveV2 Opti
 
 **Default-resolution rule:** plain "Morpho" → `morpho-plugin` (V1 Optimizer is the default).
 
-**Do not install for:** Morpho Blue, MetaMorpho, vault curator, LLTV, market id, allocator, or isolated lending market requests — these are Morpho Blue (intentionally out of scope). (`MetaMorpho` is the Morpho Blue ERC-4626 vault standard, not a V1 Optimizer concept — it does not belong to `morpho-plugin`'s scope.) Suggest `okx-defi-invest` for generic yield, or fall through to Rule 5.
+**Do not install for:** Morpho Blue, MetaMorpho, vault curator, LLTV, market id, allocator, or isolated lending market requests — these are Morpho Blue (intentionally out of scope). (`MetaMorpho` is the Morpho Blue ERC-4626 vault standard, not a V1 Optimizer concept — it does not belong to `morpho-plugin`'s scope.) Suggest `okx-defi` for generic yield, or fall through to Rule 5.
 
 ### Raydium → `raydium-plugin`
 
@@ -355,7 +355,7 @@ User-facing DApp names map to plugin-store IDs as follows. Use this table to set
 - Plain "PancakeSwap" → `pancakeswap-v3-plugin` (V3 AMM is default; V3 CLMM and V2 require explicit signals).
 
 **Fallthrough rule (DApp named but NOT in this table):**
-Apply Step 1B (catalog probe). If a `<dappName>-plugin` exists in the plugin-store catalog, install it; otherwise surface the failure to the user with the categorized supported list, closest-sibling suggestions, and the `okx-defi-invest` alternative (do NOT silently degrade).
+Apply Step 1B (catalog probe). If a `<dappName>-plugin` exists in the plugin-store catalog, install it; otherwise surface the failure to the user with the categorized supported list, closest-sibling suggestions, and the `okx-defi` alternative (do NOT silently degrade).
 
 ---
 
@@ -460,12 +460,12 @@ A strict `${DAPP_LOWER}-plugin` exact match would miss `uniswap-ai` and `velodro
 1. Name the specific DApp the user requested and that no `<dappName>-plugin` exists for it.
 2. Show the categorized supported-DApp table from Rule 5.
 3. **Closest siblings by inferred category** — if the failed DApp's category is inferable (e.g. user said something lending-shaped → Aave V3 / Compound V3 / Morpho; Solana swap-shaped → Raydium / Orca / Meteora; multi-chain swap-shaped → Curve; perps-shaped → Hyperliquid / GMX V2), name the 1–2 most similar supported DApps explicitly.
-4. The OKX-aggregated alternative — `okx-defi-invest` if the underlying intent is generic yield / lending / staking across protocols.
+4. The OKX-aggregated alternative — `okx-defi` if the underlying intent is generic yield / lending / staking across protocols.
 5. **Defer the choice back to the user** — do not auto-pick a sibling. Ask which path they'd like.
 
 Example user-facing message (catalog probe failed for an unknown DApp "Foo"):
 
-> I checked the plugin-store catalog and there's no `foo-plugin` available yet. Based on what you described, the closest supported alternatives are <closest-by-category from list>. Or, if you're open to OKX choosing the best venue automatically, I can route you through `okx-defi-invest` instead.
+> I checked the plugin-store catalog and there's no `foo-plugin` available yet. Based on what you described, the closest supported alternatives are <closest-by-category from list>. Or, if you're open to OKX choosing the best venue automatically, I can route you through `okx-defi` instead.
 >
 > Full supported set:
 >
@@ -585,7 +585,7 @@ Trigger when **both** are present:
 
 **Action when Rule 3b fires:** do NOT install. Ask one clarifying question:
 
-- **2+ DApps named:** "Want me to set up `<DApp A>`, set up `<DApp B>`, or just discuss the tradeoffs? You can also let OKX pick the best venue for you (`okx-defi-invest`)."
+- **2+ DApps named:** "Want me to set up `<DApp A>`, set up `<DApp B>`, or just discuss the tradeoffs? You can also let OKX pick the best venue for you (`okx-defi`)."
 - **1 DApp + discussion marker:** "Want me to set up `<DApp>` for you, or just discuss what it does first?"
 
 **Examples that fire Rule 3b** (clarify, do NOT install):
@@ -611,7 +611,7 @@ Example clarifications:
 
 Examples that score 50–74:
 - "I want to trade perps" (no Hyperliquid mention)
-- "I want to deposit and earn yield" (Aave, Morpho, or okx-defi-invest could all match)
+- "I want to deposit and earn yield" (Aave, Morpho, or okx-defi could all match)
 - "I want to borrow against my ETH" (Aave or Morpho both plausible)
 - "add liquidity on BNB Chain" (no explicit PancakeSwap mention)
 
@@ -620,7 +620,7 @@ Examples that score 50–74:
 The skill's resolver table covers 20 DApps. When the prompt scores < 50 against all of them, branch on whether *any* DApp/protocol name was actually mentioned:
 
 **Rule 5a — User named a DApp NOT in the resolver table:**
-Apply **Step 1B** directly — the GitHub Contents API probe (~0.1s) checks whether `<dappName>-plugin` exists in the broader catalog. If it exists, install it and forward. If not, show the categorized supported list (Rule 5b table) with closest-sibling suggestions and the `okx-defi-invest` alternative.
+Apply **Step 1B** directly — the GitHub Contents API probe (~0.1s) checks whether `<dappName>-plugin` exists in the broader catalog. If it exists, install it and forward. If not, show the categorized supported list (Rule 5b table) with closest-sibling suggestions and the `okx-defi` alternative.
 
 **Do NOT install the `plugin-store` skill as a separate delegation step.** That hop costs an extra clone + SKILL.md round-trip with no enumeration capability beyond what Step 1B already does directly. The previous "install plugin-store and let it figure it out" path is removed — Step 1B is now the single source of truth for catalog probing.
 
@@ -734,6 +734,6 @@ Rules 1 and 2 above describe loading the plugin's SKILL.md and forwarding the us
 | User names a DApp NOT in the resolver table | Apply Step 1B — GitHub Contents API probes whether `<dappName>-plugin` exists in the catalog (~0.1s). Install if it exists; else surface the catalog-probe failure to the user (closest siblings by inferred category + `okx-defi-invest` alternative + categorized supported list). Do NOT install `plugin-store` skill separately. |
 | pump.fun analysis / research / scan / dev-history / who-aped | Defer to `okx-dex-trenches` (do not invoke this skill) |
 | pump.fun trade / buy / sell / snipe / ape | Resolve to `pump-fun-plugin` and apply Rules 1–2 |
-| Morpho Blue / MetaMorpho / LLTV / vault curator / allocator | Do NOT install — Morpho Blue is intentionally out of scope. Suggest `okx-defi-invest` for generic yield. |
+| Morpho Blue / MetaMorpho / LLTV / vault curator / allocator | Do NOT install — Morpho Blue is intentionally out of scope. Suggest `okx-defi` for generic yield. |
 | "What dapps are available?" / "Show me supported DApps" (ZH: glossary §9) | Apply Rule 5 — show the categorized supported-DApp table |
-| Generic yield/APY/lending without a named protocol | Defer to `okx-defi-invest` (do not invoke this skill) |
+| Generic yield/APY/lending without a named protocol | Defer to `okx-defi` (do not invoke this skill) |

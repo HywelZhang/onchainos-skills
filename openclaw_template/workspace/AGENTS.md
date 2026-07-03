@@ -73,8 +73,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
-| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
-| okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
+| okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions overview | User wants to earn yield, stake, manage DeFi positions, or check DeFi positions across protocols |
 | okx-dapp-discovery | Third-party DApp routing — installs the matching plugin on demand and forwards the prompt to its quickstart | User names a specific third-party DApp (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |

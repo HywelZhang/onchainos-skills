@@ -89,6 +89,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 ## Gates (non-overridable, identity ops)
 
 - **Pre-flight** — before the FIRST `onchainos` command this session (read **or** write — `get-my-agents` / `search`), §Pre-flight must have run. A prior session does not count. No exception. This gate precedes every other gate below.
+- **Chain-fixed** — agent identities live on XLayer only. Never pass `--chain` to any `agent` identity command. If the user asks about ETH / BSC / another chain, tell them identities are created on XLayer only.
 - **Pre-check** — resolve role first (`--role` required; canonical values `user` / `asp` / `evaluator`).
   - Before any `create`: run `agent pre-check --role <role>` ONCE — folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, aspCount }` (render per register §2).
   - Before any `update`: fetch target with `agent get-agents --agent-ids` first (`identity-update.md` §1).

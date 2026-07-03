@@ -53,6 +53,21 @@ const DEPRECATED_SKILLS: &[&str] = &[
     "okx-onchain-gateway",
     "okx-security",
     "okx-wallet-portfolio",
+    // Merged into `okx-ai` (former deprecated stubs, now removed).
+    "okx-agent-identity",
+    "okx-agent-task",
+    "okx-agent-chat",
+    "okx-task-watch",
+    // Merged into `okx-defi` (former deprecated stubs, now removed).
+    "okx-defi-invest",
+    "okx-defi-portfolio",
+    // Merged into `okx-dex` (former deprecated stubs, now removed).
+    "okx-dex-market",
+    "okx-dex-signal",
+    "okx-dex-social",
+    "okx-dex-token",
+    "okx-dex-trenches",
+    "okx-dex-ws",
 ];
 
 #[derive(clap::Args)]

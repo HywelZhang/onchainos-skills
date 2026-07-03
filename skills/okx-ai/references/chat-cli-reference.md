@@ -1,4 +1,4 @@
-# CLI Reference: okx-agent-chat — File Attachments
+# CLI Reference: File Attachments (okx-ai — chat capability)
 
 ## 1. `onchainos agent file-upload`
 

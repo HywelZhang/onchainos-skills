@@ -1,6 +1,6 @@
 # Pull outstanding `decision_request` items — `okx-a2a user outdated-list`
 
-> Loaded from `SKILL.md` when the user explicitly asks to see decision_request items they have **not yet replied to**. This is a user-initiated one-shot query, separate from the live watch loop — it does NOT long-poll and does NOT re-enter watch.
+> Loaded from `watch-core.md` when the user explicitly asks to see decision_request items they have **not yet replied to**. This is a user-initiated one-shot query, separate from the live watch loop — it does NOT long-poll and does NOT re-enter watch.
 
 ## Triggers
 - Chinese: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理`
@@ -12,7 +12,7 @@
 okx-a2a user outdated-list --json
 ```
 
-> 🛑 Run exactly as written — no `| grep` / `| jq` / redirects (same JSON-integrity rule as watch; see `SKILL.md` §Anti-patterns).
+> 🛑 Run exactly as written — no `| grep` / `| jq` / redirects (same JSON-integrity rule as watch; see `watch-core.md` §Anti-patterns).
 
 Returns the set of `decision_request` items the user has **not yet `check`ed** (i.e. watch has already surfaced them but the user never committed a reply). These items stay in the outstanding-decisions queue until `okx-a2a user check --todo-ids …` commits a decision. (Notifications are not included — watch consumes them on return and they have no outstanding state.)
 
@@ -21,7 +21,7 @@ Returns the set of `decision_request` items the user has **not yet `check`ed** (
 Unlike watch's per-item flow, render **all returned items in a single assistant message**:
 
 1. Number each item (`1`, `2`, `3`, ...) so the user can disambiguate.
-2. For each item, paste its `userContent` as a markdown blockquote (same copy-not-rewrite rule as `SKILL.md` §Dispatch — no wrapper sentences, no summarization, no cross-item merging).
+2. For each item, paste its `userContent` as a markdown blockquote (same copy-not-rewrite rule as `watch-core.md` §Dispatch — no wrapper sentences, no summarization, no cross-item merging).
 3. After the last item, append this disambiguation hint **exactly once** (translate to the user's language per LOCALIZATION_PREFIX rules; keep the literal token `JobID` and the examples unchanged):
    `💡 When replying, use either form to indicate which item you're answering: (1) list index + answer, e.g. "1 关闭" / "2: approve" / "3 — 956"; (2) JobID prefix + answer, e.g. "JobID 0x49fa — 1" (first 6 chars of jobId).`
 4. End turn. Do **NOT** auto-re-enter `watch` or any other command — `outdated-list` is a one-shot query, not a loop.
@@ -43,7 +43,7 @@ Route in the following order:
 
 4. **Multiple outstanding items AND the reply carries neither an index nor a prefix** → ask the user to re-send using one of the forms above.
 
-Once the item is identified, claim it and execute its `llmContent` using the same flow as `SKILL.md` §Handling the user reply (claim via `okx-a2a user check --todo-ids <id> --json`, then run whatever commands `llmContent` specifies).
+Once the item is identified, claim it and execute its `llmContent` using the same flow as `watch-core.md` §Handling the user reply (claim via `okx-a2a user check --todo-ids <id> --json`, then run whatever commands `llmContent` specifies).
 
 ## Anti-patterns
 - Do NOT call `okx-a2a user watch` for this intent — `watch` long-polls; `outdated-list` is a snapshot.

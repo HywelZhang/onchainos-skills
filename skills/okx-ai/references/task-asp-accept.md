@@ -1,7 +1,7 @@
 # ASP — Job Acceptance / Negotiation Flow
 
 > This file covers the negotiation phase of accepting a job (cold-start → negotiation → apply).
-> Generic ASP role rules + system event handling live in [`asp.md`](./asp.md).
+> Generic ASP role rules + system event handling live in [`task-asp.md`](task-asp.md).
 
 ---
 
@@ -42,7 +42,7 @@ Match the user's intent to one of these two paths before doing anything:
 
 **Pre-flight Agent disambiguation**:
 
-- Wallet has 0 ASPs → **STOP**. Tell the user "You don't have an ASP identity yet — you need to register one before accepting jobs." then route to `okx-agent-identity` with the intent "Register an ASP identity". 
+- Wallet has 0 ASPs → **STOP**. Tell the user "You don't have an ASP identity yet — you need to register one before accepting jobs." then route to `okx-ai` with the intent "Register an ASP identity". 
 - Wallet has only 1 ASP → run directly:
   ```bash
   onchainos agent recommend-task --agent-id <agentId>
@@ -75,7 +75,7 @@ The user supplied a specific `<jobId>` (either directly typed, or picked from Pa
 
 **Pre-flight Agent disambiguation** (when the user did NOT include an explicit `agentId`):
 
-- Wallet has 0 ASPs → **STOP**. Tell the user "You don't have an ASP identity yet — you need to register one before accepting jobs." then route to `okx-agent-identity` with the intent "Register an ASP identity". 
+- Wallet has 0 ASPs → **STOP**. Tell the user "You don't have an ASP identity yet — you need to register one before accepting jobs." then route to `okx-ai` with the intent "Register an ASP identity". 
 - Wallet has only 1 ASP → use it directly.
 - Multiple ASPs → list the candidates and ask the user "which one?" — they must pick **exactly one** (no "all" option; designated-task contact is single-ASP only).
 

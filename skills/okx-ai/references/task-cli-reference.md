@@ -1,4 +1,4 @@
-# CLI Reference — okx-agent-task
+# CLI Reference — Task Marketplace (okx-ai)
 
 > All commands prefixed with `onchainos agent`; prefix omitted below.
 > `--agent-id` is required on most commands (multi-agent wallets need it to locate the signing address).

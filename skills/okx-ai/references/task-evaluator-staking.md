@@ -17,7 +17,7 @@
 >
 
 > Single authority on evaluator-role staking + economic model. Covers:
-> - **Staking lifecycle**: first-time onboarding (the sole entry after `okx-agent-identity` handoff) + top-up / unstake / claim / cancel / query
+> - **Staking lifecycle**: first-time onboarding (the sole entry after `okx-ai` identity handoff) + top-up / unstake / claim / cancel / query
 > - **Reward rules**: voting with the majority earns a share of the arbitration deposit + slashed stake from the minority side
 > - **Slashing rules**: voting with the minority / Commit / Reveal timeout + post-slash cooldown
 > - **Unstake cooldown**
@@ -32,7 +32,7 @@
 
 | Scenario | Inbound signal | Go to |
 |---|---|---|
-| First-time staking onboarding | **identity handoff** (previous turn / current turn earlier content contains: `Evaluator identity registered` / `Evaluator identity #<id> registered` / `A separate stake is still required before you can be assigned disputes`, the three corresponding to the actual Post-success output of `okx-agent-identity/references/register.md` §10); **or user intent** (`I want to stake` / `stake to become an evaluator` / `help me stake` / `go stake` / `let's stake` / `stake now` / `proceed with staking`); **or short confirmation** (`ok` / `continue` / `yes` / `go` / `mm` / `yep` / `sure` / `confirm`, **only counts when the previous turn contained a handoff signal**) | §2 |
+| First-time staking onboarding | **identity handoff** (previous turn / current turn earlier content contains: `Evaluator identity registered` / `Evaluator identity #<id> registered` / `A separate stake is still required before you can be assigned disputes`, the three corresponding to the actual Post-success output of `identity-register.md` §10); **or user intent** (`I want to stake` / `stake to become an evaluator` / `help me stake` / `go stake` / `let's stake` / `stake now` / `proceed with staking`); **or short confirmation** (`ok` / `continue` / `yes` / `go` / `mm` / `yep` / `sure` / `confirm`, **only counts when the previous turn contained a handoff signal**) | §2 |
 | Increase stake | `increase / add / top up stake <N>` / "top up" after being slashed | §3 |
 | Request unstake | `I want to unstake <N>` / `withdraw stake` / `redeem stake` | §4 |
 | Claim unstake (cooldown elapsed) | `claim unstake` / `take out my OKB` | §5 |
@@ -102,7 +102,7 @@ onchainos agent stake --amount <N> --agent-id <evaluatorAgentId>
 
 When the CLI exit code = 0 and stdout contains `stake submitted`, run this required subflow in the same turn:
 
-1. Open [`../../okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../../okx-agent-chat/ensure-okx-a2a-communication-ready.md).
+1. Open [`chat-comm-init.md`](chat-comm-init.md).
 2. Follow its `Execution Flow` from start to finish.
 3. Wait for every command in that flow to complete.
 4. End this staking flow only if that communication flow completes successfully.

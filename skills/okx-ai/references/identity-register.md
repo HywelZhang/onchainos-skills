@@ -1,6 +1,6 @@
 # Register flow — create (all 3 roles) · consent · QA · avatar · update
 
-Loaded when: the user registers / creates an agent (any role), or arrives via passive need-user. Pairs with SKILL.md. (For update / fix-rejected-listing → load `update.md` instead.)
+Loaded when: the user registers / creates an agent (any role), or arrives via passive need-user. Pairs with SKILL.md. (For update / fix-rejected-listing → load `identity-update.md` instead.)
 
 The CLI does the work — `validate-listing` returns the QA `findings[]`, `create` always returns `newAgentId` — a string id when the WS push succeeded, `null` when it timed out. You collect fields → render the §Invariants card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
 
@@ -94,7 +94,7 @@ Run `agent pre-check --role user` (consent + uniqueness gate, same as §2). On c
 
 ## 9. Execute
 
-Run `agent create` with the collected fields (role/name/description/picture/service — all from §3). **On any non-success** → load `errors.md`; never interpret a code inline.
+Run `agent create` with the collected fields (role/name/description/picture/service — all from §3). **On any non-success** → load `identity-errors.md`; never interpret a code inline.
 
 ## 10. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per SKILL §Invariants #id ladder — `newAgentId` primary)
 
@@ -114,4 +114,4 @@ If `#<id>` ladder yields nothing: user/evaluator → omit `#<id>` entirely; ASP 
 
 ## 11. UPDATE flow
 
-See [`update.md`](update.md) — ownership check, QA, diff card, wholesale service replacement, post-update messages, and rejected-listing remediation rule.
+See [`identity-update.md`](identity-update.md) — ownership check, QA, diff card, wholesale service replacement, post-update messages, and rejected-listing remediation rule.

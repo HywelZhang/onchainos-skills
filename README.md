@@ -15,7 +15,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-agent-payments-protocol` | Unified payment dispatcher across x402 (`exact` / `aggr_deferred` schemes — TEE or local-key sign), MPP (`charge` / `session` intents — open / voucher / topUp / close, transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes to per-scheme/intent references. |
 | `okx-defi` | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more, plus positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
-| `okx-agent-chat` | Agent-to-agent communication: XMTP plugin management, encrypted file attachment upload/download |
+| `okx-ai` | ERC-8004 on-chain Agent identity (register/update/search/rate/service-list) + agent task marketplace (publish/accept/deliver/dispute) + live task-progress monitor |
 | `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
 | `okx-growth-competition` | Agentic Wallet exclusive trading competitions: list, join, view leaderboard, claim rewards |
 

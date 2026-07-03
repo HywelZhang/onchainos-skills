@@ -105,7 +105,7 @@ contract). The agent-list card does **not** inline services or rating. **ASP →
     2. No, I'm good
   Reply 1 or 2.
   ```
-  On `1` → hand to `reputation.md` (feedback-list, one per selected agent, `---`-separated). On `2` → stop.
+  On `1` → hand to `identity-reputation.md` (feedback-list, one per selected agent, `---`-separated). On `2` → stop.
   If the user already named a subset ("reviews for 42 and 58"), skip the prompt → straight to those ids.
 
 ---

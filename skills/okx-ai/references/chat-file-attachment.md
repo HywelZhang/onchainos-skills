@@ -5,11 +5,10 @@ Upload and download encrypted file attachments via the AI economy platform. File
 ## Pre-flight Checks
 
 > Read `../okx-agentic-wallet/_shared/preflight.md`.
-> If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Command Index
 
-> **CLI Reference**: For full parameter tables, return field schemas, and usage examples, see `references/cli-reference.md`.
+> **CLI Reference**: For full parameter tables, return field schemas, and usage examples, see `references/chat-cli-reference.md`.
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|

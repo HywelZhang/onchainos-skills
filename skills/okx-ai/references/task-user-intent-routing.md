@@ -26,7 +26,7 @@ User-session needs to forward free-form user instructions targeting a specific t
      --content '<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `user-sub-playbook.md` §Communication Contract).'
+   Reply to the user via `onchainos agent user-notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract).'
    ```
 
    Forward verbatim then append reply-path instruction. End turn.
@@ -37,7 +37,7 @@ User-session needs to forward free-form user instructions targeting a specific t
 - ❌ Do NOT paraphrase / translate / reformat the user's instruction — pass verbatim.
 - ❌ Do NOT call `okx-a2a session send` multiple times in one turn.
 
-**Output schema of `active-tasks`**: see [`cli-reference.md → active-tasks`](./cli-reference.md#active-tasks).
+**Output schema of `active-tasks`**: see [`task-cli-reference.md → active-tasks`](task-cli-reference.md#active-tasks).
 
 ---
 
@@ -92,11 +92,11 @@ Triggers (only when there's no active card the user might be answering):
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
-| Designate an ASP — `指定卖家` / `use the service of Agent X`                      | Gather params → designated-provider flow | [`user-actions-publish.md`](../user-actions-publish.md) §5 |
-| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs`                      | [`asp-accept.md`](../asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | asp-accept.md §2 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}`  | `onchainos agent contact-user <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | asp-accept.md §3 |
-| Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务`                | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
-| Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
+| Designate an ASP — `指定卖家` / `use the service of Agent X`                      | Gather params → designated-provider flow | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
+| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs`                      | [`task-asp-accept.md`](task-asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | task-asp-accept.md §2 |
+| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}`  | `onchainos agent contact-user <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | task-asp-accept.md §3 |
+| Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务`                | `onchainos agent task-search` | [`task-cli-reference.md#task-search`](task-cli-reference.md#task-search) |
+| Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
@@ -137,7 +137,7 @@ Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user m
 
 ## Task watch / history / outstanding decisions
 
-When the user wants to monitor task progress, drain unread/missed events, or list un-replied decision cards → route to the dedicated **`okx-task-watch`** skill. Do NOT inline `okx-a2a user watch` / `okx-a2a user outdated-list` from here; load that SKILL.md and follow it.
+When the user wants to monitor task progress, drain unread/missed events, or list un-replied decision cards → route to **§Task Watch** (`watch-core.md`). Do NOT inline `okx-a2a user watch` / `okx-a2a user outdated-list` from here; load that file and follow it.
 
 Triggers:
 - **Live monitor**: `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `继续监听` / `task watch` / `user watch` / `monitor task progress` / `watch tasks` / `keep me posted on tasks`

@@ -19,9 +19,9 @@ The LLM **must** invoke this flow **on its own**, immediately after any of the f
 
 | Upstream action | Where it typically happens |
 |---|---|
-| Agent registered / created | `okx-agent-identity` register flow |
-| Agent metadata updated (name, avatar, endpoint, capabilities, etc.) | `okx-agent-identity` update flow |
-| Agent deactivated / re-activated | `okx-agent-identity` deactivate / activate flow |
+| Agent registered / created | `okx-ai` register flow |
+| Agent metadata updated (name, avatar, endpoint, capabilities, etc.) | `okx-ai` update flow |
+| Agent deactivated / re-activated | `okx-ai` deactivate / activate flow |
 | Any other operation that mutates the local a2a agent list | — |
 
 **Recognition cues** (Chinese / English) that should trigger this hook after the upstream action returns: `创建 agent`, `注册 agent`, `更新 agent`, `修改 agent 信息`, `注销 agent`, `停用 agent`, `agent 列表变更`, `agent registered`, `agent created`, `agent updated`, `agent deactivated`, `agent list changed`.

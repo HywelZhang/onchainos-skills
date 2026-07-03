@@ -1,8 +1,8 @@
 # Auto-timeout wake scheduling (platform-specific payloads)
 
-> Loaded from `SKILL.md` §`kind == decision_request` only when a fresh `decision_request` lands in a **global** session and you need to schedule the 2-minute self-resume wake. Skip entirely for scoped sessions (see the gating note in SKILL.md).
+> Loaded from `watch-core.md` §`kind == decision_request` only when a fresh `decision_request` lands in a **global** session and you need to schedule the 2-minute self-resume wake. Skip entirely for scoped sessions (see the gating note in watch-core.md).
 
-After rendering `userContent`, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as `SKILL.md` §Platform compatibility).
+After rendering `userContent`, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as `watch-core.md` §Platform compatibility).
 
 > **Terminology**: the handle returned by either tool is called the **wake id** in this skill.
 
@@ -43,7 +43,7 @@ If the scheduling tool is unavailable (unknown tool / returns an error) → **sk
 
 **When the wake fires (user idle 2 min)**: its prompt runs `okx-a2a user watch ...` in a fresh turn, which resumes monitoring for **new** events. The original `decision_request` item is **not** re-surfaced by watch — it was already consumed when it first appeared (watch is destructive read). But because the user never `check`ed it, it remains in the outstanding-decisions queue and can be retrieved on demand via `okx-a2a user outdated-list` (see `references/outdated-list.md`). No extra logic needed here.
 
-**Cancelling the wake** (first step of reply handling, back in SKILL.md §Handling the user reply): best-effort cancel the wake scheduled in the previous turn:
+**Cancelling the wake** (first step of reply handling, back in watch-core.md §Handling the user reply): best-effort cancel the wake scheduled in the previous turn:
 - Claude Code: `CronDelete(<wake id>)`
 - Codex: `codex_app.automation_update(mode: "delete", id: <wake id>)`
 - If the **wake id** is not visible in the assistant transcript (context compacted) or the cancel call errors → **skip and proceed**. Do NOT search for the wake by name/prompt match. A stale wake firing afterwards is harmless: it just re-enters watch to monitor new events; the already-handled `decision_request` item does **not** reappear in watch (it was consumed on the original return — watch is destructive read).

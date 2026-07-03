@@ -1,6 +1,6 @@
 # onchainos — Agent Instructions
 
-This is an **onchainos skill + workflow collection** providing 21 skills and pre-built workflows for on-chain operations across 20+ blockchains.
+This is an **onchainos skill + workflow collection** providing 17 skills and pre-built workflows for on-chain operations across 20+ blockchains.
 
 ## Workflows (Primary Routing)
 
@@ -19,25 +19,19 @@ This is an **onchainos skill + workflow collection** providing 21 skills and pre
 `workflows/INDEX.md` maps each intent to the correct workflow file.
 For Chinese queries, read `workflows/references/keyword-glossary.md` first.
 
-Safety: follow token risk controls defined in `okx-security` SKILL.md.
+Safety: follow token risk controls defined in `okx-agentic-wallet` SKILL.md.
 For script requests, append `--format json` to all CLI commands.
 
 ## Available Skills
 
 | Skill | Purpose | When to Use |
 |-------|---------|-------------|
-| okx-agentic-wallet | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
-| okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings, token balances, portfolio value across chains by providing a specific address |
-| okx-security | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
+| okx-agentic-wallet | Wallet lifecycle (auth, balance, portfolio PnL, send, history, contract call), Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway (gas / simulate / broadcast / track), public-address portfolio, security scanning, audit log | User wants to operate their wallet or execute on-chain: log in, check balance/PnL, send tokens, call contracts, swap/trade/buy/sell, bridge across chains, place limit orders, broadcast/simulate/track a tx, look up a public address's holdings, run a token/DApp/tx/signature safety check, or export the audit log |
 | okx-dex | Read-only on-chain DEX data: prices/K-line/index/wallet PnL, smart-money/KOL/whale signals + leaderboard, token search/rankings/liquidity/holders/cluster analysis, crypto news/sentiment/vibe, pump.fun/meme trenches research (read-only), WebSocket scripting for all DEX channels | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis, smart money/whale/KOL signals (信号), top traders (牛人榜), token search/rankings/holder info/cluster concentration, news/sentiment/vibe score, new meme launches/dev reputation/bundle detection (打狗/扫链/新盘, read-only), or wants a WebSocket script/脚本/bot for real-time on-chain data |
-| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens on-chain; user wants to get a swap quote before executing |
-| okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a signed tx, estimate gas fees, simulate a transaction before sending, or track a tx by hash |
-| okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred`), MPP (`charge` / `session`), and a2a-pay (paymentId). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / payment status |
-| okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions and holdings overview | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols — or check DeFi positions / view DeFi portfolio across protocols and chains |
-| okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
-| okx-ai | ERC-8004 on-chain Agent identity (register/update/search/rate/service-list) + agent task marketplace (publish/accept/deliver/dispute) + live task-progress monitor, unified | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services; publish a task / accept a job / deliver work / confirm or reject completion / open a dispute; or monitor task progress / view outstanding decisions |
-| okx-ai-guide | OKX.AI intro + runtime platform detection + route into identity registration (User / ASP / Evaluator) | User asks what/how about OKX.AI (是什么/能做什么/怎么用/怎么开始/求助/教程), types "OKX.AI 快速开始", or arrives from the welcome banner's "看看 OKX.AI 怎么玩" pick |
+| okx-ai | ERC-8004 on-chain Agent identity (register/update/search/rate/service-list) + agent task marketplace (publish/accept/deliver/dispute) + live task-progress monitor, unified (merges former okx-agent-identity + okx-agent-task + okx-agent-chat + okx-task-watch) | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services; publish a task / accept a job / deliver work / confirm or reject completion / open a dispute; agent-to-agent communication / file attachments; or monitor task progress / view outstanding decisions |
+| okx-guide | Onboarding & guide hub (merges former okx-how-to-play + okx-ai-guide + okx-ai-support): Onchain OS onboarding + welcome banner, OKX.AI intro & role-registration routing, customer-support / Help Center guidance — routes via its `## Intent Routing` table | First-time user ("what is onchainos", "how do I use/play this", "getting started", "I just installed"); OKX.AI questions (是什么/能做什么/怎么用/怎么开始, "OKX.AI 快速开始", spelling variants); or customer service / talk to a human / complaint / feedback / help center / FAQ |
+| okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred`), MPP (`charge` / `session`), and a2a-pay (paymentId). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / payment status |
 | okx-dapp-discovery | Third-party DApp discovery + direct plugin routing | User names a specific third-party DApp/protocol (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" — installs the matching plugin on demand and forwards the prompt to its quickstart |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
 

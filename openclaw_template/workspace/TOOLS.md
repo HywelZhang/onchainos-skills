@@ -68,10 +68,8 @@ onchainos token report --address <addr> --chain solana
 Skills are installed by `setup.sh` into `~/.onchainos/skills/`:
 
 ```
-okx-dex        okx-dex-swap        okx-dex-bridge      okx-dex-strategy
-okx-security        okx-wallet-portfolio okx-agentic-wallet okx-onchain-gateway
-okx-defi            okx-dapp-discovery  okx-audit-log       okx-growth-competition
-okx-how-to-play     okx-agent-payments-protocol
+okx-agentic-wallet  okx-dex             okx-defi            okx-ai
+okx-guide           okx-dapp-discovery  okx-growth-competition  okx-agent-payments-protocol
 ```
 
 ## MCP server

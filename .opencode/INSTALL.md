@@ -46,10 +46,11 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 
 | Skill | When to Use |
 |-------|-------------|
-| `okx-wallet-portfolio` | Check wallet balance, token holdings, portfolio value |
+| `okx-agentic-wallet` | Wallet, swap, bridge, transaction gateway, public-address portfolio, security, audit log — all wallet & on-chain execution |
 | `okx-dex` | Read-only on-chain DEX data: token prices/K-line/trade history, search tokens/trending rankings/holder analysis, crypto news/sentiment ranking/KOL/vibe chatter |
-| `okx-dex-swap` | Swap/trade/buy/sell tokens on-chain |
-| `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
+| `okx-defi` | Earn yield: deposit/withdraw, stake, claim rewards, DeFi positions & portfolio |
+| `okx-ai` | ERC-8004 Agent identity + task marketplace (publish/accept/deliver/dispute) + task-progress monitor |
+| `okx-guide` | Onboarding & guide hub: Onchain OS intro, OKX.AI, customer support |
 | `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 
 ### Loading a Skill Manually

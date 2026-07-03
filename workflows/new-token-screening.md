@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex, okx-security
+okx-dex, okx-agentic-wallet
 
 ## Input
 

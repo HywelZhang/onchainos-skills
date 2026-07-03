@@ -15,7 +15,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 19 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference). Deprecated skill directories are kept as thin redirect stubs pointing to their successor umbrella skill.
 - **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
@@ -40,7 +40,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 `workflows/INDEX.md` maps each intent to the correct workflow file with step-by-step instructions.
 For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
 
-Safety: follow token risk controls defined in `okx-security` SKILL.md.
+Safety: follow token risk controls defined in the `okx-agentic-wallet` skill (security domain — `references/security.md`).
 For script requests, append `--format json` to all CLI commands.
 
 ## Inbound Message Routing (highest priority — before user intent)
@@ -69,20 +69,16 @@ These envelope-based routes take absolute priority over the skill table below. D
 
 | Skill                | Purpose | When to Use |
 |----------------------|---------|-------------|
-| okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
-| okx-ai-support       | Customer service guidance: returns Help Center link + operation steps | User wants to find customer service, talk to a human, file a complaint, give feedback, or find help docs / FAQ |
-| okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
-| okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
+| okx-agentic-wallet   | The single wallet + on-chain execution skill. Routes internally (Intent Routing → `references/<domain>.md`) across: auth/accounts, balance & holdings (authenticated + any public address), send/transfer, contract calls, tx history & status, message signing, wallet export & policy, Gas Station; **swap/trade/buy/sell/convert & quotes**; **cross-chain bridge**; **limit orders/strategy** (buy dip / TP / SL); **transaction broadcasting / gas / simulate / track** (gateway); **security scanning** (token/honeypot, DApp phishing, tx & signature checks, approvals); **audit log** | User wants to operate their wallet or execute any on-chain action: log in, check balance/holdings, send tokens, call contracts, view tx history, sign a message, export wallet, pay gas with a stablecoin; swap/trade/buy/sell tokens or get a quote; bridge cross-chain; place/cancel limit orders; broadcast/estimate/simulate/track a tx; check if a token/DApp/tx/signature is safe or manage approvals; or view command history / audit log |
+| okx-guide | Onboarding & guide hub: Onchain OS intro + welcome banner, OKX.AI intro + role-registration routing, and customer-support / Help Center guidance. Classifies the intent and routes to the right sub-flow. | User asks "what is this / what can it do / how do I use it / getting started / I'm new", asks about OKX.AI (是什么/怎么用/快速开始 + any spelling variant), or wants customer service / talk to a human / file a complaint / give feedback / help docs / FAQ / report a bug |
 | okx-dex         | Read-only on-chain DEX data across 6 capabilities: token search/liquidity/holders/cluster analysis, prices/K-line/index/wallet PnL, smart-money/KOL/whale signals + leaderboard, crypto news/sentiment/vibe, pump.fun/meme trenches research (read-only), and WS/script real-time streaming | User asks for token prices, K-line/index prices, wallet PnL, smart money/whale/KOL activity or buy signals, leaderboard rankings, token search/rankings/liquidity/holder or cluster analysis, crypto news/sentiment/vibe/KOL chatter, pump.fun/meme new launches/dev reputation/bundle detection (read-only research, not buy/snipe), or wants real-time WS monitoring / a custom WebSocket script |
-| okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
-| okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
 | okx-agent-payments-protocol   | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` schemes — TEE or local-key), MPP (`charge` / `session` intents in transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes by scheme/intent to `references/{accepts-schemes,charge,session,a2a_charge}.md`. | User encounters HTTP 402, mentions x402, MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / "create payment link" / "payment status" |
-| okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions and holdings overview | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more — or check DeFi positions / view DeFi portfolio across protocols and chains |
 | okx-ai | ERC-8004 on-chain Agent identity (register/update/search/rate/service-list) + agent task marketplace (publish/accept/deliver/dispute) + live task-progress monitor, unified. **Claude Code / Codex only** for the monitor half (`CLAUDECODE=1` or `CODEX_THREAD_ID`); on Hermes / OpenClaw the client pushes task notifications natively. | User wants to register/create/update/deactivate/activate/search agents (roles — User: User / User Agent / Buyer / Client / 用户 / 买家 / 买方; ASP: ASP / Provider / Provider Agent / Seller / Merchant / 提供者 / 商家 / 服务提供商 / 卖家 / 卖方; Evaluator / 仲裁者 — e.g. "注册ASP", "register ASP", "建ASP身份", "注册买家"), submit or view feedback, list agent services; publish a task / accept a job / deliver work / confirm or reject completion / open a dispute / modify task terms (change provider, budget, token) / add attachment or image to a task / hire agent / 指定服务商; or says `监听任务进展` / `帮我盯着任务` / `历史消息` / `未读消息` / `未决策` / `待决策` / `task watch` / `user watch` / `monitor task progress` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` |
-| okx-ai-guide | OKX.AI intro + runtime platform detection + route into identity registration (User / ASP / Evaluator) | User asks what/how about OKX.AI (是什么/能做什么/怎么用/怎么开始/求助/教程), types "OKX.AI 快速开始", uses a name variant (okxai / OKXAI / "okx ai" / okx-ai / lowercase okx.ai / colloquial or mis-typed Chinese like 什么okxai / 啥是okxai / 什么事okxai — spacing/casing/typo tolerant), or arrives from the welcome banner's "看看 OKX.AI 怎么玩" pick |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
 | okx-dapp-discovery | Third-party DApp discovery + direct plugin routing | User names a specific third-party DApp (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" — installs the matching plugin on demand via `npx skills add okx/plugin-store --skill <name> --yes --global` and forwards the prompt to its quickstart |
+
+> **Deprecated → successor (redirect stubs / removed):** `okx-wallet-portfolio` / `okx-onchain-gateway` / `okx-security` / `okx-dex-swap` / `okx-dex-bridge` / `okx-dex-strategy` / `okx-audit-log` → **`okx-agentic-wallet`**; `okx-dex-market` / `okx-dex-signal` / `okx-dex-social` / `okx-dex-token` / `okx-dex-trenches` / `okx-dex-ws` → **`okx-dex`**; `okx-defi-invest` / `okx-defi-portfolio` → **`okx-defi`**; `okx-agent-identity` / `okx-agent-task` / `okx-agent-chat` / `okx-task-watch` → **`okx-ai`**; `okx-how-to-play` / `okx-ai-guide` / `okx-ai-support` → **`okx-guide`**. Route directly to the successor.
 
 ## DApp routing — `okx-dapp-discovery`
 
@@ -105,22 +101,22 @@ Routing:
 - **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → read `skills/okx-ai/references/task-user-playbook.md` ONLY. ❌ Do NOT additionally read `task-core.md` or `task-user-sub-playbook.md` — those are for sub sessions and will bloat the context
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-ai/references/task-core.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → read `skills/okx-ai/references/watch-core.md` first (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
-- User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
+- User mentions swap/buy/sell/trade → read `skills/okx-agentic-wallet/SKILL.md` first (swap domain — `references/swap.md`)
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
-- User wants to **register / create / update / activate (上架) / deactivate (下架) / search an agent identity** (ASP / User / Evaluator / 服务提供商 / 卖家 / 买家 / 用户 / 仲裁者 — and their aliases) → read `skills/okx-ai/SKILL.md` first. ⚠️ This holds **even when the request also says "Onchain OS"** (e.g. "用 Onchain OS 上架我的ASP") — the brand word "Onchain OS" is NOT a signal for `okx-onchain-gateway`; identity lifecycle verbs (注册/上架/下架/更新 + a role) win. `okx-onchain-gateway` is ONLY for broadcasting / simulating / tracking raw or signed transactions, never for listing or registering an agent identity.
-- User mentions customer service / talk to a human / complaint / feedback / help docs / FAQ / help center → read `skills/okx-ai-support/SKILL.md` first
+- User wants to **register / create / update / activate (上架) / deactivate (下架) / search an agent identity** (ASP / User / Evaluator / 服务提供商 / 卖家 / 买家 / 用户 / 仲裁者 — and their aliases) → read `skills/okx-ai/SKILL.md` first. ⚠️ This holds **even when the request also says "Onchain OS"** (e.g. "用 Onchain OS 上架我的ASP") — the brand word "Onchain OS" is NOT a signal for on-chain transaction broadcasting; identity lifecycle verbs (注册/上架/下架/更新 + a role) win. Raw transaction broadcasting / simulating / tracking is the `okx-agentic-wallet` gateway domain, never for listing or registering an agent identity.
+- User mentions customer service / talk to a human / complaint / feedback / help docs / FAQ / help center → read `skills/okx-guide/SKILL.md` first (customer-support domain)
 - User names a specific third-party DApp/protocol as the destination, OR asks "what dapps are available" → read `skills/okx-dapp-discovery/SKILL.md` first. That skill owns the supported-DApp set; do not enumerate DApps in this file.
 - User mentions **Gas Station / stablecoin gas / enable or disable gas station / revoke 7702**, or asks FAQ-style questions about any of those (what is / how does it work / which chains / upgrade cost / ...) → read `skills/okx-agentic-wallet/SKILL.md` AND `skills/okx-agentic-wallet/references/gas-station.md` first.
   - **Scope note:** "Gas Station" in this repo always means the OKX Agentic Wallet feature shipped by this CLI + skill — NOT a generic paymaster / meta-transaction / ERC-4337 category.
   - **Answer source:** use the skill's FAQ templates only; do not pull from general training knowledge about Biconomy / Gelato / Pimlico / Alchemy Account Kit / etc.
-- User asks about OKX.AI (是什么 / 能做什么 / 怎么用 / 怎么开始 / 求助 / 教程), types "OKX.AI 快速开始" / "OKX.AI quick start", uses a spelling/format variant of the name (okxai / OKXAI / "okx ai" / okx-ai / lowercase okx.ai / colloquial or mis-typed Chinese like "什么okxai" / "啥是okxai" / "什么事okxai"), or arrives from the welcome banner's OKX.AI pick → read `skills/okx-ai-guide/SKILL.md` first. That skill detects the runtime platform and routes 1/2/3 into `okx-ai` identity registration; it never calls `agent create` itself.
+- User asks about OKX.AI (是什么 / 能做什么 / 怎么用 / 怎么开始 / 求助 / 教程), types "OKX.AI 快速开始" / "OKX.AI quick start", uses a spelling/format variant of the name (okxai / OKXAI / "okx ai" / okx-ai / lowercase okx.ai / colloquial or mis-typed Chinese like "什么okxai" / "啥是okxai" / "什么事okxai"), or arrives from the welcome banner's OKX.AI pick → read `skills/okx-guide/SKILL.md` first. That skill detects the runtime platform and routes 1/2/3 into `okx-ai` identity registration; it never calls `agent create` itself.
 
 ## Scripting & Automation
 
 When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
-- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data / signals / token data / meme scanning / news / sentiment / KOL chatter → `okx-dex`, portfolio → `okx-wallet-portfolio`
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-agentic-wallet` (swap domain), market data / signals / token data / meme scanning / news / sentiment / KOL chatter → `okx-dex`, portfolio / balances → `okx-agentic-wallet` (portfolio domain)
 
 ### WebSocket / Real-time Data
 
@@ -135,4 +131,3 @@ CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. C
 - `ptr_arg`: use `&[T]` / `&mut [T]` instead of `&Vec<T>` / `&mut Vec<T>` when the function doesn't need Vec-specific methods
 - `too_many_arguments`: add `#[allow(clippy::too_many_arguments)]` or refactor into a params struct
 - `needless_borrow`: don't `&` a value that's already a reference
-

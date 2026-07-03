@@ -1,6 +1,6 @@
 ---
 name: okx-defi
-description: "OKX-aggregated DeFi (no specific DApp named) — product discovery, deposit/withdraw/claim execution, AND positions viewing. **If the user names ANY third-party protocol/DApp (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, …), route to okx-dapp-discovery — NOT here, even for 'show my Aave positions'.** INVEST triggers: 'invest in DeFi', 'earn yield', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'depth chart', yield farming, lending, staking, liquidity pools. PORTFOLIO triggers: 'check my DeFi positions', 'view DeFi holdings/portfolio', 'my staking/lending positions', 'DeFi balance', 'DeFi 持仓', '我的DeFi资产'. Do NOT use for: DEX swaps (okx-dex-swap), token prices (okx-dex), wallet token balances (okx-wallet-portfolio)."
+description: "OKX-aggregated DeFi (no specific DApp named) — product discovery, deposit/withdraw/claim execution, AND positions viewing. **If the user names ANY third-party protocol/DApp (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, …), route to okx-dapp-discovery — NOT here, even for 'show my Aave positions'.** INVEST triggers: 'invest in DeFi', 'earn yield', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'depth chart', yield farming, lending, staking, liquidity pools. PORTFOLIO triggers: 'check my DeFi positions', 'view DeFi holdings/portfolio', 'my staking/lending positions', 'DeFi balance', 'DeFi 持仓', '我的DeFi资产'. Do NOT use for: DEX swaps (okx-agentic-wallet), token prices (okx-dex), wallet token balances (okx-agentic-wallet)."
 license: MIT
 metadata:
   author: okx
@@ -11,6 +11,10 @@ metadata:
 # OKX DeFi (experimental merge of okx-defi-invest + okx-defi-portfolio)
 
 Multi-chain, OKX-aggregated DeFi in two capabilities behind one skill. Both wrap the same `onchainos defi` CLI command group.
+
+## Pre-flight Checks
+
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Intent Routing
 
@@ -35,9 +39,9 @@ Typical flow spans both: view positions (Portfolio) → redeem or claim (Invest)
 
 - For DApp-named investing/lending/staking/positions ("on Aave", "my Hyperliquid balance") → use `okx-dapp-discovery`
 - For token price/chart or token search by name/contract → use `okx-dex`
-- For DEX spot swap execution → use `okx-dex-swap`
-- For wallet token balances → use `okx-wallet-portfolio`
-- For broadcasting signed transactions → use `okx-onchain-gateway`
+- For DEX spot swap execution → use `okx-agentic-wallet`
+- For wallet token balances → use `okx-agentic-wallet`
+- For broadcasting signed transactions → use `okx-agentic-wallet`
 - For Agentic Wallet login, balance, contract-call → use `okx-agentic-wallet`
 
 ## Chain Support

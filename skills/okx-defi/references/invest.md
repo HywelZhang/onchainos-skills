@@ -41,7 +41,7 @@ For CLI parameter details, see `references/invest-cli-reference.md`.
 2. defi detail --investment-id <id>                 → confirm APY/TVL, get underlyingToken[].tokenAddress
 3. token search --query <tokenAddress> --chains <chain>  → get decimal (e.g. 6) for amount conversion
 4. Ask user for amount → convert: userAmount × 10^decimal (e.g. 100 USDC → 100000000)
-5. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+5. Check wallet balance (okx-agentic-wallet) → if insufficient, warn user and stop
 6. defi invest --investment-id <id> --address <addr> --token USDC --amount 100000000
    → CLI returns calldata (APPROVE + DEPOSIT steps)
 7. User signs and broadcasts each step in order
@@ -49,7 +49,7 @@ For CLI parameter details, see `references/invest-cli-reference.md`.
 
 > **Token decimal**: Get `tokenAddress` from `defi detail` → `underlyingToken[].tokenAddress`, then use `token search --query <tokenAddress>` to get `decimal`. Same approach as DEX swap.
 >
-> **CRITICAL — Balance check is REQUIRED before calling `defi invest`.** You MUST call `okx-wallet-portfolio` to verify the user has sufficient balance of the deposit token BEFORE generating calldata. If balance is insufficient, STOP and warn the user. Do NOT proceed to `defi invest` without confirming balance. Skipping this step wastes gas and results in failed on-chain transactions.
+> **CRITICAL — Balance check is REQUIRED before calling `defi invest`.** You MUST call `okx-agentic-wallet` to verify the user has sufficient balance of the deposit token BEFORE generating calldata. If balance is insufficient, STOP and warn the user. Do NOT proceed to `defi invest` without confirming balance. Skipping this step wastes gas and results in failed on-chain transactions.
 
 ### Withdraw
 
@@ -89,7 +89,7 @@ For CLI parameter details, see `references/invest-cli-reference.md`.
 3. (Optional) defi depth-price-chart --investment-id <id>
    → show liquidity depth distribution to help user pick tick range
 4. Ask user for amount and tick range
-5. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+5. Check wallet balance (okx-agentic-wallet) → if insufficient, warn user and stop
 6. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
    → CLI handles calculate-entry internally, returns calldata
 7. User signs and broadcasts
@@ -226,8 +226,8 @@ onchainos wallet contract-call \
 | `defi detail` | Check trends → `defi rate-chart` / `defi tvl-chart`, or proceed → `defi invest` |
 | `defi detail` (V3 Pool) | View depth → `defi depth-price-chart`, check price history → `defi depth-price-chart --chart-type PRICE` |
 | `defi invest` success | View positions → Portfolio capability (`references/portfolio.md`), or search more |
-| `defi withdraw` success | Check positions → Portfolio capability, or check balance → `okx-wallet-portfolio` |
-| `defi collect` success | Check positions → Portfolio capability, or swap rewards → `okx-dex-swap` |
+| `defi withdraw` success | Check positions → Portfolio capability, or check balance → `okx-agentic-wallet` |
+| `defi collect` success | Check positions → Portfolio capability, or swap rewards → `okx-agentic-wallet` |
 
 ## Troubleshooting
 

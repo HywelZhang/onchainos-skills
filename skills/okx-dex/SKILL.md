@@ -77,4 +77,4 @@ If the request spans two capabilities (e.g. "find a token then check its vibe"),
 - EVM addresses must be **all lowercase**.
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`).
 - The CLI handles authentication internally via environment variables — see Pre-flight Checks step 4 for default values.
-- "Is this token safe / honeypot / 貔貅盘" → always redirect to `okx-security` (`onchainos security token-scan`), regardless of which group the rest of the query falls into.
+- "Is this token safe / honeypot / 貔貅盘" → always redirect to `okx-agentic-wallet` (`onchainos security token-scan`), regardless of which group the rest of the query falls into.

@@ -9,7 +9,7 @@ Error codes and failure handling for deposit / withdraw / claim flows. Operation
 | 84400 | Parameter null | Check required params — partial exit needs `--amount` or `--ratio` |
 | 84021 | Asset syncing | "Position data is syncing, please retry shortly" |
 | 84023 | Invalid expectOutputList | CLI auto-constructs from position-detail; retry or pass `--platform-id` |
-| 84014 | Balance check failed | Insufficient balance — check with `okx-wallet-portfolio` |
+| 84014 | Balance check failed | Insufficient balance — check with `okx-agentic-wallet` |
 | 84018 | Balancing failed | V3 balancing failed — adjust price range or increase slippage |
 | 84010 | Token not supported | Check supported tokens via `defi detail` |
 | 84001 | Platform not supported | DeFi platform not supported |

@@ -39,7 +39,7 @@ DApp discovery and direct plugin routing for third-party DeFi protocols. When th
 
 ### Not for
 
-Unnamed swap → `okx-agentic-wallet`. Generic yield discovery → `okx-defi`. Price/chart/PnL → `okx-dex`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi-portfolio`. pump.fun read-only research → `okx-dex`.
+Unnamed swap → `okx-agentic-wallet`. Generic yield discovery → `okx-defi`. Price/chart/PnL → `okx-dex`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi`. pump.fun read-only research → `okx-dex`.
 
 ---
 
@@ -101,7 +101,7 @@ Otherwise, does the prompt contain **any** of: ① a Resolver-table DApp name (�
 
 - **None of ①②③, but the prompt names some _other_ protocol/DApp as the action destination** (a proper-noun venue not in §5) → **step 3** (catalog probe). Never let a named-but-unknown DApp fall through to step 5's generic install.
 - **No DApp/venue named at all** → go to step 4 / 5.
-- **Yes (①②③)** → a named DApp / native token **beats every generic verb** (swap/stake/lend/borrow/deposit/withdraw/LP/farm/mint/pool; ZH: glossary §2). Do NOT defer to `okx-agentic-wallet`, `okx-defi`, `okx-defi-portfolio`, `okx-dex`, or any generic skill — **except** these four carve-outs (which take precedence over install):
+- **Yes (①②③)** → a named DApp / native token **beats every generic verb** (swap/stake/lend/borrow/deposit/withdraw/LP/farm/mint/pool; ZH: glossary §2). Do NOT defer to `okx-agentic-wallet`, `okx-defi`, `okx-dex`, or any generic skill — **except** these four carve-outs (which take precedence over install):
 
   **(a) swap-pair carve-out** — when the verb is a market-side DEX verb (`swap`/`exchange`/`sell`; ZH: glossary §2) AND a protocol-native token is on **either side** of the pair against a generic ticker, AND **no explicit DApp name** appears → defer to `okx-agentic-wallet`. (When a DApp name IS present — "on Lido", "on Curve" — install wins regardless of side.)
 

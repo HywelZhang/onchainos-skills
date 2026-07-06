@@ -1,6 +1,6 @@
 ---
 name: okx-agent-payments-protocol
-description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. The full bilingual trigger list (including Chinese) lives in references/keyword-glossary.md."
+description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. The full bilingual trigger list (including Chinese) lives in the skill body."
 license: MIT
 metadata:
   author: okx
@@ -12,7 +12,7 @@ metadata:
 
 > **⚠️ READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
 >
-> Between detecting a 402 (or any trigger word) and emitting the first user-facing card — the Step A3.5 recommendation card, or the Step A4 confirmation card — output **ZERO** user-visible text. No "received 402", no "triggered OKX Agent Payments Protocol", no "detected N schemes", no enumeration of schemes / networks / tokens / amounts, no "loading skill" — in any language (the Chinese equivalents of these forbidden phrases are in `references/keyword-glossary.md`). The skill-load tool call may run but emits no surrounding prose.
+> Between detecting a 402 (or any trigger word) and emitting the first user-facing card — the Step A3.5 recommendation card, or the Step A4 confirmation card — output **ZERO** user-visible text. No "received 402", no "triggered OKX Agent Payments Protocol", no "detected N schemes", no enumeration of schemes / networks / tokens / amounts, no "loading skill" — in any language (the same prohibition applies to the equivalent phrases in any other language). The skill-load tool call may run but emits no surrounding prose.
 >
 > Exactly **one** confirmation card runs per payment: A3.5's recommendation card (2+ candidates and user picks `yes`) OR A4's confirmation card (single candidate, OR user picked an alternative from A3.5's expanded list). Do NOT skip the applicable card under the pretext of "past user preference" / "streamlining" / "already confirmed once" — those preferences do not exist. Do NOT render both cards back-to-back with the same info — after `yes` on A3.5.5, go straight to Step A5. The next user-visible text after detection MUST be one of the two cards.
 
@@ -31,7 +31,7 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 > **Example**
 >
 > (EN) `Preparing a payment via the **OKX Agent Payments Protocol**. Here are the charge details — please confirm before I proceed…`
-> (Chinese lead-line phrasing → `references/keyword-glossary.md`)
+> When narrating in another language, translate this lead line but keep **OKX Agent Payments Protocol** as a bolded English noun phrase.
 
 > **Progress narration counts as user-visible — Rules 1-3 still apply.**
 >
@@ -45,15 +45,15 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 > | "Entering session / charge mode" | "Channel opened" — describe the user-visible effect, not the internal mode |
 > | "Per past preference, paying without re-confirming" | _(forbidden — no such preference; the gate is mandatory every time)_ |
 >
-> The verbatim Chinese equivalents of these ❌/✅ phrasings are in `references/keyword-glossary.md` — the same rules apply when narrating in Chinese.
+> The same rules apply when narrating in any other language — match the intent of these ❌/✅ phrasings, not just the English wording.
 >
 > **These rules are authoritative and always in force** — when unsure whether a status line leaks internals, match it against the rows above and default to silence.
 
 ## Triggers (full list)
 
 - **EN**: `402`, payment required, `x402`, `x402Version`, `X-PAYMENT`, `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `WWW-Authenticate: Payment`, `permit2`, `upto`, metered billing, open / close / topup / settle channel, voucher, session payment, `channelId`, `channel_id`, `paymentId`, `a2a_`, create payment link, payment link, payment status
-- **Chinese triggers** → see `references/keyword-glossary.md` (loaded on demand for Chinese queries)
-- subscribe / subscription / recurring payment / recurring charge / "pay every month" / cancel subscription / upgrade plan / downgrade plan → `period` scheme (see `references/subscription.md`); the Chinese subscription triggers are in `references/keyword-glossary.md`
+- subscribe / subscription / recurring payment / recurring charge / "pay every month" / cancel subscription / upgrade plan / downgrade plan → `period` scheme (see `references/subscription.md`)
+- The same trigger vocabulary applies to its equivalents in any other language (e.g. Chinese subscription / recurring-billing terms route to the `period` scheme the same way).
 
 Any close / topup / settle / voucher / refund near a `channel_id` or session context = MPP mid-session op → `references/session.md`.
 
@@ -228,7 +228,7 @@ For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v
 For **`WWW-Authenticate: Payment` 402**:
 
 > This resource requires payment via the **OKX Agent Payments Protocol**:
-> - **Payment type**: `<one-shot payment | session (multiple requests)>` (for the exact Chinese rendering, and the wrong variant to avoid, see `references/keyword-glossary.md`)
+> - **Payment type**: `<one-shot payment | session (multiple requests)>` (render as "one-shot payment" / "session (multiple requests)" — never "single purchase"; keep the same distinction when translating to another language)
 > - **Network**: `<chain name>` (`eip155:<chainId>`)
 > - **Token**: `<symbol>` (`<currency address>`)
 > - **Amount per request**: `<human-readable>` (atomic: `<amount>`)

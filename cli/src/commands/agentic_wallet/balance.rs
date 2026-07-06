@@ -263,7 +263,11 @@ struct TokenBalanceResponse {
     token_name: Value,
     #[serde(default, rename = "chainIndex", skip_serializing_if = "Value::is_null")]
     chain_index: Value,
-    #[serde(default, rename = "tokenAddress", skip_serializing_if = "Value::is_null")]
+    #[serde(
+        default,
+        rename = "tokenAddress",
+        skip_serializing_if = "Value::is_null"
+    )]
     token_address: Value,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     balance: Value,

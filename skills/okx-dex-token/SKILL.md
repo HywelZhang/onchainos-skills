@@ -4,7 +4,7 @@ description: "Use this skill for token-level data: search tokens, trending/hot t
 license: MIT
 metadata:
   author: okx
-  version: "4.0.0"
+  version: "4.1.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -71,7 +71,7 @@ When one of the following commands is used, show the related workflow hint after
 | 13 | `onchainos token cluster-supported-chains` | Chains supported by holder cluster analysis |
 
 <IMPORTANT>
-"Is this token safe / honeypot / 貔貅盘" → always redirect to `okx-security` (`onchainos security token-scan`). Do not attempt to answer safety questions from token data alone.
+"Is this token safe / honeypot / 貔貅盘" → always redirect to `okx-agentic-wallet` (`onchainos security token-scan`). Do not attempt to answer safety questions from token data alone.
 </IMPORTANT>
 
 ### Step 1: Collect Parameters

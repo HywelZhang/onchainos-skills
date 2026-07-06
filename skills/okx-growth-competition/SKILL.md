@@ -4,7 +4,7 @@ description: "List OKX Agentic Wallet exclusive trading competitions, register u
 license: MIT
 metadata:
   author: okx
-  version: "4.0.0"
+  version: "4.1.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -60,7 +60,7 @@ Quick router (user intent → reference file + section):
 | "list competitions / show available competitions" | `references/participation.md` | Step 1 — Discover |
 | "show details / show rules / show prize pool" | `references/details.md` | Step 2 — View Details |
 | "register / join" | `references/participation.md` | Step 3 — Join |
-| "trade for me" | `references/participation.md` | Step 4 — Trade (delegates to okx-dex-swap) |
+| "trade for me" | `references/participation.md` | Step 4 — Trade (delegates to okx-agentic-wallet) |
 | "leaderboard / full board / who is winning" | `references/rank.md` | Check leaderboard (full board) |
 | "my rank / what's my ranking / am I in the prize zone" | `references/rank.md` | Check user's own rank (across ALL leaderboards) |
 | "show registered wallet" | `references/participation.md` | Query Registered Wallet |

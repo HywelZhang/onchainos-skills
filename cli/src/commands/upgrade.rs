@@ -61,13 +61,14 @@ const DEPRECATED_SKILLS: &[&str] = &[
     // Merged into `okx-defi` (former deprecated stubs, now removed).
     "okx-defi-invest",
     "okx-defi-portfolio",
-    // Merged into `okx-dex` (former deprecated stubs, now removed).
-    "okx-dex-market",
+    // Merged into `okx-dex-market` (former deprecated stubs, now removed).
     "okx-dex-signal",
     "okx-dex-social",
     "okx-dex-token",
     "okx-dex-trenches",
     "okx-dex-ws",
+    // Renamed to `okx-dex-market` (old umbrella name, now removed).
+    "okx-dex",
 ];
 
 #[derive(clap::Args)]

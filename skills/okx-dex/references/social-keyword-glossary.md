@@ -1,4 +1,4 @@
-# Keyword Glossary — okx-dex-market (Social)
+# Keyword Glossary — okx-dex (Social)
 
 | Chinese | English | Maps To |
 |---|---|---|

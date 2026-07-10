@@ -12,11 +12,11 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::keyring_store;
-use crate::payment::permit2::eip712::{
+use crate::permit2_eip712::{
     build_exact_permit2_struct, build_exact_permit2_typed_data, build_upto_permit2_struct,
     build_upto_permit2_typed_data, permit2_domain, ExactPermit2Input, UptoPermit2Input,
 };
-use crate::payment::permit2::types::{
+use crate::permit2_types::{
     ExactPermit2Payload, Permit2Authorization, Permit2Permitted, Permit2Witness,
     UptoPermit2Authorization, UptoPermit2Payload, UptoPermit2Witness,
 };

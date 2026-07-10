@@ -1,4 +1,4 @@
-# Keyword Glossary — okx-dex-market (Signal)
+# Keyword Glossary — okx-dex (Signal)
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|

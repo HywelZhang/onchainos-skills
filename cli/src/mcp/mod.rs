@@ -13,8 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    competition, cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal,
-    social, swap, token, tracker, workflows,
+    competition, cross_chain, defi, gateway, leaderboard, market, memepump, payment, portfolio,
+    signal, social, swap, token, tracker, workflows,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -825,6 +825,75 @@ struct CrossChainBridgesParams {
     to_chain: Option<String>,
 }
 
+// ── Payment: two-phase quote/pay (WBW-13615) ────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentQuoteParams {
+    /// The A2MCP / merchant endpoint URL to probe.
+    url: String,
+    /// Known business params as "key=value" strings (optional, repeatable).
+    #[serde(default)]
+    param: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentPayParams {
+    /// The paymentId returned by payment_quote.
+    payment_id: String,
+    /// User-confirmed 0-based index into accepts[] (optional).
+    selected_index: Option<usize>,
+    /// Additional business params as "key=value" strings (optional).
+    #[serde(default)]
+    param: Vec<String>,
+    /// Approve the fund-moving payment (bypass the confirming gate). Default false.
+    #[serde(default)]
+    yes: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentDecodeReceiptParams {
+    /// x402 PAYMENT-RESPONSE header value (base64/base64url). Provide this OR receipt.
+    header: Option<String>,
+    /// Raw charge receipt JSON string. Provide this OR header.
+    receipt: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentSessionParams {
+    /// Operation: "open" | "voucher" | "topup" | "close".
+    action: String,
+    /// Channel id (required for voucher/topup/close).
+    channel_id: Option<String>,
+    /// WWW-Authenticate / 402 challenge value (as required by the op).
+    challenge: Option<String>,
+    /// Per-voucher unit amount (atomic string), for voucher.
+    unit_amount: Option<String>,
+    /// Prior authorized cumulative amount (atomic string). The decision layer
+    /// adds unit_amount to this; omit for the first voucher (treated as 0).
+    cumulative_amount: Option<String>,
+    /// Escrow address (op-dependent).
+    escrow: Option<String>,
+    /// Chain id (op-dependent).
+    chain_id: Option<u64>,
+    /// Deposit amount for open/topup (atomic string).
+    deposit: Option<String>,
+    /// Payer address (optional; defaults to selected account).
+    from: Option<String>,
+    /// Existing voucher signature to reuse (reuse-vs-sign signal; F16).
+    reuse_signature: Option<String>,
+    /// Seller-reported cumulative from a 70015 drift error; forces a resign (F18).
+    server_cumulative: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentA2aStatusParams {
+    /// The a2a payment id.
+    payment_id: String,
+    /// Poll to terminal state (3s interval, 60s ceiling). Default false = one-shot.
+    #[serde(default)]
+    wait: bool,
+}
+
 #[derive(Clone)]
 pub struct McpServer {
     tool_router: ToolRouter<Self>,
@@ -890,10 +959,7 @@ fn resolve_competition_addresses(
 /// input parses as a number we use it directly; otherwise we resolve via
 /// `competition::resolve_activity_id_by_name`. This avoids the wasted
 /// "first call fails with bad request, retry with id" pattern.
-async fn resolve_activity_identifier(
-    client: &mut ApiClient,
-    raw: &str,
-) -> anyhow::Result<String> {
+async fn resolve_activity_identifier(client: &mut ApiClient, raw: &str) -> anyhow::Result<String> {
     if raw.parse::<u64>().is_ok() {
         return Ok(raw.to_string());
     }
@@ -934,6 +1000,94 @@ fn err(e: anyhow::Error) -> Result<String, String> {
 
 #[tool_router]
 impl McpServer {
+    // ── Payment: two-phase quote/pay (WBW-13615) ────────────────────────
+    // These delegate to `commands::payment::fetch_*`, which self-construct a
+    // WalletApiClient — they do NOT lock `self.client` (payment does not use the
+    // shared ApiClient). Bodies are thin: fetch → ok/err.
+
+    #[tool(
+        name = "payment_quote",
+        description = "Probe an HTTP 402 / A2MCP endpoint, parse the challenge, preflight balance, rank candidates, and return a paymentId to confirm before paying. Read-only; never signs."
+    )]
+    async fn payment_quote(
+        &self,
+        Parameters(p): Parameters<PaymentQuoteParams>,
+    ) -> Result<String, String> {
+        match payment::fetch_quote(&p.url, &p.param).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_pay",
+        description = "Complete a previously-quoted payment by paymentId: sign via TEE, replay to the merchant, and return the receipt. Fund-moving; returns a confirming prompt unless yes=true."
+    )]
+    async fn payment_pay(
+        &self,
+        Parameters(p): Parameters<PaymentPayParams>,
+    ) -> Result<String, String> {
+        match payment::fetch_pay(&p.payment_id, p.selected_index, &p.param, p.yes).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_decode_receipt",
+        description = "Decode an x402 PAYMENT-RESPONSE header or a charge receipt into a normalized {status, transaction, amount, payer, chainId}. No auth, no funds."
+    )]
+    async fn payment_decode_receipt(
+        &self,
+        Parameters(p): Parameters<PaymentDecodeReceiptParams>,
+    ) -> Result<String, String> {
+        match payment::fetch_decode_receipt(p.header.as_deref(), p.receipt.as_deref()) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_session",
+        description = "Run an MPP channel-session op (open/voucher/topup/close); the CLI decides reuse-vs-sign, cumulative amount, top-up need, and refund."
+    )]
+    async fn payment_session(
+        &self,
+        Parameters(p): Parameters<PaymentSessionParams>,
+    ) -> Result<String, String> {
+        let params = payment::SessionParams {
+            action: p.action,
+            channel_id: p.channel_id,
+            challenge: p.challenge,
+            unit_amount: p.unit_amount,
+            cumulative_amount: p.cumulative_amount,
+            escrow: p.escrow,
+            chain_id: p.chain_id,
+            deposit: p.deposit,
+            from: p.from,
+            reuse_signature: p.reuse_signature,
+            server_cumulative: p.server_cumulative,
+        };
+        match payment::fetch_session(params).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_a2a_status",
+        description = "Query an a2a-pay payment's status; with wait=true, poll internally (3s/60s) until terminal or timeout."
+    )]
+    async fn payment_a2a_status(
+        &self,
+        Parameters(p): Parameters<PaymentA2aStatusParams>,
+    ) -> Result<String, String> {
+        match payment::a2a_pay::fetch_status(&p.payment_id, p.wait).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
     #[tool(
         name = "token_search",
         description = "Search tokens by name/symbol/address across chains. Default limit is 20 to prevent token overflow. Use cursor for pagination."
@@ -2212,11 +2366,11 @@ impl McpServer {
                 Ok(v) => v,
                 Err(e) => return err(e),
             };
-        let to_token =
-            match crate::token_alias::resolve_and_validate(&to_chain_index, &p.to, "to") {
-                Ok(v) => v,
-                Err(e) => return err(e),
-            };
+        let to_token = match crate::token_alias::resolve_and_validate(&to_chain_index, &p.to, "to")
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         let sort = p.sort.as_deref();
         // Hold a single guard across resolve_amount_arg + fetch_quote so the
         // pair runs as one atomic unit on the shared ApiClient.
@@ -2267,12 +2421,12 @@ impl McpServer {
         let chain_idx = crate::chains::resolve_chain(&p.from_chain).to_string();
         let tx_hash = match (p.tx_hash, p.order_id) {
             (Some(h), None) => h,
-            (None, Some(oid)) => match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx)
-                .await
-            {
-                Ok(h) => h,
-                Err(e) => return err(e),
-            },
+            (None, Some(oid)) => {
+                match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx).await {
+                    Ok(h) => h,
+                    Err(e) => return err(e),
+                }
+            }
             (Some(_), Some(_)) => {
                 return Err("provide tx_hash OR order_id, not both".to_string());
             }
@@ -2632,12 +2786,8 @@ impl McpServer {
             },
             None => None,
         };
-        match competition::user_status_all_for_mcp(
-            &mut client,
-            activity_id.as_deref(),
-            &account_id,
-        )
-        .await
+        match competition::user_status_all_for_mcp(&mut client, activity_id.as_deref(), &account_id)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -2656,10 +2806,11 @@ Returns `joined: true` plus `activityId` (internal — never show to the user) a
         Parameters(p): Parameters<CompetitionJoinParams>,
     ) -> Result<String, String> {
         let mut client = self.client.lock().await;
-        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
-            Ok(pair) => pair,
-            Err(e) => return err(e),
-        };
+        let (evm_wallet, sol_wallet) =
+            match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+                Ok(pair) => pair,
+                Err(e) => return err(e),
+            };
         let activity_id =
             match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
                 Ok(id) => id,
@@ -2691,22 +2842,18 @@ Pre-check rejections (rewardStatus 0/2/3, code 11002, code 11008) are semantic �
         Parameters(p): Parameters<CompetitionClaimParams>,
     ) -> Result<String, String> {
         let mut client = self.client.lock().await;
-        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
-            Ok(pair) => pair,
-            Err(e) => return err(e),
-        };
+        let (evm_wallet, sol_wallet) =
+            match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+                Ok(pair) => pair,
+                Err(e) => return err(e),
+            };
         let activity_id =
             match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
                 Ok(id) => id,
                 Err(e) => return err(e),
             };
-        match competition::claim_and_submit(
-            &mut client,
-            &activity_id,
-            &evm_wallet,
-            &sol_wallet,
-        )
-        .await
+        match competition::claim_and_submit(&mut client, &activity_id, &evm_wallet, &sol_wallet)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),

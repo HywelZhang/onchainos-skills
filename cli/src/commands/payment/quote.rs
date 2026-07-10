@@ -1,0 +1,605 @@
+//! `payment quote` — probe an HTTP 402 / A2MCP endpoint, parse the payment
+//! challenge, run a wallet/balance preflight, rank candidates, and persist a
+//! `paymentId` for a later `payment pay --payment-id` (FR-1). Never signs.
+//!
+//! The heavy mechanical work the agent used to do by hand (curl, base64 decode,
+//! `accepts` parse, amount conversion, balance filter, recommendation ranking)
+//! all lives here so the agent collapses to a 2-round playbook.
+
+use std::collections::BTreeSet;
+use std::time::Duration;
+
+use anyhow::{anyhow, Result};
+use serde::Serialize;
+use serde_json::{Map, Value};
+
+use super::payment_flow::{self, extract_amount};
+use super::state::{self, AcceptEntry, Candidate, DecodedChallenge, PaymentState};
+use crate::output;
+
+/// Machine tokens (leading word of `output::error`).
+pub const TOKEN_ENDPOINT_UNREACHABLE: &str = "endpoint_unreachable";
+pub const TOKEN_UNSUPPORTED: &str = "unsupported";
+pub const TOKEN_INVALID_INPUT: &str = "invalid_input";
+
+/// Merchant-probe timeout — merchant hosts are arbitrary, so bound tightly.
+const PROBE_TIMEOUT_SECS: u64 = 10;
+
+/// `payment quote` `data` shape (stability contract — see `cli_command_spec.md`).
+#[derive(Serialize)]
+struct QuoteData {
+    #[serde(rename = "paymentId")]
+    payment_id: String,
+    #[serde(rename = "needsConfirm")]
+    needs_confirm: bool,
+    summary: String,
+    #[serde(rename = "nextStep")]
+    next_step: String,
+    accepts: Vec<AcceptEntry>,
+    #[serde(rename = "knownParams")]
+    known_params: Map<String, Value>,
+    #[serde(rename = "merchantBody")]
+    merchant_body: String,
+    #[serde(rename = "missingParams")]
+    missing_params: Vec<String>,
+    candidates: Vec<Candidate>,
+    alternatives: Vec<Candidate>,
+    #[serde(rename = "decodedChallenge")]
+    decoded_challenge: DecodedChallenge,
+    #[serde(rename = "walletError", skip_serializing_if = "Option::is_none")]
+    wallet_error: Option<String>,
+}
+
+/// CLI handler: run the quote and print the always-on envelope. Classified
+/// probe/parse failures propagate as `Err` so `main.rs` renders `output::error`
+/// (exit 1); `walletError` / all-zero-balance are `Ok` data (exit 0).
+pub async fn run(url: &str, param: &[String]) -> Result<()> {
+    let data = fetch_quote(url, param).await?;
+    output::success(data);
+    Ok(())
+}
+
+/// Data path shared by the CLI handler and the `payment_quote` MCP tool.
+/// Returns the `data` payload (`QuoteData` serialized to `Value`).
+pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
+    let known_params = parse_params(param)?;
+
+    let outcome = probe_endpoint(url, &known_params).await?;
+    let (challenge_header, merchant_body) = match outcome {
+        ProbeOutcome::NoCharge { body } => {
+            // 200 → nothing to pay. Emit a read-only "free" quote (no paymentId
+            // written, nothing signed).
+            let data = QuoteData {
+                payment_id: String::new(),
+                needs_confirm: false,
+                summary: "Endpoint returned 200 — no payment required".to_string(),
+                next_step: String::new(),
+                accepts: vec![],
+                known_params,
+                merchant_body: body,
+                missing_params: vec![],
+                candidates: vec![],
+                alternatives: vec![],
+                decoded_challenge: free_challenge(),
+                wallet_error: None,
+            };
+            return serde_json::to_value(data).map_err(Into::into);
+        }
+        ProbeOutcome::Challenge { header, body } => (header, body),
+    };
+
+    // Decode the challenge blob (reuses the shared base64 / WWW-Authenticate
+    // decoder) and pull the accepts[] array.
+    let decoded = super::dispatcher::decode_payment_blob(&challenge_header)
+        .map_err(|e| anyhow!("{TOKEN_UNSUPPORTED}: could not decode 402 challenge: {e}"))?;
+    let accepts_val = decoded
+        .get("accepts")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .ok_or_else(|| anyhow!("{TOKEN_UNSUPPORTED}: 402 challenge has no accepts[] array"))?;
+    if accepts_val.is_empty() {
+        return Err(anyhow!(
+            "{TOKEN_UNSUPPORTED}: 402 challenge accepts[] is empty"
+        ));
+    }
+
+    let accepts = build_accepts(&accepts_val)?;
+    let decoded_challenge = build_decoded_challenge(&accepts_val)?;
+    if !decoded_challenge.supported {
+        let reason = decoded_challenge
+            .unsupported_reason
+            .clone()
+            .unwrap_or_else(|| "no supported scheme".to_string());
+        return Err(anyhow!("{TOKEN_UNSUPPORTED}: {reason}"));
+    }
+
+    // Build candidates, then run the wallet/balance preflight (best-effort;
+    // login_required / balance_unavailable never abort the read-only quote).
+    let mut candidates = build_candidates(&accepts_val, &accepts)?;
+    let wallet_error = preflight_balances(&mut candidates).await;
+
+    let (candidates, alternatives) = payment_flow::rank_candidates(candidates);
+
+    // Persisted state keeps the full ranked set (winner + alternatives) keyed by
+    // `acceptsIndex`, not just the winner, so `payment pay`'s confirming preview
+    // can render whichever `--selected-index` (an accepts[] index) the user pins.
+    let mut state_candidates = candidates.clone();
+    state_candidates.extend(alternatives.clone());
+
+    // Persist state for `pay` (no key, no signed blob — see state.rs).
+    let created_at = now_unix();
+    let owner = state::current_owner_id().unwrap_or_default();
+    let payment_id = new_payment_id(url, created_at);
+    let expires_at = state::compute_expires_at(decoded_challenge.expires, created_at);
+    let missing_params = missing_params(&merchant_body, &known_params);
+
+    let st = PaymentState {
+        payment_id: payment_id.clone(),
+        owner_wallet: owner,
+        created_at,
+        expires_at,
+        accepts: accepts.clone(),
+        decoded_challenge: decoded_challenge.clone(),
+        candidates: state_candidates,
+        known_params: known_params.clone(),
+        merchant_body: merchant_body.clone(),
+        endpoint_url: url.to_string(),
+        raw_accepts: accepts_val.clone(),
+        resource: decoded.get("resource").cloned(),
+    };
+    st.write()?;
+
+    let summary = build_summary(&candidates, &alternatives, &decoded_challenge);
+    let next_step =
+        format!("onchainos payment pay --payment-id {payment_id} --selected-index <n> --yes");
+
+    let data = QuoteData {
+        payment_id,
+        needs_confirm: true,
+        summary,
+        next_step,
+        accepts,
+        known_params,
+        merchant_body,
+        missing_params,
+        candidates,
+        alternatives,
+        decoded_challenge,
+        wallet_error,
+    };
+    serde_json::to_value(data).map_err(Into::into)
+}
+
+// ── Param parsing ──────────────────────────────────────────────────────
+
+/// Parse repeatable `--param key=value` into a JSON object. Malformed entries
+/// (no `=`, empty key) → `invalid_input`.
+fn parse_params(param: &[String]) -> Result<Map<String, Value>> {
+    let mut map = Map::new();
+    for raw in param {
+        let (k, v) = raw.split_once('=').ok_or_else(|| {
+            anyhow!("{TOKEN_INVALID_INPUT}: --param must be key=value, got '{raw}'")
+        })?;
+        let k = k.trim();
+        if k.is_empty() {
+            return Err(anyhow!(
+                "{TOKEN_INVALID_INPUT}: --param key must not be empty"
+            ));
+        }
+        map.insert(k.to_string(), Value::String(v.to_string()));
+    }
+    Ok(map)
+}
+
+// ── Endpoint probe ─────────────────────────────────────────────────────
+
+enum ProbeOutcome {
+    /// HTTP 200 — endpoint served content without a payment challenge.
+    NoCharge { body: String },
+    /// HTTP 402 — a payment challenge header + the merchant response body.
+    Challenge { header: String, body: String },
+}
+
+/// Probe the merchant endpoint with a freshly-built `reqwest::Client`
+/// (`ApiClient` is host-locked to web3.okx.com and cannot be reused here).
+/// Known params ride as query string. Non-402/non-200 or transport failure →
+/// `endpoint_unreachable`.
+async fn probe_endpoint(url: &str, known_params: &Map<String, Value>) -> Result<ProbeOutcome> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(PROBE_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {e}"))?;
+
+    let query: Vec<(String, String)> = known_params
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+        .collect();
+
+    let resp = client
+        .get(url)
+        .query(&query)
+        .send()
+        .await
+        .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {e}"))?;
+
+    let status = resp.status();
+    // Grab the payment challenge header before consuming the body.
+    let header = resp
+        .headers()
+        .get("PAYMENT-REQUIRED")
+        .or_else(|| resp.headers().get("WWW-Authenticate"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let body = resp.text().await.unwrap_or_default();
+
+    if status.as_u16() == 402 {
+        // Some servers put the challenge in the body rather than a header.
+        let header = header.unwrap_or_else(|| body.clone());
+        Ok(ProbeOutcome::Challenge { header, body })
+    } else if status.is_success() {
+        Ok(ProbeOutcome::NoCharge { body })
+    } else {
+        Err(anyhow!(
+            "{TOKEN_ENDPOINT_UNREACHABLE}: unexpected HTTP {} (expected 402 or 200)",
+            status.as_u16()
+        ))
+    }
+}
+
+// ── Accepts / challenge shaping ─────────────────────────────────────────
+
+fn build_accepts(accepts_val: &[Value]) -> Result<Vec<AcceptEntry>> {
+    accepts_val
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            Ok(AcceptEntry {
+                index: i,
+                scheme: e
+                    .get("scheme")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                amount: extract_amount(e).unwrap_or_default(),
+                asset: e
+                    .get("asset")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                network: e
+                    .get("network")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Build the `decodedChallenge` from the best entry. Supported iff at least one
+/// entry uses a known EVM scheme.
+fn build_decoded_challenge(accepts_val: &[Value]) -> Result<DecodedChallenge> {
+    let (entry, _scheme) = payment_flow::select_accept_with_preference(accepts_val, None)
+        .map_err(|e| anyhow!("{TOKEN_UNSUPPORTED}: {e}"))?;
+    let amount = extract_amount(&entry).unwrap_or_default();
+    let decimals = entry
+        .get("extra")
+        .and_then(|x| x.get("decimals"))
+        .or_else(|| entry.get("decimals"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(6) as u32;
+    let recipient = entry
+        .get("payTo")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let expires = accepts_val
+        .iter()
+        .find_map(|e| e.get("expires").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+
+    let known_scheme =
+        |s: &str| matches!(s, "exact" | "aggr_deferred" | "charge" | "upto" | "period");
+    let supported = accepts_val
+        .iter()
+        .filter_map(|e| e.get("scheme").and_then(|v| v.as_str()))
+        .any(known_scheme);
+    let unsupported_reason = if supported {
+        None
+    } else {
+        Some("no supported payment scheme in accepts[]".to_string())
+    };
+
+    Ok(DecodedChallenge {
+        amount: amount.clone(),
+        amount_human: human_amount(&amount, decimals),
+        decimals,
+        recipient,
+        expires,
+        supported,
+        unsupported_reason,
+    })
+}
+
+fn build_candidates(accepts_val: &[Value], accepts: &[AcceptEntry]) -> Result<Vec<Candidate>> {
+    accepts
+        .iter()
+        .map(|a| {
+            let entry = &accepts_val[a.index];
+            let chain_id = a
+                .network
+                .strip_prefix("eip155:")
+                .unwrap_or(&a.network)
+                .to_string();
+            let is_mainnet = payment_flow::is_mainnet_chain(&chain_id);
+            let chain_name = crate::chains::chain_display_name(&chain_id).to_string();
+            let token_symbol = entry
+                .get("extra")
+                .and_then(|x| x.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| a.asset.clone());
+            let decimals = entry
+                .get("extra")
+                .and_then(|x| x.get("decimals"))
+                .or_else(|| entry.get("decimals"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(6) as u32;
+            Ok(Candidate {
+                scheme: a.scheme.clone(),
+                accepts_index: a.index,
+                chain_id,
+                chain_name,
+                is_mainnet,
+                token_symbol,
+                amount: a.amount.clone(),
+                amount_human: human_amount(&a.amount, decimals),
+                has_balance: false,
+                recommended: None,
+            })
+        })
+        .collect()
+}
+
+// ── Wallet / balance preflight ──────────────────────────────────────────
+
+/// Best-effort per-candidate balance check. Returns `Some(walletError)`:
+/// `login_required` when no wallet is logged in, `balance_unavailable` when the
+/// balance fetch fails. Never aborts the (read-only) quote.
+async fn preflight_balances(candidates: &mut [Candidate]) -> Option<String> {
+    let wallets = match crate::wallet_store::load_wallets() {
+        Ok(Some(w)) if !w.selected_account_id.is_empty() => w,
+        _ => return Some("login_required".to_string()),
+    };
+    let account = wallets.accounts_map.get(&wallets.selected_account_id)?;
+
+    let mut client = match crate::client::ApiClient::new(None) {
+        Ok(c) => c,
+        Err(_) => return Some("balance_unavailable".to_string()),
+    };
+
+    let mut any_error = false;
+    let chain_ids: BTreeSet<String> = candidates.iter().map(|c| c.chain_id.clone()).collect();
+    for chain_id in chain_ids {
+        let Some(addr) = account
+            .address_list
+            .iter()
+            .find(|a| a.chain_index == chain_id)
+            .map(|a| a.address.clone())
+        else {
+            continue;
+        };
+        match crate::commands::portfolio::fetch_all_balances(
+            &mut client,
+            &addr,
+            &chain_id,
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(bal) => {
+                for c in candidates.iter_mut().filter(|c| c.chain_id == chain_id) {
+                    c.has_balance = json_has_positive_balance(&bal, &c.token_symbol);
+                }
+            }
+            Err(_) => any_error = true,
+        }
+    }
+    if any_error {
+        Some("balance_unavailable".to_string())
+    } else {
+        None
+    }
+}
+
+/// Heuristic scan of an OKX `all-token-balances-by-address` response for a
+/// positive balance whose symbol matches `symbol` (case-insensitive). The safe
+/// fallback is `false` (→ the ranker asks the user rather than auto-picking).
+fn json_has_positive_balance(balances: &Value, symbol: &str) -> bool {
+    fn positive(s: &str) -> bool {
+        s.chars().any(|c| c.is_ascii_digit() && c != '0') || s.parse::<f64>().is_ok_and(|f| f > 0.0)
+    }
+    fn walk(v: &Value, symbol: &str) -> bool {
+        match v {
+            Value::Array(a) => a.iter().any(|e| walk(e, symbol)),
+            Value::Object(o) => {
+                let sym_match = o
+                    .get("symbol")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(symbol));
+                if sym_match {
+                    let bal = o
+                        .get("balance")
+                        .or_else(|| o.get("balanceRawAmount"))
+                        .or_else(|| o.get("rawBalance"));
+                    if let Some(b) = bal.and_then(|v| v.as_str()) {
+                        if positive(b) {
+                            return true;
+                        }
+                    }
+                }
+                o.values().any(|e| walk(e, symbol))
+            }
+            _ => false,
+        }
+    }
+    walk(balances, symbol)
+}
+
+// ── Summary / missing params / id / amount helpers ──────────────────────
+
+fn build_summary(
+    candidates: &[Candidate],
+    _alternatives: &[Candidate],
+    challenge: &DecodedChallenge,
+) -> String {
+    if let Some(pick) = candidates
+        .iter()
+        .find(|c| c.recommended == Some(true))
+        .or_else(|| candidates.first())
+    {
+        format!(
+            "Will pay {} {} ({}, {})",
+            pick.amount_human, pick.token_symbol, pick.scheme, pick.chain_name
+        )
+    } else {
+        format!("Will pay {}", challenge.amount_human)
+    }
+}
+
+/// Params the merchant body appears to require but the caller did not supply.
+/// Best-effort: scans the body for `"<key>"` tokens that look like param names
+/// and are absent from `known_params`. Conservative — only flags an explicit
+/// `missingParams` / `required` list the merchant returns.
+fn missing_params(merchant_body: &str, known_params: &Map<String, Value>) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<Value>(merchant_body) else {
+        return vec![];
+    };
+    let list = v
+        .get("missingParams")
+        .or_else(|| v.get("required"))
+        .and_then(|v| v.as_array());
+    let Some(list) = list else { return vec![] };
+    list.iter()
+        .filter_map(|e| e.as_str())
+        .filter(|k| !known_params.contains_key(*k))
+        .map(|k| k.to_string())
+        .collect()
+}
+
+fn now_unix() -> u64 {
+    chrono::Utc::now().timestamp().max(0) as u64
+}
+
+/// Derive a non-secret, opaque paymentId from the endpoint + a high-resolution
+/// timestamp. Not a credential — just a state-file handle.
+fn new_payment_id(url: &str, created_at: u64) -> String {
+    use sha2::{Digest, Sha256};
+    let nanos = chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or(created_at as i64);
+    let mut hasher = Sha256::new();
+    hasher.update(url.as_bytes());
+    hasher.update(created_at.to_le_bytes());
+    hasher.update(nanos.to_le_bytes());
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().take(12).map(|b| format!("{b:02x}")).collect();
+    format!("pay_{hex}")
+}
+
+/// String-based atomic→human conversion (no float rounding, per NFR §2.14).
+fn human_amount(atomic: &str, decimals: u32) -> String {
+    let digits: String = atomic.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return "0".to_string();
+    }
+    let d = decimals as usize;
+    if d == 0 {
+        let trimmed = digits.trim_start_matches('0');
+        return if trimmed.is_empty() {
+            "0".into()
+        } else {
+            trimmed.to_string()
+        };
+    }
+    let padded = format!("{digits:0>width$}", width = d + 1);
+    let split = padded.len() - d;
+    let int_part = padded[..split].trim_start_matches('0');
+    let int_part = if int_part.is_empty() { "0" } else { int_part };
+    let frac = padded[split..].trim_end_matches('0');
+    if frac.is_empty() {
+        int_part.to_string()
+    } else {
+        format!("{int_part}.{frac}")
+    }
+}
+
+fn free_challenge() -> DecodedChallenge {
+    DecodedChallenge {
+        amount: "0".into(),
+        amount_human: "0".into(),
+        decimals: 0,
+        recipient: String::new(),
+        expires: 0,
+        supported: true,
+        unsupported_reason: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_params_builds_object() {
+        let out = parse_params(&["orderId=42".into(), "note=hi there".into()]).unwrap();
+        assert_eq!(out.get("orderId").unwrap(), "42");
+        assert_eq!(out.get("note").unwrap(), "hi there");
+    }
+
+    #[test]
+    fn parse_params_rejects_malformed() {
+        let err = parse_params(&["noequals".into()]).unwrap_err();
+        assert!(err.to_string().starts_with(TOKEN_INVALID_INPUT));
+        let err2 = parse_params(&["=v".into()]).unwrap_err();
+        assert!(err2.to_string().starts_with(TOKEN_INVALID_INPUT));
+    }
+
+    #[test]
+    fn human_amount_no_rounding() {
+        assert_eq!(human_amount("10000", 6), "0.01");
+        assert_eq!(human_amount("1000000", 6), "1");
+        assert_eq!(human_amount("1234567", 6), "1.234567");
+        assert_eq!(human_amount("0", 6), "0");
+        assert_eq!(human_amount("500", 0), "500");
+    }
+
+    #[test]
+    fn balance_scan_matches_symbol() {
+        let bal = serde_json::json!({
+            "data": [{ "tokenAssets": [
+                { "symbol": "USDC", "balance": "12.5" },
+                { "symbol": "ETH", "balance": "0" }
+            ]}]
+        });
+        assert!(json_has_positive_balance(&bal, "usdc"));
+        assert!(!json_has_positive_balance(&bal, "eth"));
+        assert!(!json_has_positive_balance(&bal, "dai"));
+    }
+
+    #[test]
+    fn missing_params_reads_explicit_list() {
+        let body = r#"{"missingParams":["orderId","email"]}"#;
+        let known = parse_params(&["email=a@b.c".into()]).unwrap();
+        assert_eq!(missing_params(body, &known), vec!["orderId".to_string()]);
+        assert!(missing_params("not json", &known).is_empty());
+    }
+
+    #[test]
+    fn payment_id_is_opaque_and_prefixed() {
+        let id = new_payment_id("https://m.example/x", 1000);
+        assert!(id.starts_with("pay_"));
+        assert_eq!(id.len(), 4 + 24);
+    }
+}

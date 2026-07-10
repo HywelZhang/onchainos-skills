@@ -1,6 +1,6 @@
 ---
 name: okx-agent-payments-protocol
-description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. The full bilingual trigger list (including Chinese) lives in the skill body."
+description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. Two-phase quote/pay: `payment quote`, `payment pay --payment-id`, `decode-receipt`. The full bilingual trigger list (including Chinese) lives in the skill body."
 license: MIT
 metadata:
   author: okx
@@ -72,6 +72,9 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 | 402 + `WWW-Authenticate: Payment`, `intent="charge"` | `payment charge --challenge` | `references/charge.md` |
 | 402 + `WWW-Authenticate: Payment`, `intent="session"` (or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
 | paymentId / `a2a_…` link / create-or-check payment link | `payment a2a-pay create/pay/status` | `references/a2a_charge.md` |
+| A2MCP / 402 endpoint URL, "pay this endpoint", entry A/B payment node | `payment quote <url> [--param k=v ...]` | (inline — Path A) |
+| User confirmed the quoted payment (currency/amount/scheme chosen) | `payment pay --payment-id <id> [--selected-index <n>] --yes` | (inline — Path A) |
+| Need to decode a `PAYMENT-RESPONSE` header or a charge receipt | `payment decode-receipt (--header <b64> \| --receipt <json>)` | (inline — read-only) |
 
 > **Don't load a reference on the success path.** When `onchainos payment pay` returns an `authorization_header` (x402 v2 — the normal `exact` / `aggr_deferred` / `upto` outcome), replay directly per Step A6 and skip `references/accepts-schemes.md` entirely. Load it only on a **failure / legacy** path: `Permit2 allowance insufficient` → `references/accepts-schemes.md` (one-time approve), or a legacy x402 v1 raw proof → its "Legacy: x402 v1" section. `charge` / `session` / `a2a_charge` are always loaded — those are multi-phase flows.
 
@@ -81,7 +84,47 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 
 # Path A: HTTP 402
 
-## Step A1: Start from the original response
+## Path A (accepts-based): quote → confirm → pay — PREFERRED 2-round flow
+
+**For an `accepts`-based 402 / A2MCP endpoint, the CLI does all mechanical work.
+You do exactly two reasoning rounds.** (For `WWW-Authenticate: Payment` charge /
+session challenges, skip this and use the protocol-detection steps below.)
+
+### Step A1 — Extract params (round 1)
+From the user prompt (Entry A) or the task payment node (Entry B), extract the
+endpoint `url` and any known business params. Do NOT curl, decode, or convert
+anything yourself.
+
+### Step A2 — Quote
+Run: `onchainos payment quote <url> [--param key=value ...]`
+The CLI probes the endpoint, parses the 402, checks your wallet balance, ranks
+candidates, and writes a `paymentId`. Read `data`:
+- `summary` — the human one-liner. `needsConfirm` is always true here.
+- `candidates[]` (with `recommended:true`) and `alternatives[]` — the ranked schemes. Each carries `acceptsIndex` — its position in `accepts[]` (the ranked order differs from `accepts[]`, so never treat a candidate's list position as the index).
+- `missingParams[]` + `merchantBody` — params the CLI could not fill; find the rest in `merchantBody`.
+- `walletError` — if `login_required`, tell the user to log in, then re-quote.
+- `recommended:null` on every candidate ⇒ no balance anywhere; present the list and ask.
+
+### Step A3 — Confirm (round 2)  ⚠ MANDATORY — never skip
+Use `AskUserQuestion` to confirm: currency/amount, the chosen scheme, and any
+`missingParams`. Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
+(NOT its position in `candidates[]`/`alternatives[]`) so the CLI signs exactly the
+entry the user approved. **You MUST stop and confirm before paying — do not auto-pay.**
+
+### Step A4 — Pay
+Run: `onchainos payment pay --payment-id <id> --selected-index <n> --yes [--param key=value ...]`
+`--yes` is required (the fund-moving confirming gate). `pay` signs the quoted payload,
+replays, and returns the receipt — it never re-fetches the 402. Read `data.status`:
+- `success` → report `txHash`; (Entry B) the task system marks the node paid.
+- `failed` → surface `data.error`; offer retry.
+- `pending` → poll / await terminal, then continue.
+
+> To decode a returned `PAYMENT-RESPONSE` header or a charge receipt at any time,
+> run `onchainos payment decode-receipt (--header <b64> | --receipt <json>)`.
+
+---
+
+## Step A1: Start from the original response (legacy / WWW-Authenticate detail)
 
 You already have the original HTTP response. If it is **not 402**, return the body directly. Otherwise → Step A2.
 
@@ -322,6 +365,9 @@ After a successful payment + response, suggest conversationally:
 
 | Just completed | Suggest |
 |---|---|
+| `payment quote` returned `needsConfirm:true` | `AskUserQuestion` to confirm, then `payment pay --payment-id <id> --selected-index <n> --yes` |
+| `payment pay` returned `status:"success"` | Report `txHash`; if a `PAYMENT-RESPONSE` header is present, `payment decode-receipt --header <b64>` |
+| `payment pay` returned `status:"pending"` | `payment a2a-pay status --payment-id <id> --wait` (a2a) or await the facilitator callback |
 | Successful HTTP 402 replay | Check balance impact via `okx-agentic-wallet`; or make another request to the same resource |
 | Successful a2a payment | Verify post-payment balance via `okx-agentic-wallet` |
 | 402 on replay (expired) | Retry with a fresh signature |

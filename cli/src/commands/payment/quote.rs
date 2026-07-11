@@ -505,6 +505,19 @@ async fn build_candidates(
 /// Best-effort per-candidate balance check. Returns `Some(walletError)`:
 /// `login_required` when no wallet is logged in, `balance_unavailable` when the
 /// balance fetch fails. Never aborts the (read-only) quote.
+///
+/// F12 (short-TTL balance snapshot cache) is intentionally NOT implemented here.
+/// The two-phase architecture collapses the old multi-step flow into a single
+/// `payment quote`, which queries each (account, chainId) balance exactly once —
+/// so F12's original motive (reusing a snapshot across agent steps within one
+/// operation) is already covered by the architecture. A *cross-quote* on-disk
+/// cache would save a query only across separate `payment quote` invocations,
+/// but `has_balance` is a fund-adjacent recommendation hint: a stale cached
+/// "true" could auto-recommend a candidate the user can no longer afford. The
+/// staleness risk on a fund path outweighs the marginal token/latency saving on
+/// a hint that `pay`'s confirming gate + on-chain settle re-validate anyway, so
+/// F12 is treated as covered-by-architecture rather than adding a stale-prone
+/// balance cache. (WBW-13615 review, F12.)
 async fn preflight_balances(candidates: &mut [Candidate]) -> Option<String> {
     let wallets = match crate::wallet_store::load_wallets() {
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w,

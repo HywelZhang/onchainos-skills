@@ -2316,6 +2316,18 @@ mod tests {
             detect_permit2_route(&bare, &resolved_entry_with_scheme("exact")),
             (false, false)
         );
+
+        // charge → neither Permit2 branch, so `sign_payment_with_preference`
+        // takes the standard EIP-3009 TEE path (same as a plain exact) and
+        // `pay_from_state` can sign + replay a `--selected-index` charge
+        // candidate. Regression guard for the quote/pay charge-signability
+        // question: charge must NOT be routed to Permit2/upto and must NOT be
+        // rejected here.
+        let charge_entry = json!({"extra": {"assetTransferMethod": "eip3009"}});
+        assert_eq!(
+            detect_permit2_route(&charge_entry, &resolved_entry_with_scheme("charge")),
+            (false, false)
+        );
     }
 
     #[test]

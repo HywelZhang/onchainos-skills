@@ -12,10 +12,12 @@
 //!
 //! These are hermetic: they set `ONCHAINOS_HOME` to a per-test temp dir and, for
 //! the state-machine cases, pre-write the persisted quote state directly, so no
-//! wallet login or network is required. The live paths that DO require a running
-//! merchant/facilitator (`pay` replay 402 → `pending`, and a successful replay)
-//! are covered by the `payment_flow` unit tests' status-mapping logic; a full
-//! network replay is intentionally out of scope for a hermetic CLI test.
+//! wallet login or network is required. A full CLI-level `pay` replay stays out
+//! of scope here because the sign step before the replay needs a logged-in
+//! wallet + keyring + live wallet-backend calls; the merchant replay seam itself
+//! (`replay_merchant`) — including the 402 → `pending` and 200 → `success`
+//! status mapping — is covered hermetically against a local mock merchant in
+//! `payment_flow`'s `replay_merchant_maps_*` tests.
 
 mod common;
 

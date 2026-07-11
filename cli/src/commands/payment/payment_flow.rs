@@ -3146,4 +3146,105 @@ mod tests {
         assert_eq!(params.network, "eip155:196");
         assert_eq!(params.max_timeout_seconds, 300);
     }
+
+    // ── replay_merchant status mapping (mock merchant, hermetic) ──────────
+    //
+    // The full `payment pay` command cannot run hermetically: the sign step
+    // before the replay (`sign_payment_with_preference`) needs a logged-in
+    // wallet, keyring session, and live OKX wallet-backend calls. But the
+    // replay seam itself — the HTTP round-trip that maps the merchant status to
+    // `success` / `pending` / `failed` — is fully mockable. These tests stand up
+    // a one-shot local HTTP merchant and assert the 402 → `"pending"` and
+    // 200 → `"success"` branches end-to-end through the real reqwest client
+    // (closing the "402 → pending replay is only covered by unit status-mapping"
+    // gap called out in review).
+
+    /// Bind a one-shot HTTP merchant on an ephemeral loopback port that answers
+    /// the first request with `status_line` + `body`, then closes. Returns the
+    /// URL to hit and the server thread handle.
+    fn spawn_mock_merchant(
+        status_line: &'static str,
+        body: &'static str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock merchant");
+        let addr = listener.local_addr().expect("mock merchant addr");
+        let url = format!("http://{addr}/pay");
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                // Drain the request so the client's write completes before we
+                // reply (a single read covers a small GET's headers).
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (url, handle)
+    }
+
+    fn dummy_proof() -> PaymentProof {
+        PaymentProof::Eip3009 {
+            signature: "sig".into(),
+            authorization: json!({}),
+            session_cert: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_merchant_maps_402_to_pending() {
+        let (url, handle) = spawn_mock_merchant("402 Payment Required", r#"{"status":"settling"}"#);
+        let proof = dummy_proof();
+        let entry = json!({});
+        let (status, _tx, result, error, _receipt) = replay_merchant(
+            &url,
+            "GET",
+            &[],
+            "PAYMENT-SIGNATURE",
+            "dummy-header",
+            &[],
+            &proof,
+            &entry,
+        )
+        .await;
+        let _ = handle.join();
+        assert_eq!(status, "pending", "402 must map to a non-terminal pending");
+        assert!(
+            error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("non-terminal"),
+            "pending error must flag non-terminal: {error:?}"
+        );
+        // The merchant JSON body is surfaced verbatim for the caller/agent.
+        assert_eq!(result["status"].as_str(), Some("settling"));
+    }
+
+    #[tokio::test]
+    async fn replay_merchant_maps_200_to_success() {
+        let (url, handle) = spawn_mock_merchant("200 OK", r#"{"ok":true}"#);
+        let proof = dummy_proof();
+        let entry = json!({});
+        let (status, _tx, _result, error, _receipt) = replay_merchant(
+            &url,
+            "GET",
+            &[],
+            "PAYMENT-SIGNATURE",
+            "dummy-header",
+            &[],
+            &proof,
+            &entry,
+        )
+        .await;
+        let _ = handle.join();
+        assert_eq!(status, "success", "200 must map to success");
+        assert!(error.is_none(), "success must carry no error: {error:?}");
+    }
 }

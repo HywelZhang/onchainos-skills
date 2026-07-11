@@ -1717,7 +1717,7 @@ pub fn needs_top_up(current_cum: u128, unit_amount: u128, deposit: u128) -> bool
     current_cum.saturating_add(unit_amount) > deposit
 }
 
-/// F20 refund on close: `deposit - final_cum` (saturating; never negative).
+/// F17 refund on close: `deposit - final_cum` (saturating; never negative).
 pub fn compute_refund(deposit: u128, final_cum: u128) -> u128 {
     deposit.saturating_sub(final_cum)
 }

@@ -1782,7 +1782,15 @@ pub async fn fetch_session(params: SessionParams) -> Result<Value> {
 
     // F16 — reuse-vs-sign: a supplied prior signature means reuse, unless a drift
     // (F18) or a classified rejection (F20) forces a fresh signature.
-    let strategy = if drift.is_some() {
+    //
+    // F19 override: when the channel needs a top-up (the voucher would exceed the
+    // deposit) neither `sign` nor `reuse` is a valid next action — signing an
+    // over-deposit voucher cannot succeed. Emit an unambiguous `topup` so the
+    // agent's only signalled action is to fund the channel first, rather than the
+    // self-contradictory `sign`.
+    let strategy = if needs {
+        "topup"
+    } else if drift.is_some() {
         "sign"
     } else if params.reuse_signature.is_some() && recovery.is_none() {
         "reuse"
@@ -2127,6 +2135,9 @@ mod tests {
         };
         let data = fetch_session(params).await.unwrap();
         assert_eq!(data["needsTopUp"], true);
+        // F19: when a top-up is required, strategy must be the unambiguous `topup`
+        // (never `sign`) — signing an over-deposit voucher cannot succeed.
+        assert_eq!(data["strategy"], "topup");
     }
 
     #[tokio::test]
@@ -2170,9 +2181,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_session_recovery_forces_sign_over_reuse() {
-        // F20: an unacceptable voucher (amount exceeds deposit) forces a resign
-        // even when a reuse signature was offered.
+    async fn fetch_session_top_up_overrides_sign_and_reuse() {
+        // F19/F20: an unacceptable voucher (amount exceeds deposit) needs a
+        // top-up, so strategy must be `topup` — not `sign` and not `reuse` —
+        // even when a reuse signature was offered. `topup` is the only
+        // non-contradictory signal (recovery still classifies the reason).
         let params = SessionParams {
             action: "voucher".into(),
             reuse_signature: Some("0xreuse".into()),
@@ -2182,7 +2195,8 @@ mod tests {
             ..Default::default()
         };
         let data = fetch_session(params).await.unwrap();
-        assert_eq!(data["strategy"], "sign");
+        assert_eq!(data["strategy"], "topup");
+        assert_eq!(data["needsTopUp"], true);
         assert_eq!(data["recovery"], "amount_exceeds_deposit");
     }
 

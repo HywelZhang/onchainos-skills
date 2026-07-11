@@ -6,7 +6,7 @@
 //! `accepts` parse, amount conversion, balance filter, recommendation ranking)
 //! all lives here so the agent collapses to a 2-round playbook.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -104,7 +104,8 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
     }
 
     let accepts = build_accepts(&accepts_val)?;
-    let decoded_challenge = build_decoded_challenge(&accepts_val)?;
+    let mut resolver = DecimalResolver::new();
+    let decoded_challenge = build_decoded_challenge(&accepts_val, &mut resolver).await?;
     if !decoded_challenge.supported {
         let reason = decoded_challenge
             .unsupported_reason
@@ -115,7 +116,7 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
 
     // Build candidates, then run the wallet/balance preflight (best-effort;
     // login_required / balance_unavailable never abort the read-only quote).
-    let mut candidates = build_candidates(&accepts_val, &accepts)?;
+    let mut candidates = build_candidates(&accepts_val, &accepts, &mut resolver).await?;
     let wallet_error = preflight_balances(&mut candidates).await;
 
     let (candidates, alternatives) = payment_flow::rank_candidates(candidates);
@@ -276,18 +277,107 @@ fn build_accepts(accepts_val: &[Value]) -> Result<Vec<AcceptEntry>> {
         .collect()
 }
 
+/// Last-resort token decimals when neither the accepts entry nor the okx-dex
+/// token metadata yields a value. Only applied after both sources are exhausted
+/// (PRD §2.14/F6 forbids silently defaulting when metadata is available).
+const DEFAULT_DECIMALS: u32 = 6;
+
+/// Read the decimals an accepts entry declares inline (`extra.decimals` or a
+/// top-level `decimals`), accepting both numeric and string encodings.
+fn declared_decimals(entry: &Value) -> Option<u32> {
+    let v = entry
+        .get("extra")
+        .and_then(|x| x.get("decimals"))
+        .or_else(|| entry.get("decimals"))?;
+    v.as_u64()
+        .map(|n| n as u32)
+        .or_else(|| v.as_str().and_then(|s| s.parse::<u32>().ok()))
+}
+
+/// Extract `(chainIndex, tokenContractAddress)` from an accepts entry for an
+/// okx-dex metadata lookup. Returns `None` when the asset address is absent.
+fn entry_asset_and_chain(entry: &Value) -> Option<(String, String)> {
+    let asset = entry
+        .get("asset")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let network = entry.get("network").and_then(|v| v.as_str()).unwrap_or("");
+    let chain_id = network.strip_prefix("eip155:").unwrap_or(network);
+    Some((chain_id.to_string(), asset.to_string()))
+}
+
+/// Query the okx-dex token basic-info endpoint for a token's decimals by
+/// (chainIndex, contractAddress). Best-effort — returns `None` on any transport
+/// or shape failure so the caller can fall back without aborting the quote.
+async fn fetch_decimals_from_okx_dex(
+    client: &mut crate::client::ApiClient,
+    chain_id: &str,
+    address: &str,
+) -> Option<u32> {
+    let resp = crate::commands::token::fetch_info(client, address, chain_id)
+        .await
+        .ok()?;
+    let item = resp.as_array().and_then(|a| a.first())?;
+    // basic-info carries decimals in the `decimal` (string) field; accept a
+    // numeric `decimals` too for forward-compatibility.
+    item.get("decimal")
+        .and_then(|d| d.as_str())
+        .and_then(|s| s.parse::<u32>().ok())
+        .or_else(|| {
+            item.get("decimals")
+                .and_then(|d| d.as_u64())
+                .map(|n| n as u32)
+        })
+}
+
+/// Resolves token decimals for accepts entries, preferring the entry's declared
+/// value, then an okx-dex metadata lookup, and only then [`DEFAULT_DECIMALS`]
+/// (F6 / §2.14 — never silently default when metadata is reachable). Memoizes
+/// okx-dex lookups by (chainIndex, address) so a multi-scheme challenge for one
+/// token queries at most once.
+struct DecimalResolver {
+    client: Option<crate::client::ApiClient>,
+    memo: HashMap<(String, String), u32>,
+}
+
+impl DecimalResolver {
+    fn new() -> Self {
+        Self {
+            client: crate::client::ApiClient::new(None).ok(),
+            memo: HashMap::new(),
+        }
+    }
+
+    async fn resolve(&mut self, entry: &Value) -> u32 {
+        if let Some(d) = declared_decimals(entry) {
+            return d;
+        }
+        if let Some((chain_id, address)) = entry_asset_and_chain(entry) {
+            let key = (chain_id.clone(), address.clone());
+            if let Some(&d) = self.memo.get(&key) {
+                return d;
+            }
+            if let Some(client) = self.client.as_mut() {
+                if let Some(d) = fetch_decimals_from_okx_dex(client, &chain_id, &address).await {
+                    self.memo.insert(key, d);
+                    return d;
+                }
+            }
+        }
+        DEFAULT_DECIMALS
+    }
+}
+
 /// Build the `decodedChallenge` from the best entry. Supported iff at least one
 /// entry uses a known EVM scheme.
-fn build_decoded_challenge(accepts_val: &[Value]) -> Result<DecodedChallenge> {
+async fn build_decoded_challenge(
+    accepts_val: &[Value],
+    resolver: &mut DecimalResolver,
+) -> Result<DecodedChallenge> {
     let (entry, _scheme) = payment_flow::select_accept_with_preference(accepts_val, None)
         .map_err(|e| anyhow!("{TOKEN_UNSUPPORTED}: {e}"))?;
     let amount = extract_amount(&entry).unwrap_or_default();
-    let decimals = entry
-        .get("extra")
-        .and_then(|x| x.get("decimals"))
-        .or_else(|| entry.get("decimals"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(6) as u32;
+    let decimals = resolver.resolve(&entry).await;
     let recipient = entry
         .get("payTo")
         .and_then(|v| v.as_str())
@@ -321,44 +411,42 @@ fn build_decoded_challenge(accepts_val: &[Value]) -> Result<DecodedChallenge> {
     })
 }
 
-fn build_candidates(accepts_val: &[Value], accepts: &[AcceptEntry]) -> Result<Vec<Candidate>> {
-    accepts
-        .iter()
-        .map(|a| {
-            let entry = &accepts_val[a.index];
-            let chain_id = a
-                .network
-                .strip_prefix("eip155:")
-                .unwrap_or(&a.network)
-                .to_string();
-            let is_mainnet = payment_flow::is_mainnet_chain(&chain_id);
-            let chain_name = crate::chains::chain_display_name(&chain_id).to_string();
-            let token_symbol = entry
-                .get("extra")
-                .and_then(|x| x.get("name"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| a.asset.clone());
-            let decimals = entry
-                .get("extra")
-                .and_then(|x| x.get("decimals"))
-                .or_else(|| entry.get("decimals"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(6) as u32;
-            Ok(Candidate {
-                scheme: a.scheme.clone(),
-                accepts_index: a.index,
-                chain_id,
-                chain_name,
-                is_mainnet,
-                token_symbol,
-                amount: a.amount.clone(),
-                amount_human: human_amount(&a.amount, decimals),
-                has_balance: false,
-                recommended: None,
-            })
-        })
-        .collect()
+async fn build_candidates(
+    accepts_val: &[Value],
+    accepts: &[AcceptEntry],
+    resolver: &mut DecimalResolver,
+) -> Result<Vec<Candidate>> {
+    let mut out = Vec::with_capacity(accepts.len());
+    for a in accepts {
+        let entry = &accepts_val[a.index];
+        let chain_id = a
+            .network
+            .strip_prefix("eip155:")
+            .unwrap_or(&a.network)
+            .to_string();
+        let is_mainnet = payment_flow::is_mainnet_chain(&chain_id);
+        let chain_name = crate::chains::chain_display_name(&chain_id).to_string();
+        let token_symbol = entry
+            .get("extra")
+            .and_then(|x| x.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| a.asset.clone());
+        let decimals = resolver.resolve(entry).await;
+        out.push(Candidate {
+            scheme: a.scheme.clone(),
+            accepts_index: a.index,
+            chain_id,
+            chain_name,
+            is_mainnet,
+            token_symbol,
+            amount: a.amount.clone(),
+            amount_human: human_amount(&a.amount, decimals),
+            has_balance: false,
+            recommended: None,
+        });
+    }
+    Ok(out)
 }
 
 // ── Wallet / balance preflight ──────────────────────────────────────────
@@ -601,5 +689,40 @@ mod tests {
         let id = new_payment_id("https://m.example/x", 1000);
         assert!(id.starts_with("pay_"));
         assert_eq!(id.len(), 4 + 24);
+    }
+
+    #[test]
+    fn declared_decimals_reads_numeric_and_string_forms() {
+        // extra.decimals numeric.
+        assert_eq!(
+            declared_decimals(&serde_json::json!({"extra": {"decimals": 18}})),
+            Some(18)
+        );
+        // top-level decimals as a string.
+        assert_eq!(
+            declared_decimals(&serde_json::json!({"decimals": "8"})),
+            Some(8)
+        );
+        // extra wins over top-level.
+        assert_eq!(
+            declared_decimals(&serde_json::json!({"extra": {"decimals": 9}, "decimals": 6})),
+            Some(9)
+        );
+        // absent → None (caller falls back to okx-dex, then DEFAULT_DECIMALS).
+        assert_eq!(declared_decimals(&serde_json::json!({"asset": "0xabc"})), None);
+    }
+
+    #[test]
+    fn entry_asset_and_chain_strips_eip155_prefix() {
+        let entry = serde_json::json!({"asset": "0xUSDC", "network": "eip155:8453"});
+        assert_eq!(
+            entry_asset_and_chain(&entry),
+            Some(("8453".to_string(), "0xUSDC".to_string()))
+        );
+        // No asset → None (cannot query okx-dex).
+        assert_eq!(
+            entry_asset_and_chain(&serde_json::json!({"network": "eip155:1"})),
+            None
+        );
     }
 }

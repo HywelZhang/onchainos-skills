@@ -1296,18 +1296,25 @@ pub fn is_mainnet_chain(chain_id: &str) -> bool {
     crate::chains::is_mainnet_chain(chain_id)
 }
 
+/// Scheme priority within a tie (lower = preferred). `upto` is semantically
+/// exact-with-a-Permit2-cap, so it is docked adjacent to `exact` (ahead of
+/// `charge`) rather than left in the catch-all bucket. Note this rank only
+/// breaks ties between candidates of the same token+network+mainnet class; it
+/// does not decide multi-scheme *triggering* (that is the `{exact,
+/// aggr_deferred, charge}` set in `rank_candidates`, which excludes `upto`).
 fn scheme_rank(scheme: &str) -> u8 {
     match scheme {
         "aggr_deferred" => 0,
         "exact" => 1,
-        "charge" => 2,
-        _ => 3,
+        "upto" => 2,
+        "charge" => 3,
+        _ => 4,
     }
 }
 
 /// Lexicographic candidate comparator (`Less` = `a` is the better pick):
 /// ① same token → smaller atomic `amount` wins (never compared across tokens);
-/// ② mainnet before testnet; ③ scheme priority `aggr_deferred > exact > charge`.
+/// ② mainnet before testnet; ③ scheme priority `aggr_deferred > exact > upto > charge`.
 fn cmp_candidates(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     if a.token_symbol == b.token_symbol {
@@ -1885,6 +1892,16 @@ mod tests {
             cand("aggr_deferred", "DAI", "5000", true, true),
         ]);
         assert_eq!(c[0].scheme, "aggr_deferred");
+    }
+
+    #[test]
+    fn scheme_rank_docks_upto_adjacent_to_exact() {
+        // upto (exact-with-a-Permit2-cap) must rank ahead of charge, adjacent to
+        // exact — not in the catch-all bucket behind charge (F11 tie-break fix).
+        assert!(scheme_rank("aggr_deferred") < scheme_rank("exact"));
+        assert!(scheme_rank("exact") < scheme_rank("upto"));
+        assert!(scheme_rank("upto") < scheme_rank("charge"));
+        assert!(scheme_rank("charge") < scheme_rank("period"));
     }
 
     #[test]

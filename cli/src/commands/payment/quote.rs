@@ -23,6 +23,11 @@ use crate::output;
 pub const TOKEN_ENDPOINT_UNREACHABLE: &str = "endpoint_unreachable";
 pub const TOKEN_UNSUPPORTED: &str = "unsupported";
 pub const TOKEN_INVALID_INPUT: &str = "invalid_input";
+/// Merchant rejected the probe for an auth reason (401/403) — the agent should
+/// prompt the user to authenticate rather than blindly retry.
+pub const TOKEN_AUTH_REQUIRED: &str = "auth_required";
+/// Merchant returned a 5xx — transient server-side; the agent may retry.
+pub const TOKEN_ENDPOINT_SERVER_ERROR: &str = "endpoint_server_error";
 
 /// Merchant-probe timeout — merchant hosts are arbitrary, so bound tightly.
 const PROBE_TIMEOUT_SECS: u64 = 10;
@@ -270,10 +275,26 @@ async fn probe_endpoint(
     } else if status.is_success() {
         Ok(ProbeOutcome::NoCharge { body })
     } else {
+        let code = status.as_u16();
         Err(anyhow!(
-            "{TOKEN_ENDPOINT_UNREACHABLE}: unexpected HTTP {} (expected 402 or 200)",
-            status.as_u16()
+            "{}: unexpected HTTP {code} (expected 402 or 200)",
+            classify_probe_error(code)
         ))
+    }
+}
+
+/// Map a non-402/non-2xx probe status to a machine token so the agent can pick
+/// the right branch (auth prompt vs retry vs give up) instead of treating every
+/// failure as `endpoint_unreachable`:
+/// - 401/403 → `auth_required` (authenticate, do not blind-retry);
+/// - 5xx     → `endpoint_server_error` (transient — retry is reasonable);
+/// - other   → `endpoint_unreachable` (as before; transport errors keep this
+///   token too, classified at the `send()` call site).
+fn classify_probe_error(status: u16) -> &'static str {
+    match status {
+        401 | 403 => TOKEN_AUTH_REQUIRED,
+        500..=599 => TOKEN_ENDPOINT_SERVER_ERROR,
+        _ => TOKEN_ENDPOINT_UNREACHABLE,
     }
 }
 
@@ -761,6 +782,17 @@ mod tests {
         let out = parse_params(&["orderId=42".into(), "note=hi there".into()]).unwrap();
         assert_eq!(out.get("orderId").unwrap(), "42");
         assert_eq!(out.get("note").unwrap(), "hi there");
+    }
+
+    #[test]
+    fn classify_probe_error_subdivides_status() {
+        assert_eq!(classify_probe_error(401), TOKEN_AUTH_REQUIRED);
+        assert_eq!(classify_probe_error(403), TOKEN_AUTH_REQUIRED);
+        assert_eq!(classify_probe_error(500), TOKEN_ENDPOINT_SERVER_ERROR);
+        assert_eq!(classify_probe_error(503), TOKEN_ENDPOINT_SERVER_ERROR);
+        // Other 4xx and anything unclassified stay endpoint_unreachable.
+        assert_eq!(classify_probe_error(404), TOKEN_ENDPOINT_UNREACHABLE);
+        assert_eq!(classify_probe_error(418), TOKEN_ENDPOINT_UNREACHABLE);
     }
 
     #[test]

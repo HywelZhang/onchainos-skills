@@ -2,6 +2,7 @@ pub mod a2a_pay;
 pub mod addr;
 pub mod decode_receipt;
 pub mod dispatcher;
+pub mod http_carrier;
 pub mod payment_flow;
 pub mod quote;
 pub mod session_state;

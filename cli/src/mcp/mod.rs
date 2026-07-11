@@ -834,6 +834,15 @@ struct PaymentQuoteParams {
     /// Known business params as "key=value" strings (optional, repeatable).
     #[serde(default)]
     param: Vec<String>,
+    /// HTTP method to probe with ("GET" by default). Use "POST"/"PUT"/"PATCH"
+    /// for A2MCP endpoints whose paid call is not a GET — known params then ride
+    /// in the JSON body instead of the query string.
+    #[serde(default = "default_quote_method")]
+    method: String,
+}
+
+fn default_quote_method() -> String {
+    "GET".to_string()
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1013,7 +1022,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<PaymentQuoteParams>,
     ) -> Result<String, String> {
-        match payment::fetch_quote(&p.url, &p.param).await {
+        match payment::fetch_quote(&p.url, &p.param, &p.method).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

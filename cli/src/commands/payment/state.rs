@@ -91,6 +91,39 @@ pub struct DecodedChallenge {
     pub unsupported_reason: Option<String>,
 }
 
+/// Where a business param rides on the paid HTTP request (A2MCP
+/// `outputSchema.input[].carrier`, FR-1/A3-Params). `Query` is the default when
+/// the schema omits a carrier, preserving the pre-carrier GET+query behavior.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ParamCarrier {
+    #[default]
+    Query,
+    Body,
+    Header,
+    Path,
+}
+
+/// One resolved business-param spec from the merchant's `outputSchema.input`
+/// (Source 1) or a flat required list (Source 2). Persisted so `payment pay`
+/// can place each param on the right carrier when it replays the paid request.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ParamSpec {
+    pub name: String,
+    #[serde(default)]
+    pub carrier: ParamCarrier,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
+    pub type_: String,
+}
+
+/// Default paid-call HTTP method for legacy state files written before the
+/// carrier/method work — preserves the historical GET behavior.
+pub fn default_http_method() -> String {
+    "GET".to_string()
+}
+
 /// Persisted quote state. NOTE: intentionally holds no key material and no
 /// signed authorization — only the inputs needed to sign+replay in `pay`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -116,6 +149,15 @@ pub struct PaymentState {
     /// assembled `PAYMENT-SIGNATURE` header on `pay`. Absent for v1 challenges.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<Value>,
+    /// Paid-call HTTP method (A2MCP `outputSchema.method` / challenge `method`).
+    /// Defaults to `GET` for legacy states and simple x402 endpoints.
+    #[serde(default = "default_http_method")]
+    pub method: String,
+    /// Per-business-param carrier plan parsed from `outputSchema.input` (FR-1).
+    /// Empty for legacy states / endpoints that only use query params — `pay`
+    /// then falls back to method-based defaults (query for GET, body otherwise).
+    #[serde(default)]
+    pub param_plan: Vec<ParamSpec>,
 }
 
 /// `min(challenge_expires, created_at + MAX_QUOTE_TTL_SECS)`.
@@ -234,6 +276,8 @@ mod tests {
             endpoint_url: "https://merchant.example/x".into(),
             raw_accepts: vec![],
             resource: None,
+            method: default_http_method(),
+            param_plan: vec![],
         }
     }
 

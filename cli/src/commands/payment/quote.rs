@@ -14,7 +14,9 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::payment_flow::{self, extract_amount};
-use super::state::{self, AcceptEntry, Candidate, DecodedChallenge, PaymentState};
+use super::state::{
+    self, AcceptEntry, Candidate, DecodedChallenge, ParamCarrier, ParamSpec, PaymentState,
+};
 use crate::output;
 
 /// Machine tokens (leading word of `output::error`).
@@ -42,6 +44,8 @@ struct QuoteData {
     merchant_body: String,
     #[serde(rename = "missingParams")]
     missing_params: Vec<String>,
+    #[serde(rename = "paramPlan")]
+    param_plan: Vec<ParamSpec>,
     candidates: Vec<Candidate>,
     alternatives: Vec<Candidate>,
     #[serde(rename = "decodedChallenge")]
@@ -53,18 +57,18 @@ struct QuoteData {
 /// CLI handler: run the quote and print the always-on envelope. Classified
 /// probe/parse failures propagate as `Err` so `main.rs` renders `output::error`
 /// (exit 1); `walletError` / all-zero-balance are `Ok` data (exit 0).
-pub async fn run(url: &str, param: &[String]) -> Result<()> {
-    let data = fetch_quote(url, param).await?;
+pub async fn run(url: &str, param: &[String], method: &str) -> Result<()> {
+    let data = fetch_quote(url, param, method).await?;
     output::success(data);
     Ok(())
 }
 
 /// Data path shared by the CLI handler and the `payment_quote` MCP tool.
 /// Returns the `data` payload (`QuoteData` serialized to `Value`).
-pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
+pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Value> {
     let known_params = parse_params(param)?;
 
-    let outcome = probe_endpoint(url, &known_params).await?;
+    let outcome = probe_endpoint(url, &known_params, method).await?;
     let (challenge_header, merchant_body) = match outcome {
         ProbeOutcome::NoCharge { body } => {
             // 200 → nothing to pay. Emit a read-only "free" quote (no paymentId
@@ -78,6 +82,7 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
                 known_params,
                 merchant_body: body,
                 missing_params: vec![],
+                param_plan: vec![],
                 candidates: vec![],
                 alternatives: vec![],
                 decoded_challenge: free_challenge(),
@@ -114,6 +119,22 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
         return Err(anyhow!("{TOKEN_UNSUPPORTED}: {reason}"));
     }
 
+    // Parse the Bazaar `outputSchema` (Source 1): per-param carrier/required/type
+    // and the paid-call HTTP method. Falls back to the probe method when the
+    // schema does not pin one (FR-1/A3-Params).
+    let output_schema = find_output_schema(&decoded, &merchant_body);
+    let param_plan = output_schema
+        .as_ref()
+        .and_then(|s| s.get("input"))
+        .map(parse_param_plan)
+        .unwrap_or_default();
+    let paid_method = output_schema
+        .as_ref()
+        .and_then(|s| s.get("method"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| method.to_string());
+
     // Build candidates, then run the wallet/balance preflight (best-effort;
     // login_required / balance_unavailable never abort the read-only quote).
     let mut candidates = build_candidates(&accepts_val, &accepts, &mut resolver).await?;
@@ -132,7 +153,7 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
     let owner = state::current_owner_id().unwrap_or_default();
     let payment_id = new_payment_id(url, created_at);
     let expires_at = state::compute_expires_at(decoded_challenge.expires, created_at);
-    let missing_params = missing_params(&merchant_body, &known_params);
+    let missing_params = missing_params(&merchant_body, &known_params, &param_plan);
 
     let st = PaymentState {
         payment_id: payment_id.clone(),
@@ -147,6 +168,8 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
         endpoint_url: url.to_string(),
         raw_accepts: accepts_val.clone(),
         resource: decoded.get("resource").cloned(),
+        method: paid_method,
+        param_plan: param_plan.clone(),
     };
     st.write()?;
 
@@ -163,6 +186,7 @@ pub async fn fetch_quote(url: &str, param: &[String]) -> Result<Value> {
         known_params,
         merchant_body,
         missing_params,
+        param_plan,
         candidates,
         alternatives,
         decoded_challenge,
@@ -203,22 +227,28 @@ enum ProbeOutcome {
 
 /// Probe the merchant endpoint with a freshly-built `reqwest::Client`
 /// (`ApiClient` is host-locked to web3.okx.com and cannot be reused here).
-/// Known params ride as query string. Non-402/non-200 or transport failure →
-/// `endpoint_unreachable`.
-async fn probe_endpoint(url: &str, known_params: &Map<String, Value>) -> Result<ProbeOutcome> {
+/// The request is assembled per `method` (GET by default; POST/PUT/PATCH send
+/// known params as a JSON body) via [`http_carrier::build_request`], so a
+/// POST/body A2MCP endpoint can be probed rather than always GET+query. The
+/// per-param carrier plan is not yet known at probe time (it comes from the
+/// challenge/outputSchema), so probe uses the method-based carrier defaults.
+/// Non-402/non-200 or transport failure → `endpoint_unreachable`.
+async fn probe_endpoint(
+    url: &str,
+    known_params: &Map<String, Value>,
+    method: &str,
+) -> Result<ProbeOutcome> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(PROBE_TIMEOUT_SECS))
         .build()
         .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {e}"))?;
 
-    let query: Vec<(String, String)> = known_params
+    let params: Vec<(String, String)> = known_params
         .iter()
         .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
         .collect();
 
-    let resp = client
-        .get(url)
-        .query(&query)
+    let resp = super::http_carrier::build_request(&client, method, url, &params, &[])
         .send()
         .await
         .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {e}"))?;
@@ -556,24 +586,111 @@ fn build_summary(
     }
 }
 
-/// Params the merchant body appears to require but the caller did not supply.
-/// Best-effort: scans the body for `"<key>"` tokens that look like param names
-/// and are absent from `known_params`. Conservative — only flags an explicit
-/// `missingParams` / `required` list the merchant returns.
-fn missing_params(merchant_body: &str, known_params: &Map<String, Value>) -> Vec<String> {
-    let Ok(v) = serde_json::from_str::<Value>(merchant_body) else {
-        return vec![];
+/// Params the merchant requires but the caller did not supply. Two sources
+/// (FR-1/A3-Params):
+/// - Source 1 — the parsed `outputSchema.input` plan: every `required` param
+///   absent from `known_params`;
+/// - Source 2 — the merchant body's flat `missingParams` / `required` array.
+///
+/// The two are unioned (plan first), de-duplicated, and filtered to what the
+/// caller has not already provided.
+fn missing_params(
+    merchant_body: &str,
+    known_params: &Map<String, Value>,
+    plan: &[ParamSpec],
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let push_unique = |k: &str, out: &mut Vec<String>| {
+        if !known_params.contains_key(k) && !out.iter().any(|e| e == k) {
+            out.push(k.to_string());
+        }
     };
-    let list = v
-        .get("missingParams")
-        .or_else(|| v.get("required"))
-        .and_then(|v| v.as_array());
-    let Some(list) = list else { return vec![] };
-    list.iter()
-        .filter_map(|e| e.as_str())
-        .filter(|k| !known_params.contains_key(*k))
-        .map(|k| k.to_string())
-        .collect()
+
+    // Source 1: outputSchema.input required params.
+    for spec in plan.iter().filter(|s| s.required) {
+        push_unique(&spec.name, &mut out);
+    }
+
+    // Source 2: flat missingParams / required list on the merchant body.
+    if let Ok(v) = serde_json::from_str::<Value>(merchant_body) {
+        if let Some(list) = v
+            .get("missingParams")
+            .or_else(|| v.get("required"))
+            .and_then(|v| v.as_array())
+        {
+            for k in list.iter().filter_map(|e| e.as_str()) {
+                push_unique(k, &mut out);
+            }
+        }
+    }
+    out
+}
+
+/// Locate the merchant's `outputSchema` (Source 1 param descriptor). Prefers the
+/// decoded challenge, then the merchant response body.
+fn find_output_schema(decoded: &Value, merchant_body: &str) -> Option<Value> {
+    if let Some(s) = decoded.get("outputSchema") {
+        if !s.is_null() {
+            return Some(s.clone());
+        }
+    }
+    serde_json::from_str::<Value>(merchant_body)
+        .ok()
+        .and_then(|v| v.get("outputSchema").cloned())
+        .filter(|s| !s.is_null())
+}
+
+/// Map an `outputSchema.input` carrier string to [`ParamCarrier`]. Unknown /
+/// absent carriers default to `query` (the pre-carrier behavior).
+fn parse_carrier(s: &str) -> ParamCarrier {
+    match s.to_ascii_lowercase().as_str() {
+        "body" => ParamCarrier::Body,
+        "header" => ParamCarrier::Header,
+        "path" => ParamCarrier::Path,
+        _ => ParamCarrier::Query,
+    }
+}
+
+/// Build a [`ParamSpec`] from a single `outputSchema.input` entry.
+fn param_spec_from(name: &str, spec: &Value) -> ParamSpec {
+    ParamSpec {
+        name: name.to_string(),
+        carrier: spec
+            .get("carrier")
+            .and_then(|v| v.as_str())
+            .map(parse_carrier)
+            .unwrap_or_default(),
+        required: spec
+            .get("required")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        type_: spec
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    }
+}
+
+/// Parse `outputSchema.input` into a per-param plan. Accepts either the object
+/// map form (`{name: {carrier, required, type}}`) or an array of objects each
+/// carrying a `name` field.
+fn parse_param_plan(schema_input: &Value) -> Vec<ParamSpec> {
+    match schema_input {
+        Value::Object(map) => map
+            .iter()
+            .map(|(name, spec)| param_spec_from(name, spec))
+            .collect(),
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|spec| {
+                spec.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|name| param_spec_from(name, spec))
+            })
+            .collect(),
+        _ => vec![],
+    }
 }
 
 fn now_unix() -> u64 {
@@ -680,8 +797,79 @@ mod tests {
     fn missing_params_reads_explicit_list() {
         let body = r#"{"missingParams":["orderId","email"]}"#;
         let known = parse_params(&["email=a@b.c".into()]).unwrap();
-        assert_eq!(missing_params(body, &known), vec!["orderId".to_string()]);
-        assert!(missing_params("not json", &known).is_empty());
+        assert_eq!(
+            missing_params(body, &known, &[]),
+            vec!["orderId".to_string()]
+        );
+        assert!(missing_params("not json", &known, &[]).is_empty());
+    }
+
+    #[test]
+    fn missing_params_unions_plan_required_and_flat_list() {
+        // Plan requires orderId (missing) + email (supplied); flat list adds note.
+        let plan = vec![
+            ParamSpec {
+                name: "orderId".into(),
+                carrier: ParamCarrier::Query,
+                required: true,
+                type_: "string".into(),
+            },
+            ParamSpec {
+                name: "email".into(),
+                carrier: ParamCarrier::Body,
+                required: true,
+                type_: String::new(),
+            },
+        ];
+        let body = r#"{"required":["note","orderId"]}"#;
+        let known = parse_params(&["email=a@b.c".into()]).unwrap();
+        // orderId from plan (missing), note from flat list; email supplied so
+        // excluded; orderId not duplicated across the two sources.
+        assert_eq!(
+            missing_params(body, &known, &plan),
+            vec!["orderId".to_string(), "note".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_param_plan_object_and_array_forms() {
+        // Object-map form.
+        let obj = serde_json::json!({
+            "orderId": {"carrier": "path", "required": true, "type": "string"},
+            "sig": {"carrier": "header"}
+        });
+        let plan = parse_param_plan(&obj);
+        let order = plan.iter().find(|s| s.name == "orderId").unwrap();
+        assert_eq!(order.carrier, ParamCarrier::Path);
+        assert!(order.required);
+        assert_eq!(order.type_, "string");
+        let sig = plan.iter().find(|s| s.name == "sig").unwrap();
+        assert_eq!(sig.carrier, ParamCarrier::Header);
+        assert!(!sig.required);
+        // Array-of-objects form.
+        let arr = serde_json::json!([{"name": "q", "carrier": "query", "required": false}]);
+        let plan2 = parse_param_plan(&arr);
+        assert_eq!(plan2.len(), 1);
+        assert_eq!(plan2[0].name, "q");
+        assert_eq!(plan2[0].carrier, ParamCarrier::Query);
+    }
+
+    #[test]
+    fn find_output_schema_prefers_challenge_then_body() {
+        let decoded = serde_json::json!({"outputSchema": {"method": "POST"}});
+        assert_eq!(
+            find_output_schema(&decoded, "{}")
+                .and_then(|s| s.get("method").and_then(|v| v.as_str()).map(str::to_string)),
+            Some("POST".to_string())
+        );
+        // Falls back to the merchant body when the challenge lacks it.
+        let body = r#"{"outputSchema":{"method":"PUT"}}"#;
+        assert_eq!(
+            find_output_schema(&serde_json::json!({}), body)
+                .and_then(|s| s.get("method").and_then(|v| v.as_str()).map(str::to_string)),
+            Some("PUT".to_string())
+        );
+        assert!(find_output_schema(&serde_json::json!({}), "no schema here").is_none());
     }
 
     #[test]
@@ -709,7 +897,10 @@ mod tests {
             Some(9)
         );
         // absent → None (caller falls back to okx-dex, then DEFAULT_DECIMALS).
-        assert_eq!(declared_decimals(&serde_json::json!({"asset": "0xabc"})), None);
+        assert_eq!(
+            declared_decimals(&serde_json::json!({"asset": "0xabc"})),
+            None
+        );
     }
 
     #[test]

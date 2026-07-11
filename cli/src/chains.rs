@@ -440,11 +440,11 @@ mod tests {
     #[test]
     fn is_mainnet_chain_uses_registry_not_blacklist() {
         // Known mainnet chains in SUPPORTED_CHAIN_INDICES → mainnet.
-        assert!(is_mainnet_chain("1")); // Ethereum
-        assert!(is_mainnet_chain("8453")); // Base
-        assert!(is_mainnet_chain("196")); // X Layer
+        assert!(is_mainnet_chain("1"));
+        assert!(is_mainnet_chain("8453"));
+        assert!(is_mainnet_chain("196"));
         // Known testnet → not mainnet.
-        assert!(!is_mainnet_chain("1952")); // X Layer Testnet
+        assert!(!is_mainnet_chain("1952"));
         // F9 regression: an unrecognised chain (e.g. Sepolia = 11155111) must NOT
         // be assumed mainnet — the old blacklist defaulted unknowns to mainnet.
         assert!(!is_mainnet_chain("11155111"));
@@ -455,18 +455,18 @@ mod tests {
     #[test]
     fn chain_entry_is_mainnet_honors_flag_then_name() {
         // Explicit boolean flag wins.
-        assert!(!chain_entry_is_mainnet(
-            &serde_json::json!({"chainIndex": "8453", "chainName": "Base", "isTestnet": true})
-        ));
-        assert!(chain_entry_is_mainnet(
-            &serde_json::json!({"chainIndex": "8453", "chainName": "Base", "isTestnet": false})
-        ));
+        assert!(!chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "8453", "chainName": "Base", "isTestnet": true
+        })));
+        assert!(chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "8453", "chainName": "Base", "isTestnet": false
+        })));
         // No flag → name heuristic ("test" ⇒ testnet).
-        assert!(!chain_entry_is_mainnet(
-            &serde_json::json!({"chainIndex": "1952", "chainName": "X Layer Testnet"})
-        ));
-        assert!(chain_entry_is_mainnet(
-            &serde_json::json!({"chainIndex": "1", "chainName": "Ethereum"})
-        ));
+        assert!(!chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "1952", "chainName": "X Layer Testnet"
+        })));
+        assert!(chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "1", "chainName": "Ethereum"
+        })));
     }
 }

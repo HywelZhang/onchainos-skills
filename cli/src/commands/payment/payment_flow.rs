@@ -1286,7 +1286,7 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
 //  Two-phase quote/pay support (WBW-13615)
 // ════════════════════════════════════════════════════════════════════════
 
-use super::state::{self, Candidate, PaymentState};
+use super::state::{self, Candidate, ParamSpec, PaymentState};
 
 /// True unless `chain_id` is classified as a testnet by the chain registry (F9).
 /// Delegates to [`crate::chains::is_mainnet_chain`], which consults the dynamic
@@ -1552,9 +1552,12 @@ async fn pay_from_state(
         }
     };
 
-    // Replay the request with the signed header + business params.
+    // Replay the request with the signed header + business params, honoring the
+    // persisted paid-call method + per-param carrier plan (A2MCP outputSchema).
     let (status, tx_hash, result, error, decoded_receipt) = replay_merchant(
         &st.endpoint_url,
+        &st.method,
+        &st.param_plan,
         header_name,
         &header_value,
         biz_params,
@@ -1584,9 +1587,16 @@ async fn pay_from_state(
 /// Replay the paid request to the merchant. Never returns `Err` — a transport /
 /// non-200 outcome after signing is reported as `status:"failed"` so the
 /// already-signed authorization is recorded rather than lost.
+///
+/// The request is assembled per the persisted `method` + `param_plan`
+/// (A2MCP `outputSchema`) via [`http_carrier::build_request`], so a POST/body,
+/// header, or path-carrier endpoint is replayed correctly — not just GET+query.
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 async fn replay_merchant(
     url: &str,
+    method: &str,
+    plan: &[ParamSpec],
     header_name: &str,
     header_value: &str,
     biz_params: &[(String, String)],
@@ -1609,14 +1619,8 @@ async fn replay_merchant(
             );
         }
     };
-    let query: Vec<(&str, &str)> = biz_params
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let resp = client
-        .get(url)
+    let resp = super::http_carrier::build_request(&client, method, url, biz_params, plan)
         .header(header_name, header_value)
-        .query(&query)
         .send()
         .await;
     let resp = match resp {
@@ -2010,6 +2014,8 @@ mod tests {
                 json!({"scheme":"aggr_deferred","amount":"5000","network":"eip155:8453"}),
             ],
             resource: None,
+            method: state::default_http_method(),
+            param_plan: vec![],
         };
 
         // selecting accepts index 0 → signer uses the exact/10000 entry, so the

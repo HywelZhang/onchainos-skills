@@ -59,6 +59,11 @@ pub enum PaymentCommand {
         /// Known business param, repeatable: --param key=value
         #[arg(long = "param")]
         param: Vec<String>,
+        /// HTTP method to probe the endpoint with (GET by default). Use POST/PUT/
+        /// PATCH for A2MCP endpoints whose paid call is not a GET — known params
+        /// then ride in the JSON body instead of the query string.
+        #[arg(long, default_value = "GET")]
+        method: String,
     },
     /// Decode an x402 PAYMENT-RESPONSE header or a charge receipt into
     /// {status, transaction, amount, payer, chainId}. Read-only.
@@ -298,7 +303,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 cmd_pay(&payload, selected_index).await
             }
         }
-        PaymentCommand::Quote { url, param } => quote::run(&url, &param).await,
+        PaymentCommand::Quote { url, param, method } => quote::run(&url, &param, &method).await,
         PaymentCommand::DecodeReceipt { header, receipt } => {
             cmd_decode_receipt(header.as_deref(), receipt.as_deref())
         }
@@ -2378,9 +2383,10 @@ mod tests {
         ])
         .command
         {
-            PaymentCommand::Quote { url, param } => {
+            PaymentCommand::Quote { url, param, method } => {
                 assert_eq!(url, "https://m.example/x");
                 assert_eq!(param, vec!["a=1".to_string(), "b=2".to_string()]);
+                assert_eq!(method, "GET"); // default when --method is omitted
             }
             _ => panic!("expected Quote"),
         }

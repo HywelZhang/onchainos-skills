@@ -5,6 +5,7 @@
 //! outbound request through [`build_request`] so a POST+body (or header/path)
 //! endpoint is honored instead of the old hardcoded `GET` + query string.
 
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{Map, Value};
 
 use super::state::{ParamCarrier, ParamSpec};
@@ -58,7 +59,15 @@ pub fn build_request(
     for (k, v) in params {
         match carrier_for(k, plan, body_bearing) {
             ParamCarrier::Path => {
-                final_url = final_url.replace(&format!("{{{k}}}"), v);
+                // Percent-encode the value before substituting it into the URL
+                // path: a raw value containing spaces, `/`, `?`, `#`, `&` etc.
+                // would otherwise break out of its segment and produce a
+                // malformed or ambiguous URL. `NON_ALPHANUMERIC` keeps only the
+                // unreserved ASCII alphanumerics literal (a superset-safe set for
+                // a single path segment). query/body carriers are encoded by
+                // reqwest downstream and are deliberately left untouched here.
+                let encoded = utf8_percent_encode(v, NON_ALPHANUMERIC).to_string();
+                final_url = final_url.replace(&format!("{{{k}}}"), &encoded);
             }
             ParamCarrier::Query => query.push((k.clone(), v.clone())),
             ParamCarrier::Body => {
@@ -129,5 +138,22 @@ mod tests {
         assert_eq!(substituted, "https://m.example/orders/42");
         // Sanity: a Path-carrier param resolves to Path.
         assert_eq!(carrier_for("id", &plan, false), ParamCarrier::Path);
+    }
+
+    #[test]
+    fn path_value_is_percent_encoded_before_substitution() {
+        // A path value carrying spaces / reserved chars must not break out of
+        // its segment: `utf8_percent_encode(_, NON_ALPHANUMERIC)` escapes every
+        // non-alphanumeric byte, so the assembled URL stays well-formed.
+        let raw = "a b/c?d#e&f";
+        let encoded = utf8_percent_encode(raw, NON_ALPHANUMERIC).to_string();
+        assert_eq!(encoded, "a%20b%2Fc%3Fd%23e%26f");
+        // No structural URL delimiters survive in the encoded segment.
+        for ch in ['/', '?', '#', '&', ' '] {
+            assert!(
+                !encoded.contains(ch),
+                "encoded segment must not contain raw `{ch}`: {encoded}"
+            );
+        }
     }
 }

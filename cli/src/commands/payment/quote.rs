@@ -384,11 +384,16 @@ async fn fetch_decimals_from_okx_dex(
 /// Resolves token decimals for accepts entries, preferring the entry's declared
 /// value, then an okx-dex metadata lookup, and only then [`DEFAULT_DECIMALS`]
 /// (F6 / §2.14 — never silently default when metadata is reachable). Memoizes
-/// okx-dex lookups by (chainIndex, address) so a multi-scheme challenge for one
-/// token queries at most once.
+/// okx-dex lookups by (chainIndex, address) — including best-effort misses — so
+/// a multi-scheme challenge for one token queries okx-dex at most once, even
+/// when the lookup fails and the caller falls back to the default.
 struct DecimalResolver {
     client: Option<crate::client::ApiClient>,
-    memo: HashMap<(String, String), u32>,
+    /// (chainIndex, address) → resolved decimals, or `None` when the okx-dex
+    /// lookup was already attempted and yielded nothing. Caching the miss
+    /// (negative cache) is what prevents a second same-token candidate from
+    /// re-hitting basic-info after the first attempt failed.
+    memo: HashMap<(String, String), Option<u32>>,
 }
 
 impl DecimalResolver {
@@ -405,14 +410,15 @@ impl DecimalResolver {
         }
         if let Some((chain_id, address)) = entry_asset_and_chain(entry) {
             let key = (chain_id.clone(), address.clone());
-            if let Some(&d) = self.memo.get(&key) {
-                return d;
+            if !self.memo.contains_key(&key) {
+                let resolved = match self.client.as_mut() {
+                    Some(client) => fetch_decimals_from_okx_dex(client, &chain_id, &address).await,
+                    None => None,
+                };
+                self.memo.insert(key.clone(), resolved);
             }
-            if let Some(client) = self.client.as_mut() {
-                if let Some(d) = fetch_decimals_from_okx_dex(client, &chain_id, &address).await {
-                    self.memo.insert(key, d);
-                    return d;
-                }
+            if let Some(&Some(d)) = self.memo.get(&key) {
+                return d;
             }
         }
         DEFAULT_DECIMALS
@@ -960,5 +966,48 @@ mod tests {
             entry_asset_and_chain(&serde_json::json!({"network": "eip155:1"})),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn resolver_declared_decimals_never_touch_okx_dex_memo() {
+        // An inline-declared entry must resolve from `extra.decimals` alone,
+        // without recording a (chain,address) memo entry (no okx-dex lookup).
+        let mut resolver = DecimalResolver {
+            client: None,
+            memo: HashMap::new(),
+        };
+        let entry = serde_json::json!({
+            "asset": "0xUSDC", "network": "eip155:8453", "extra": {"decimals": 18}
+        });
+        assert_eq!(resolver.resolve(&entry).await, 18);
+        assert!(
+            resolver.memo.is_empty(),
+            "declared decimals must not memoize"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_negative_caches_missed_lookup_once() {
+        // With no okx-dex client, a token that declares no inline decimals falls
+        // back to DEFAULT_DECIMALS — and the (chain,address) miss is memoized as
+        // `None` so a second candidate for the same token does not re-attempt
+        // the lookup (the redundant-request guard from F6/optional feedback).
+        let mut resolver = DecimalResolver {
+            client: None,
+            memo: HashMap::new(),
+        };
+        let entry = serde_json::json!({"asset": "0xNODECIMALS", "network": "eip155:8453"});
+        assert_eq!(resolver.resolve(&entry).await, DEFAULT_DECIMALS);
+        assert_eq!(
+            resolver
+                .memo
+                .get(&("8453".to_string(), "0xNODECIMALS".to_string())),
+            Some(&None),
+            "a missed lookup must be negatively cached"
+        );
+        // Second resolve for the same token still returns the default and leaves
+        // exactly one memo entry — no duplicate (chain,address) key.
+        assert_eq!(resolver.resolve(&entry).await, DEFAULT_DECIMALS);
+        assert_eq!(resolver.memo.len(), 1);
     }
 }

@@ -72,7 +72,7 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 | 402 + `WWW-Authenticate: Payment`, `intent="charge"` | `payment charge --challenge` | `references/charge.md` |
 | 402 + `WWW-Authenticate: Payment`, `intent="session"` (or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
 | paymentId / `a2a_…` link / create-or-check payment link | `payment a2a-pay create/pay/status` | `references/a2a_charge.md` |
-| A2MCP / 402 endpoint URL, "pay this endpoint", entry A/B payment node | `payment quote <url> [--param k=v ...]` | (inline — Path A) |
+| A2MCP / 402 endpoint URL, "pay this endpoint", entry A/B payment node | `payment quote <url> [--param k=v ...] [--method GET \| POST \| ...]` | (inline — Path A) |
 | User confirmed the quoted payment (currency/amount/scheme chosen) | `payment pay --payment-id <id> [--selected-index <n>] --yes` | (inline — Path A) |
 | Need to decode a `PAYMENT-RESPONSE` header or a charge receipt | `payment decode-receipt (--header <b64> \| --receipt <json>)` | (inline — read-only) |
 
@@ -96,9 +96,20 @@ endpoint `url` and any known business params. Do NOT curl, decode, or convert
 anything yourself.
 
 ### Step A2 — Quote
-Run: `onchainos payment quote <url> [--param key=value ...]`
+Run: `onchainos payment quote <url> [--param key=value ...] [--method GET|POST|...]`
 The CLI probes the endpoint, parses the 402, checks your wallet balance, ranks
-candidates, and writes a `paymentId`. Read `data`:
+candidates, and writes a `paymentId`.
+
+> **Probe method** — the CLI probes with `GET` by default. When the service
+> declaration or the user's intent says the endpoint's initial call is **not GET**
+> (e.g. the Bazaar `outputSchema.method` / business mind-map declares `"POST"`, or
+> the user says "POST this endpoint"), pass `--method POST` (or the correct verb).
+> Known business params then ride in the JSON **body** instead of the query string.
+> Probing a POST-only A2MCP endpoint with the default GET can return 405 / a non-402
+> response → `endpoint_unreachable` instead of the payment challenge. (The paid replay
+> still uses `outputSchema.method` regardless — this flag only fixes the initial probe.)
+
+Read `data`:
 - `summary` — the human one-liner. `needsConfirm` is always true here.
 - `candidates[]` (with `recommended:true`) and `alternatives[]` — the ranked schemes. Each carries `acceptsIndex` — its position in `accepts[]` (the ranked order differs from `accepts[]`, so never treat a candidate's list position as the index).
 - `missingParams[]` + `merchantBody` — params the CLI could not fill; find the rest in `merchantBody`.

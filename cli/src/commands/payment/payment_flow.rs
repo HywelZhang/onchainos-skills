@@ -1288,12 +1288,12 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
 
 use super::state::{self, Candidate, PaymentState};
 
-/// Known testnet chainIndices (everything else in the supported map is mainnet).
-const TESTNET_CHAIN_INDICES: &[&str] = &["1952"];
-
-/// True unless `chain_id` is a known testnet index.
+/// True unless `chain_id` is classified as a testnet by the chain registry (F9).
+/// Delegates to [`crate::chains::is_mainnet_chain`], which consults the dynamic
+/// chain cache and the static registry rather than a hardcoded testnet blacklist
+/// (the old blacklist mis-judged unrecognised testnets like Sepolia as mainnet).
 pub fn is_mainnet_chain(chain_id: &str) -> bool {
-    !TESTNET_CHAIN_INDICES.contains(&chain_id)
+    crate::chains::is_mainnet_chain(chain_id)
 }
 
 fn scheme_rank(scheme: &str) -> u8 {

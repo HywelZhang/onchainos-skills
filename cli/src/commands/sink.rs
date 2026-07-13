@@ -282,6 +282,16 @@ where
                 .and_then(|it| cursor_as_string(&it[shape.cursor_key])),
             CursorMode::PageLevel => cursor_as_string(&page[shape.cursor_key]),
         };
+
+        // Cursor-advancement guard (WBW-13651 feedback). A page that yields no
+        // items but still hands back a non-empty forward cursor would spin —
+        // re-requesting empty pages until MAX_PAGES, burning paid upstream quota
+        // for nothing. Stop cleanly: there is nothing more to aggregate, and the
+        // last good continuation (if any) is already recorded.
+        if page_items.is_empty() && cont.as_deref().is_some_and(|c| !c.is_empty()) {
+            break;
+        }
+
         items.extend(page_items);
         last_continuation = cont.clone();
 
@@ -289,7 +299,31 @@ where
             break;
         }
         match cont {
-            Some(c) if !c.is_empty() => cursor = Some(c),
+            Some(c) if !c.is_empty() => {
+                // If upstream echoes back the very cursor we just queried with,
+                // advancing would re-fetch the same page indefinitely (up to
+                // MAX_PAGES), duplicating items and wasting quota (the news
+                // endpoint is metered). Stop and surface a structured partial.
+                if attempted.as_deref() == Some(c.as_str()) {
+                    let fetched = items.len();
+                    return Aggregated {
+                        items,
+                        next_cursor: Some(c.clone()),
+                        fetched_count: fetched,
+                        partial: true,
+                        error: Some(PartialError {
+                            code: "cursor_not_advancing".to_string(),
+                            field: None,
+                            message: format!(
+                                "upstream returned the same cursor '{c}' it was queried \
+                                 with; stopping to avoid re-fetching the same page"
+                            ),
+                            next_cursor: Some(c.clone()),
+                        }),
+                    };
+                }
+                cursor = Some(c);
+            }
             _ => break,
         }
     }
@@ -734,14 +768,69 @@ mod tests {
             cursor_key: "cursor",
             mode: CursorMode::PerItem,
         };
-        // Every page returns 1 item with a non-empty forward cursor forever.
+        // Every page returns 1 item with a DISTINCT forward cursor, so the loop
+        // advances legitimately and is bounded only by MAX_PAGES.
+        let mut n = 0u32;
+        let agg = auto_paginate(None, 1000, &shape, |_cur| {
+            n += 1;
+            let page = json!({ "list": [item(&format!("c{n}"))] });
+            async move { Ok(page) }
+        })
+        .await;
+        assert_eq!(agg.fetched_count, MAX_PAGES); // capped at 10 pages × 1 item
+        assert_eq!(agg.next_cursor.as_deref(), Some("c10"));
+        assert!(!agg.partial);
+    }
+
+    #[tokio::test]
+    async fn auto_paginate_stops_when_cursor_not_advancing() {
+        let shape = PageShape {
+            items_key: "list",
+            cursor_key: "cursor",
+            mode: CursorMode::PerItem,
+        };
+        // Upstream keeps echoing back the same cursor "x" it was queried with.
+        // Without the guard this spins to MAX_PAGES (10 duplicate items); with
+        // it, we aggregate the current page then stop before the next (repeat)
+        // fetch, per the "compare before advancing, return aggregated data"
+        // contract — bounding the damage to a single duplicate instead of nine.
         let agg = auto_paginate(None, 1000, &shape, |_cur| {
             let page = json!({ "list": [item("x")] });
             async move { Ok(page) }
         })
         .await;
-        assert_eq!(agg.fetched_count, MAX_PAGES); // capped at 10 pages × 1 item
+        assert!(agg.partial);
+        // Page 1 (cursor None → "x") and page 2 (requested with "x" → "x" again)
+        // are aggregated; the guard fires before a third, wasted fetch.
+        assert_eq!(agg.fetched_count, 2);
         assert_eq!(agg.next_cursor.as_deref(), Some("x"));
+        let err = agg.error.expect("partial error");
+        assert_eq!(err.code, "cursor_not_advancing");
+        assert_eq!(err.next_cursor.as_deref(), Some("x"));
+    }
+
+    #[tokio::test]
+    async fn auto_paginate_stops_on_empty_page_with_cursor() {
+        let shape = PageShape {
+            items_key: "list",
+            cursor_key: "cursor",
+            mode: CursorMode::PageLevel,
+        };
+        // First page has items + a forward cursor; the second page is empty but
+        // still advertises a (different) non-empty cursor. Continuing would only
+        // fetch more empty pages, so we stop cleanly with what we have.
+        let agg = auto_paginate(None, 100, &shape, |cur| {
+            let page = match cur.as_deref() {
+                None => json!({ "list": [item("a"), item("b")], "cursor": "p2" }),
+                _ => json!({ "list": [], "cursor": "p3" }),
+            };
+            async move { Ok(page) }
+        })
+        .await;
+        assert!(!agg.partial);
+        assert_eq!(agg.fetched_count, 2);
+        // last_continuation is the first page's cursor (the empty page is skipped).
+        assert_eq!(agg.next_cursor.as_deref(), Some("p2"));
     }
 
     #[tokio::test]

@@ -674,6 +674,43 @@ pub async fn rank_all(
     })?;
 
     // Enumerate de-duplicated descend sort types, preserving first-seen order.
+    let sort_types = enumerate_sort_types(&detail_data);
+
+    if sort_types.is_empty() {
+        return Err(crate::commands::sink::CodedError::new(
+            "no_leaderboards",
+            None,
+            "activity has no leaderboard config",
+        )
+        .into());
+    }
+
+    let mut boards: Vec<Value> = Vec::with_capacity(sort_types.len());
+    for st in sort_types {
+        match rank(client, activity_id, identity, st, limit).await {
+            Ok(mut board) => {
+                if let Some(obj) = board.as_object_mut() {
+                    obj.insert("sortType".to_string(), json!(st));
+                }
+                boards.push(board);
+            }
+            Err(e) => boards.push(error_board(st, &e)),
+        }
+    }
+
+    finalize_rank_all(activity_id, boards)
+}
+
+/// Enumerate the de-duplicated, leaderboard-only sort types from a competition
+/// `detail` payload, preserving first-seen order.
+///
+/// Pure (no I/O) so the fragile, line-shape-dependent parsing is unit-testable:
+/// * reads `tabConfigs[].rankFieldConfig[].sortValueMap.descend`;
+/// * accepts both JSON-number and numeric-string `descend` values;
+/// * filters out `descend <= 0` (non-leaderboard columns — `descend == 0` was an
+///   observed live-data footgun);
+/// * de-duplicates while preserving first-seen order.
+fn enumerate_sort_types(detail_data: &Value) -> Vec<i32> {
     let mut sort_types: Vec<i32> = Vec::new();
     if let Some(tabs) = detail_data.get("tabConfigs").and_then(Value::as_array) {
         for tab in tabs {
@@ -699,40 +736,26 @@ pub async fn rank_all(
             }
         }
     }
+    sort_types
+}
 
-    if sort_types.is_empty() {
-        return Err(crate::commands::sink::CodedError::new(
-            "no_leaderboards",
-            None,
-            "activity has no leaderboard config",
-        )
-        .into());
-    }
-
-    let mut boards: Vec<Value> = Vec::with_capacity(sort_types.len());
-    let mut any_success = false;
-    for st in sort_types {
-        match rank(client, activity_id, identity, st, limit).await {
-            Ok(mut board) => {
-                if let Some(obj) = board.as_object_mut() {
-                    obj.insert("sortType".to_string(), json!(st));
-                }
-                boards.push(board);
-                any_success = true;
-            }
-            Err(e) => {
-                boards.push(json!({
-                    "sortType": st,
-                    "error": {
-                        "code": "upstream_error",
-                        "message": format!("board {st} request failed: {e:#}"),
-                    }
-                }));
-            }
+/// Shape a single failed board into the `{sortType, error}` envelope so one
+/// board's failure never aborts the others.
+fn error_board(sort_type: i32, e: &anyhow::Error) -> Value {
+    json!({
+        "sortType": sort_type,
+        "error": {
+            "code": "upstream_error",
+            "message": format!("board {sort_type} request failed: {e:#}"),
         }
-    }
+    })
+}
 
-    // Overall succeeds only if at least one board was fetched (per FR-6 contract).
+/// Assemble the final `{activityId, boards}` result. Overall succeeds only if at
+/// least one board was fetched (a board with no top-level `error` key); if every
+/// board failed, surface a single `upstream_error` (per the FR-6 contract).
+fn finalize_rank_all(activity_id: &str, boards: Vec<Value>) -> Result<Value> {
+    let any_success = boards.iter().any(|b| b.get("error").is_none());
     if !any_success {
         return Err(crate::commands::sink::CodedError::new(
             "upstream_error",
@@ -741,7 +764,6 @@ pub async fn rank_all(
         )
         .into());
     }
-
     Ok(json!({ "activityId": activity_id, "boards": boards }))
 }
 
@@ -1470,5 +1492,104 @@ mod tests {
             compute_total_prize_pool(&json!({ "tabConfigs": [] })),
             Value::Null
         );
+    }
+
+    // ── FR-6: rank --all sortType enumeration + board fault-tolerance ──
+
+    #[test]
+    fn enumerate_sort_types_dedups_preserving_order() {
+        let data = json!({
+            "tabConfigs": [
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": 1 } },
+                    { "sortValueMap": { "descend": 7 } },
+                ] },
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": 7 } }, // dup of an earlier tab
+                    { "sortValueMap": { "descend": 3 } },
+                ] },
+            ]
+        });
+        assert_eq!(enumerate_sort_types(&data), vec![1, 7, 3]);
+    }
+
+    #[test]
+    fn enumerate_sort_types_filters_non_positive() {
+        // descend == 0 (the observed live-data footgun) and negatives are
+        // non-leaderboard columns and must be dropped.
+        let data = json!({
+            "tabConfigs": [
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": 0 } },
+                    { "sortValueMap": { "descend": -1 } },
+                    { "sortValueMap": { "descend": 2 } },
+                ] },
+            ]
+        });
+        assert_eq!(enumerate_sort_types(&data), vec![2]);
+    }
+
+    #[test]
+    fn enumerate_sort_types_parses_string_and_number_forms() {
+        // `descend` arrives as either a JSON number or a numeric string.
+        let data = json!({
+            "tabConfigs": [
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": "5" } },   // numeric string
+                    { "sortValueMap": { "descend": 6 } },     // number
+                    { "sortValueMap": { "descend": "0" } },   // string zero → filtered
+                    { "sortValueMap": { "descend": "abc" } }, // unparseable → skipped
+                ] },
+            ]
+        });
+        assert_eq!(enumerate_sort_types(&data), vec![5, 6]);
+    }
+
+    #[test]
+    fn enumerate_sort_types_empty_config_is_empty() {
+        assert!(enumerate_sort_types(&json!({})).is_empty());
+        assert!(enumerate_sort_types(&json!({ "tabConfigs": [] })).is_empty());
+        assert!(enumerate_sort_types(&json!({ "tabConfigs": [ { "rankFieldConfig": [] } ] })).is_empty());
+        // A tab missing rankFieldConfig entirely is skipped, not an error.
+        assert!(enumerate_sort_types(&json!({ "tabConfigs": [ { "other": 1 } ] })).is_empty());
+    }
+
+    #[test]
+    fn finalize_rank_all_tolerates_single_board_failure() {
+        // One board failed; the others must still be returned intact.
+        let ok_board = json!({ "sortType": 1, "list": [ { "rank": 1 } ] });
+        let bad_board = error_board(7, &anyhow::anyhow!("boom"));
+        let out = finalize_rank_all("42", vec![ok_board.clone(), bad_board.clone()])
+            .expect("at least one board succeeded → overall Ok");
+        assert_eq!(out["activityId"], "42");
+        let boards = out["boards"].as_array().unwrap();
+        assert_eq!(boards.len(), 2);
+        assert_eq!(boards[0], ok_board);
+        assert_eq!(boards[1]["sortType"], 7);
+        assert_eq!(boards[1]["error"]["code"], "upstream_error");
+    }
+
+    #[test]
+    fn finalize_rank_all_all_failed_is_upstream_error() {
+        let boards = vec![
+            error_board(1, &anyhow::anyhow!("boom1")),
+            error_board(7, &anyhow::anyhow!("boom7")),
+        ];
+        let err = finalize_rank_all("42", boards).expect_err("all boards failed → Err");
+        let coded = err
+            .downcast_ref::<crate::commands::sink::CodedError>()
+            .expect("coded error");
+        assert_eq!(coded.code, "upstream_error");
+    }
+
+    #[test]
+    fn error_board_shape_carries_sort_type_and_code() {
+        let b = error_board(3, &anyhow::anyhow!("kaboom"));
+        assert_eq!(b["sortType"], 3);
+        assert_eq!(b["error"]["code"], "upstream_error");
+        assert!(b["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("board 3"));
     }
 }

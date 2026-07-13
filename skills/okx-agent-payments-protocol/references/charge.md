@@ -1,6 +1,6 @@
 # `charge` intent (one-shot)
 
-> **CLI down-sink (WBW-13615):** receipt-decode is now `onchainos payment
+> **CLI down-sink:** receipt-decode is now `onchainos payment
 > decode-receipt (--header <b64> | --receipt <json>)`. Transaction-vs-hash mode
 > routing stays with the agent.
 

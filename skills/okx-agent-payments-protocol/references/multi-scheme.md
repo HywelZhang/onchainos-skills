@@ -1,6 +1,6 @@
 # Multi-scheme recommendation (SKILL.md Step A3.5)
 
-> **CLI down-sink (WBW-13615):** balance-fetch, has-balance filtering, tie-break
+> **CLI down-sink:** balance-fetch, has-balance filtering, tie-break
 > scoring, and recommendation-card math now live in the CLI. `onchainos payment
 > quote` returns `candidates` / `alternatives` already ranked — present
 > `recommended:true`, confirm the selection, then `payment pay --payment-id`.

@@ -1,6 +1,6 @@
 # `session` intent (channel: open / voucher / topUp / close)
 
-> **CLI down-sink (WBW-13615):** voucher reuse-vs-sign, cumulative math, the
+> **CLI down-sink:** voucher reuse-vs-sign, cumulative math, the
 > top-up inequality, resign-on-drift, and refund-on-close are now decided by the
 > CLI. Run `onchainos payment session <open|voucher|topup|close>` and relay
 > `data.{strategy, needsTopUp, cumulative_amount, refund, recovery, reason_text}`

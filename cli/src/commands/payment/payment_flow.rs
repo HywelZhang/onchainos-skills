@@ -1283,12 +1283,12 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-//  Two-phase quote/pay support (WBW-13615)
+//  Two-phase quote/pay support
 // ════════════════════════════════════════════════════════════════════════
 
 use super::state::{self, Candidate, ParamSpec, PaymentState};
 
-/// True unless `chain_id` is classified as a testnet by the chain registry (F9).
+/// True unless `chain_id` is classified as a testnet by the chain registry.
 /// Delegates to [`crate::chains::is_mainnet_chain`], which consults the dynamic
 /// chain cache and the static registry rather than a hardcoded testnet blacklist
 /// (the old blacklist mis-judged unrecognised testnets like Sepolia as mainnet).
@@ -1388,10 +1388,10 @@ pub fn rank_candidates(candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Candi
 
 // ── Two-phase pay ───────────────────────────────────────────────────────
 
-/// `payment pay --payment-id` `data` shape (stability contract; FR-2/FR-7).
+/// `payment pay --payment-id` `data` shape (stability contract).
 #[derive(serde::Serialize)]
 struct PayResult {
-    /// Duplicated inside `data` per the BRD task-system contract (FR-7). The
+    /// Duplicated inside `data` per the task-system contract. The
     /// envelope-level `ok` governs the exit code; this mirrors success/failure.
     ok: bool,
     #[serde(rename = "paymentId")]
@@ -1681,7 +1681,7 @@ async fn replay_merchant(
     }
 }
 
-// ── Session down-sink decision math (F16–F20) ───────────────────────────
+// ── Session down-sink decision math ─────────────────────────────────────
 
 /// Parameters for `fetch_session` (mirrors the MCP `payment_session` tool).
 #[derive(Default)]
@@ -1696,17 +1696,17 @@ pub struct SessionParams {
     pub deposit: Option<String>,
     pub from: Option<String>,
     /// A previously-signed voucher signature. Its presence is the reuse-vs-sign
-    /// signal (F16): supplied ⇒ `strategy:"reuse"` (unless a drift or a classified
+    /// signal: supplied ⇒ `strategy:"reuse"` (unless a drift or a classified
     /// rejection forces a resign). Never persisted; never logged as a secret here.
     pub reuse_signature: Option<String>,
-    /// The seller-reported cumulative from a `70015` drift error (F18). When it
+    /// The seller-reported cumulative from a `70015` drift error. When it
     /// differs from `cumulative_amount`, the client's prior voucher is stale: the
     /// cumulative is recomputed on top of this figure and `strategy` is forced to
     /// `"sign"` (a fresh signature — reuse cannot ride a drifted base).
     pub server_cumulative: Option<String>,
 }
 
-/// `payment session` decision `data` shape (added fields, FR-4).
+/// `payment session` decision `data` shape (added fields).
 #[derive(serde::Serialize, Default)]
 pub struct SessionData {
     pub strategy: String,
@@ -1723,17 +1723,17 @@ pub struct SessionData {
     pub reason_text: Option<String>,
 }
 
-/// F19 top-up guard: `current_cum + unit_amount > deposit`.
+/// top-up guard: `current_cum + unit_amount > deposit`.
 pub fn needs_top_up(current_cum: u128, unit_amount: u128, deposit: u128) -> bool {
     current_cum.saturating_add(unit_amount) > deposit
 }
 
-/// F17 refund on close: `deposit - final_cum` (saturating; never negative).
+/// refund on close: `deposit - final_cum` (saturating; never negative).
 pub fn compute_refund(deposit: u128, final_cum: u128) -> u128 {
     deposit.saturating_sub(final_cum)
 }
 
-/// F20 rejection classifier. Returns the machine token, or `None` when the
+/// Rejection classifier. Returns the machine token, or `None` when the
 /// voucher is acceptable.
 pub fn classify_recovery(
     current_cum: u128,
@@ -1758,14 +1758,14 @@ fn parse_u128_or_zero(s: &Option<String>) -> u128 {
 /// MCP / session entry point: compute the reuse-vs-sign strategy, cumulative
 /// math, top-up need, refund, and recovery classification for a channel op.
 /// Pure decision layer — the actual signing stays in the CLI session handlers,
-/// which feed it the channel's persisted deposit / prior cumulative (F17).
+/// which feed it the channel's persisted deposit / prior cumulative.
 pub async fn fetch_session(params: SessionParams) -> Result<Value> {
     let current_cum = parse_u128_or_zero(&params.cumulative_amount);
     let unit = parse_u128_or_zero(&params.unit_amount);
     let deposit = parse_u128_or_zero(&params.deposit);
     let has_deposit = params.deposit.is_some();
 
-    // F18 — server-reported cumulative drift (`70015`). When the seller reports a
+    // server-reported cumulative drift (`70015`). When the seller reports a
     // cumulative that differs from the client's assumption, the previously-signed
     // voucher is stale: recompute the cumulative on top of the server figure and
     // resign (reuse cannot ride a drifted base).
@@ -1784,10 +1784,10 @@ pub async fn fetch_session(params: SessionParams) -> Result<Value> {
         None
     };
 
-    // F16 — reuse-vs-sign: a supplied prior signature means reuse, unless a drift
-    // (F18) or a classified rejection (F20) forces a fresh signature.
+    // reuse-vs-sign: a supplied prior signature means reuse, unless a drift
+    // or a classified rejection forces a fresh signature.
     //
-    // F19 override: when the channel needs a top-up (the voucher would exceed the
+    // top-up override: when the channel needs a top-up (the voucher would exceed the
     // deposit) neither `sign` nor `reuse` is a valid next action — signing an
     // over-deposit voucher cannot succeed. Emit an unambiguous `topup` so the
     // agent's only signalled action is to fund the channel first, rather than the
@@ -1843,7 +1843,7 @@ mod tests {
     #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
     use super::*;
 
-    // ── rank_candidates (FR-1 business rule) ──────────────────────────
+    // ── rank_candidates (business rule) ───────────────────────────────
     fn cand(
         scheme: &str,
         token: &str,
@@ -1909,7 +1909,7 @@ mod tests {
     #[test]
     fn scheme_rank_docks_upto_adjacent_to_exact() {
         // upto (exact-with-a-Permit2-cap) must rank ahead of charge, adjacent to
-        // exact — not in the catch-all bucket behind charge (F11 tie-break fix).
+        // exact — not in the catch-all bucket behind charge (tie-break fix).
         assert!(scheme_rank("aggr_deferred") < scheme_rank("exact"));
         assert!(scheme_rank("exact") < scheme_rank("upto"));
         assert!(scheme_rank("upto") < scheme_rank("charge"));
@@ -2053,7 +2053,7 @@ mod tests {
         assert!(!cn.next.contains("--selected-index"));
     }
 
-    // ── session decision math (F19/F20) ───────────────────────────────
+    // ── session decision math ──────────────────────────────────────────
     #[test]
     fn is_mainnet_chain_flags_testnet_indices() {
         // Known testnet (X Layer testnet) → not mainnet; everything else → mainnet.
@@ -2101,7 +2101,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_session_reuse_strategy_when_signature_supplied() {
-        // F16: a supplied prior signature ⇒ reuse (no drift, voucher acceptable).
+        // a supplied prior signature ⇒ reuse (no drift, voucher acceptable).
         let params = SessionParams {
             action: "voucher".into(),
             reuse_signature: Some("0xdeadbeef".into()),
@@ -2118,7 +2118,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_session_sign_strategy_without_reuse_signature() {
-        // F16: no prior signature ⇒ sign.
+        // no prior signature ⇒ sign.
         let params = SessionParams {
             action: "voucher".into(),
             cumulative_amount: Some("100".into()),
@@ -2131,7 +2131,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_session_voucher_computes_needs_top_up() {
-        // FR-4-AC-1 / F19: 40 + 20 = 60 > 50 ⇒ needsTopUp true, computed by the CLI.
+        // 40 + 20 = 60 > 50 ⇒ needsTopUp true, computed by the CLI.
         let params = SessionParams {
             action: "voucher".into(),
             cumulative_amount: Some("40".into()),
@@ -2141,14 +2141,14 @@ mod tests {
         };
         let data = fetch_session(params).await.unwrap();
         assert_eq!(data["needsTopUp"], true);
-        // F19: when a top-up is required, strategy must be the unambiguous `topup`
+        // when a top-up is required, strategy must be the unambiguous `topup`
         // (never `sign`) — signing an over-deposit voucher cannot succeed.
         assert_eq!(data["strategy"], "topup");
     }
 
     #[tokio::test]
     async fn fetch_session_drift_forces_resign_and_recomputes() {
-        // FR-4-AC-2 / F18: client assumed cum 100, server reports 130 (70015).
+        // client assumed cum 100, server reports 130 (70015).
         // Even though a reuse signature is offered, the drift forces a resign and
         // the cumulative is recomputed on top of the server figure: 130 + 20 = 150.
         let params = SessionParams {
@@ -2188,7 +2188,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_session_top_up_overrides_sign_and_reuse() {
-        // F19/F20: an unacceptable voucher (amount exceeds deposit) needs a
+        // an unacceptable voucher (amount exceeds deposit) needs a
         // top-up, so strategy must be `topup` — not `sign` and not `reuse` —
         // even when a reuse signature was offered. `topup` is the only
         // non-contradictory signal (recovery still classifies the reason).

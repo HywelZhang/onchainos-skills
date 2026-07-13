@@ -25,7 +25,7 @@ pub enum PaymentCommand {
         /// — i.e. the raw `PAYMENT-REQUIRED` header value (base64 or base64url).
         /// The CLI decodes it, signs the selected accepts entry, and (v2) returns
         /// `{authorization_header, header_name, scheme, wallet}`. Legacy sign-only
-        /// mode (FR-8); mutually exclusive with `--payment-id`.
+        /// mode; mutually exclusive with `--payment-id`.
         #[arg(
             long,
             required_unless_present = "payment_id",
@@ -297,7 +297,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 // Two-phase mode: complete a previously-quoted payment.
                 cmd_pay_two_phase(&pid, selected_index, &param, yes).await
             } else {
-                // Legacy sign-only mode (FR-8) — byte-for-byte unchanged.
+                // Legacy sign-only mode — byte-for-byte unchanged.
                 let payload = payload
                     .ok_or_else(|| anyhow!("--payload is required unless --payment-id is set"))?;
                 cmd_pay(&payload, selected_index).await
@@ -551,7 +551,7 @@ async fn cmd_pay(payload: &str, selected_index: Option<usize>) -> Result<()> {
     Ok(())
 }
 
-/// Two-phase `payment pay --payment-id` (FR-2): delegate to `fetch_pay`, which
+/// Two-phase `payment pay --payment-id`: delegate to `fetch_pay`, which
 /// enforces the confirming gate and the classified error tokens.
 ///
 /// - `Err(CliConfirming)` → propagate so `main.rs` renders `{confirming,...}`
@@ -572,7 +572,7 @@ async fn cmd_pay_two_phase(
     Ok(())
 }
 
-/// `payment decode-receipt` (F8/F14): decode a PAYMENT-RESPONSE header or a
+/// `payment decode-receipt`: decode a PAYMENT-RESPONSE header or a
 /// charge receipt into the normalized shape. Malformed input → `invalid_input`
 /// propagates as `Err` → `main.rs` `output::error` (exit 1).
 fn cmd_decode_receipt(header: Option<&str>, receipt: Option<&str>) -> Result<()> {
@@ -1590,7 +1590,7 @@ async fn cmd_mpp_charge(
     Ok(())
 }
 
-/// Merge the FR-4 decision-layer `data` fields (`strategy`, `cumulative_amount`,
+/// Merge the decision-layer `data` fields (`strategy`, `cumulative_amount`,
 /// `needsTopUp`, `sessionSnapshot`, `refund`, `recovery`, `reason_text`) from
 /// `payment_flow::fetch_session` into a session handler's base output object, so
 /// every session sub-op emits the spec'd fields — the CLI (not the agent) does
@@ -1608,7 +1608,7 @@ async fn emit_session(mut base: Value, params: payment_flow::SessionParams) {
     output::success(base);
 }
 
-/// Persist the channel deposit + initial cumulative at `open` (F17), so later
+/// Persist the channel deposit + initial cumulative at `open`, so later
 /// `voucher`/`close` can compute `needsTopUp`/`refund` from the real deposit.
 /// Best-effort: a persistence failure never blocks emitting the open credential.
 fn persist_channel_open(channel_id: &str, payer_addr: &str, deposit: &str, initial_cum: &str) {
@@ -1954,8 +1954,8 @@ async fn cmd_mpp_session_voucher(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    // Decision layer (FR-4): pull the channel's persisted deposit + prior
-    // cumulative (F17) so the CLI — not the agent — computes strategy/needsTopUp.
+    // Decision layer: pull the channel's persisted deposit + prior
+    // cumulative so the CLI — not the agent — computes strategy/needsTopUp.
     // The voucher flag is the ABSOLUTE new cumulative; the prior cumulative comes
     // from persisted state (0 if unknown), and unit = new − prior.
     let prior = session_state::read(channel_id);
@@ -2096,7 +2096,7 @@ async fn cmd_mpp_session_topup(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    // Grow the persisted channel deposit by the additional amount (F17) so the
+    // Grow the persisted channel deposit by the additional amount so the
     // next `voucher`'s top-up guard / `close`'s refund see the new balance.
     let prior = session_state::read(channel_id);
     let prior_cum = prior
@@ -2182,8 +2182,8 @@ async fn cmd_mpp_session_close(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    // Decision layer (FR-4): refund = deposit − final_cum, from the channel's
-    // persisted deposit (F17). `--cumulative-amount` is the final ABSOLUTE cum.
+    // Decision layer: refund = deposit − final_cum, from the channel's
+    // persisted deposit. `--cumulative-amount` is the final ABSOLUTE cum.
     let prior = session_state::read(channel_id);
     let prior_cum = prior
         .as_ref()

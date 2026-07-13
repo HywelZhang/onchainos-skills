@@ -1,5 +1,5 @@
 //! Cross-process `paymentId` state for the two-phase `payment quote` → `payment pay`
-//! flow (FR-3). A `payment quote` probes the merchant, ranks candidates, and
+//! flow. A `payment quote` probes the merchant, ranks candidates, and
 //! persists everything needed to *complete* the payment later to
 //! `~/.onchainos/payments/{payment_id}.json`. `payment pay --payment-id` reads
 //! it back, signs, and replays — without ever re-fetching the 402.
@@ -92,7 +92,7 @@ pub struct DecodedChallenge {
 }
 
 /// Where a business param rides on the paid HTTP request (A2MCP
-/// `outputSchema.input[].carrier`, FR-1/A3-Params). `Query` is the default when
+/// `outputSchema.input[].carrier`). `Query` is the default when
 /// the schema omits a carrier, preserving the pre-carrier GET+query behavior.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -153,7 +153,7 @@ pub struct PaymentState {
     /// Defaults to `GET` for legacy states and simple x402 endpoints.
     #[serde(default = "default_http_method")]
     pub method: String,
-    /// Per-business-param carrier plan parsed from `outputSchema.input` (FR-1).
+    /// Per-business-param carrier plan parsed from `outputSchema.input`.
     /// Empty for legacy states / endpoints that only use query params — `pay`
     /// then falls back to method-based defaults (query for GET, body otherwise).
     #[serde(default)]

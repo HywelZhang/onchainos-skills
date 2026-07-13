@@ -1,5 +1,5 @@
-//! `payment decode-receipt` — decode an x402 `PAYMENT-RESPONSE` header (F8) or a
-//! raw charge-receipt JSON (F14) into one normalized `{status, transaction,
+//! `payment decode-receipt` — decode an x402 `PAYMENT-RESPONSE` header or a
+//! raw charge-receipt JSON into one normalized `{status, transaction,
 //! amount, payer, chainId}` shape. Read-only; no auth, no funds.
 
 use anyhow::{anyhow, Result};

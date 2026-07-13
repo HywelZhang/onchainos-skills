@@ -13,7 +13,7 @@ pub mod subscription;
 // `crate::commands::payment::PaymentCommand` instead of `payment::dispatcher::PaymentCommand`.
 pub use dispatcher::{execute, DefaultAction, PaymentCommand, SessionCommand};
 
-// Re-export the two-phase quote/pay MCP entry points (WBW-13615) so
+// Re-export the two-phase quote/pay MCP entry points so
 // `cli/src/mcp/mod.rs` calls `commands::payment::fetch_*` without reaching into
 // submodules.
 pub use decode_receipt::fetch_decode_receipt;

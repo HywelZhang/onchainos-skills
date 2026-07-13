@@ -148,7 +148,7 @@ fn chain_index_of(c: &serde_json::Value) -> Option<String> {
 /// by the registry is mainnet.
 pub const TESTNET_CHAIN_INDICES: &[&str] = &["1952"];
 
-/// Whether `chain_index` is a mainnet chain, per the chain registry (F9).
+/// Whether `chain_index` is a mainnet chain, per the chain registry.
 ///
 /// Resolution order mirrors [`ensure_supported_chain`] / [`resolve_chain`]:
 /// 1. Dynamic — a matching `chain_cache.json` entry classifies the chain (an
@@ -158,9 +158,9 @@ pub const TESTNET_CHAIN_INDICES: &[&str] = &["1952"];
 ///    mainnet allowlist.
 /// 3. Unknown — chains absent from both the cache and the static registry are
 ///    treated as NON-mainnet, so an unrecognised testnet (e.g. Sepolia) is never
-///    mis-ranked ahead of a known mainnet by the F11 mainnet-first ordering.
+///    mis-ranked ahead of a known mainnet by the mainnet-first ordering.
 ///    (The previous implementation used a testnet blacklist that defaulted every
-///    unknown chain to mainnet — the exact bug F9 corrects.)
+///    unknown chain to mainnet — the exact bug this corrects.)
 pub fn is_mainnet_chain(chain_index: &str) -> bool {
     if let Ok(cache) = crate::wallet_store::load_chain_cache() {
         if let Some(entry) = cache
@@ -445,7 +445,7 @@ mod tests {
         assert!(is_mainnet_chain("196"));
         // Known testnet → not mainnet.
         assert!(!is_mainnet_chain("1952"));
-        // F9 regression: an unrecognised chain (e.g. Sepolia = 11155111) must NOT
+        // Regression guard: an unrecognised chain (e.g. Sepolia = 11155111) must NOT
         // be assumed mainnet — the old blacklist defaulted unknowns to mainnet.
         assert!(!is_mainnet_chain("11155111"));
         assert!(!is_mainnet_chain("99999"));

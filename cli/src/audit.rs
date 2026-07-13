@@ -180,7 +180,7 @@ const REDACT_FULL: &[&str] = &[
     "--input-data",
     "--data",
     "--message",
-    // Two-phase payment (WBW-13615): the base64 402 payload and free-form
+    // Two-phase payment: the base64 402 payload and free-form
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",

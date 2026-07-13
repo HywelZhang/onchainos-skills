@@ -825,7 +825,7 @@ struct CrossChainBridgesParams {
     to_chain: Option<String>,
 }
 
-// ── Payment: two-phase quote/pay (WBW-13615) ────────────────────────────
+// ── Payment: two-phase quote/pay ────────────────────────────────────────
 
 #[derive(Deserialize, JsonSchema)]
 struct PaymentQuoteParams {
@@ -888,9 +888,9 @@ struct PaymentSessionParams {
     deposit: Option<String>,
     /// Payer address (optional; defaults to selected account).
     from: Option<String>,
-    /// Existing voucher signature to reuse (reuse-vs-sign signal; F16).
+    /// Existing voucher signature to reuse (reuse-vs-sign signal).
     reuse_signature: Option<String>,
-    /// Seller-reported cumulative from a 70015 drift error; forces a resign (F18).
+    /// Seller-reported cumulative from a 70015 drift error; forces a resign.
     server_cumulative: Option<String>,
 }
 
@@ -1009,7 +1009,7 @@ fn err(e: anyhow::Error) -> Result<String, String> {
 
 #[tool_router]
 impl McpServer {
-    // ── Payment: two-phase quote/pay (WBW-13615) ────────────────────────
+    // ── Payment: two-phase quote/pay ────────────────────────────────────
     // These delegate to `commands::payment::fetch_*`, which self-construct a
     // WalletApiClient — they do NOT lock `self.client` (payment does not use the
     // shared ApiClient). Bodies are thin: fetch → ok/err.

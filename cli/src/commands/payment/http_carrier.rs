@@ -1,5 +1,5 @@
-//! Carrier-aware HTTP request assembly for the two-phase payment flow
-//! (FR-1/A3-Params). A2MCP / merchant endpoints declare, per business param, a
+//! Carrier-aware HTTP request assembly for the two-phase payment flow. A2MCP /
+//! merchant endpoints declare, per business param, a
 //! *carrier* (`query` | `body` | `header` | `path`) and an overall request
 //! *method*. Both `payment quote`'s probe and `payment pay`'s replay build their
 //! outbound request through [`build_request`] so a POST+body (or header/path)

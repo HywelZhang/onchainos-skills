@@ -776,7 +776,7 @@ pub async fn status(payment_id: String) -> Result<StatusOutput> {
     })
 }
 
-// ── Status with optional wait (FR-5) ─────────────────────────────────────
+// ── Status with optional wait ────────────────────────────────────────────
 
 /// Terminal a2a-pay states — polling stops here.
 pub fn is_terminal_status(s: &str) -> bool {

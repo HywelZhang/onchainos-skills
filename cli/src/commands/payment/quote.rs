@@ -1,6 +1,6 @@
 //! `payment quote` — probe an HTTP 402 / A2MCP endpoint, parse the payment
 //! challenge, run a wallet/balance preflight, rank candidates, and persist a
-//! `paymentId` for a later `payment pay --payment-id` (FR-1). Never signs.
+//! `paymentId` for a later `payment pay --payment-id`. Never signs.
 //!
 //! The heavy mechanical work the agent used to do by hand (curl, base64 decode,
 //! `accepts` parse, amount conversion, balance filter, recommendation ranking)
@@ -126,7 +126,7 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
 
     // Parse the Bazaar `outputSchema` (Source 1): per-param carrier/required/type
     // and the paid-call HTTP method. Falls back to the probe method when the
-    // schema does not pin one (FR-1/A3-Params).
+    // schema does not pin one.
     let output_schema = find_output_schema(&decoded, &merchant_body);
     let param_plan = output_schema
         .as_ref()
@@ -330,7 +330,7 @@ fn build_accepts(accepts_val: &[Value]) -> Result<Vec<AcceptEntry>> {
 
 /// Last-resort token decimals when neither the accepts entry nor the okx-dex
 /// token metadata yields a value. Only applied after both sources are exhausted
-/// (PRD §2.14/F6 forbids silently defaulting when metadata is available).
+/// (never silently default when token metadata is available).
 const DEFAULT_DECIMALS: u32 = 6;
 
 /// Read the decimals an accepts entry declares inline (`extra.decimals` or a
@@ -383,7 +383,7 @@ async fn fetch_decimals_from_okx_dex(
 
 /// Resolves token decimals for accepts entries, preferring the entry's declared
 /// value, then an okx-dex metadata lookup, and only then [`DEFAULT_DECIMALS`]
-/// (F6 / §2.14 — never silently default when metadata is reachable). Memoizes
+/// (never silently default when metadata is reachable). Memoizes
 /// okx-dex lookups by (chainIndex, address) — including best-effort misses — so
 /// a multi-scheme challenge for one token queries okx-dex at most once, even
 /// when the lookup fails and the caller falls back to the default.
@@ -512,18 +512,18 @@ async fn build_candidates(
 /// `login_required` when no wallet is logged in, `balance_unavailable` when the
 /// balance fetch fails. Never aborts the (read-only) quote.
 ///
-/// F12 (short-TTL balance snapshot cache) is intentionally NOT implemented here.
+/// A short-TTL balance snapshot cache is intentionally NOT implemented here.
 /// The two-phase architecture collapses the old multi-step flow into a single
 /// `payment quote`, which queries each (account, chainId) balance exactly once —
-/// so F12's original motive (reusing a snapshot across agent steps within one
+/// so that cache's original motive (reusing a snapshot across agent steps within one
 /// operation) is already covered by the architecture. A *cross-quote* on-disk
 /// cache would save a query only across separate `payment quote` invocations,
 /// but `has_balance` is a fund-adjacent recommendation hint: a stale cached
 /// "true" could auto-recommend a candidate the user can no longer afford. The
 /// staleness risk on a fund path outweighs the marginal token/latency saving on
 /// a hint that `pay`'s confirming gate + on-chain settle re-validate anyway, so
-/// F12 is treated as covered-by-architecture rather than adding a stale-prone
-/// balance cache. (WBW-13615 review, F12.)
+/// the snapshot cache is treated as covered-by-architecture rather than adding a
+/// stale-prone balance cache.
 async fn preflight_balances(candidates: &mut [Candidate]) -> Option<String> {
     let wallets = match crate::wallet_store::load_wallets() {
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w,
@@ -626,8 +626,7 @@ fn build_summary(
     }
 }
 
-/// Params the merchant requires but the caller did not supply. Two sources
-/// (FR-1/A3-Params):
+/// Params the merchant requires but the caller did not supply. Two sources:
 /// - Source 1 — the parsed `outputSchema.input` plan: every `required` param
 ///   absent from `known_params`;
 /// - Source 2 — the merchant body's flat `missingParams` / `required` array.
@@ -991,7 +990,7 @@ mod tests {
         // With no okx-dex client, a token that declares no inline decimals falls
         // back to DEFAULT_DECIMALS — and the (chain,address) miss is memoized as
         // `None` so a second candidate for the same token does not re-attempt
-        // the lookup (the redundant-request guard from F6/optional feedback).
+        // the lookup (the redundant-request guard).
         let mut resolver = DecimalResolver {
             client: None,
             memo: HashMap::new(),

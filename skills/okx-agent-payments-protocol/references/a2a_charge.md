@@ -1,6 +1,6 @@
 # a2a_charge — agent-to-agent payment links (`onchainos payment a2a-pay`)
 
-> **CLI down-sink (WBW-13615):** don't self-sleep/poll for status — use
+> **CLI down-sink:** don't self-sleep/poll for status — use
 > `onchainos payment a2a-pay status --payment-id <id> --wait` to poll internally
 > (3s interval, 60s ceiling) until a terminal state; read `data.terminal` /
 > `data.timed_out`. create/pay NL→command routing stays here.

@@ -1,6 +1,6 @@
 # `accepts`-based schemes — `exact` / `aggr_deferred` / `upto` (+ Permit2)
 
-> **CLI down-sink (WBW-13615):** the primary path for **every** `accepts`-based 402 —
+> **CLI down-sink:** the primary path for **every** `accepts`-based 402 —
 > single scheme (`exact` / `exact`+Permit2 / `upto` / `aggr_deferred`) or multi-scheme —
 > is now `onchainos payment quote <url>` → confirm → `onchainos payment pay
 > --payment-id --yes` (SKILL.md Path A). `quote` accepts a single-element `accepts[]`

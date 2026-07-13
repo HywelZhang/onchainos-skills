@@ -1,9 +1,9 @@
-//! Per-channel MPP session state (F17) for the down-sunk
-//! `payment session {open,voucher,topup,close}` decision layer (FR-4).
+//! Per-channel MPP session state for the down-sunk
+//! `payment session {open,voucher,topup,close}` decision layer.
 //!
 //! Persists the channel deposit + latest authorized cumulative, keyed by
 //! `channelId`, to `~/.onchainos/sessions/{channel_id}.json`, so:
-//! - `voucher` can compute `needsTopUp` from the real deposit (FR-4-AC-1),
+//! - `voucher` can compute `needsTopUp` from the real deposit,
 //! - `close` can compute `refund = deposit - final_cum`,
 //!
 //! without the agent doing any arithmetic. Like `state.rs`, this file holds NO

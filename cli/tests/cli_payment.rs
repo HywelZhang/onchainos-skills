@@ -1,5 +1,5 @@
 //! AC-level integration tests for the two-phase `payment quote` → `payment pay`
-//! flow (WBW-13615, FR-1..FR-8). These exercise the CLI end-to-end through the
+//! flow. These exercise the CLI end-to-end through the
 //! built `onchainos` binary, covering the paymentId state-machine contracts that
 //! the PRD acceptance criteria pin down and that unit tests cannot reach at the
 //! process/exit-code level:
@@ -113,7 +113,7 @@ fn assert_error_token(out: &std::process::Output, token: &str) {
     );
 }
 
-// ── FR-3: paymentId TTL / ownership guards ────────────────────────────────
+// ── paymentId TTL / ownership guards ──────────────────────────────────────
 
 #[test]
 fn pay_missing_payment_id_is_quote_expired_or_missing() {
@@ -159,7 +159,7 @@ fn pay_state_owned_by_other_account_is_cross_user() {
     assert_error_token(&out, "cross_user_payment_id");
 }
 
-// ── FR-2: confirming gate (exit 2) ────────────────────────────────────────
+// ── confirming gate (exit 2) ──────────────────────────────────────────────
 
 #[test]
 fn pay_without_yes_stops_at_confirming_gate_exit_2() {
@@ -210,7 +210,7 @@ fn pay_selected_index_out_of_range_is_invalid_input() {
     assert_error_token(&out, "invalid_input");
 }
 
-// ── FR-1: quote input validation (no network) ─────────────────────────────
+// ── quote input validation (no network) ───────────────────────────────────
 
 #[test]
 fn quote_malformed_param_is_invalid_input() {

@@ -277,6 +277,9 @@ struct TokenSearchParams {
     limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    max_results: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -342,6 +345,9 @@ struct TokenTagAddressParams {
     limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    max_results: Option<String>,
 }
 
 // ── Memepump ──────────────────────────────────────────────────────────
@@ -372,10 +378,12 @@ struct PortfolioPnlDexHistoryParams {
     address: String,
     /// Chain name (e.g. ethereum, solana)
     chain: String,
-    /// Start timestamp (milliseconds)
-    begin: String,
-    /// End timestamp (milliseconds)
-    end: String,
+    /// Start timestamp (milliseconds). Supply with `end`, OR use `since` instead.
+    begin: Option<String>,
+    /// End timestamp (milliseconds). Supply with `begin`, OR use `since` instead.
+    end: Option<String>,
+    /// Relative time window: <positive-int><s|m|h|d>, e.g. "24h", "7d". Supply this OR begin+end.
+    since: Option<String>,
     /// Page size (1-100, default 20)
     limit: Option<String>,
     /// Pagination cursor from previous response
@@ -642,6 +650,9 @@ struct CompetitionRankParams {
     sort_type: Option<i32>,
     /// Max leaderboard entries (default 20, max 100)
     limit: Option<u32>,
+    /// Fetch ALL leaderboards for the activity in one call (enumerated from competition_detail).
+    /// Returns {activityId, boards:[…]}. Mutually exclusive with sort_type.
+    all: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -923,6 +934,24 @@ fn err(e: anyhow::Error) -> Result<String, String> {
         return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
     }
 
+    // `CodedError` carries a machine code + optional field; surface the same
+    // structured envelope the CLI prints via `output::error_coded`, so MCP
+    // callers can distinguish validation failures (invalid_input, etc.).
+    if let Some(c) = e.downcast_ref::<crate::commands::sink::CodedError>() {
+        let mut payload = serde_json::json!({
+            "ok": false,
+            "error": c.message,
+            "errorCode": c.code,
+        });
+        if let Some(f) = &c.field {
+            payload["errorField"] = serde_json::Value::String(f.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
     let base = format!("{e:#}");
     if events.is_empty() {
         Err(base)
@@ -949,6 +978,7 @@ impl McpServer {
             chains,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -996,6 +1026,7 @@ impl McpServer {
             p.tag_filter,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -1852,6 +1883,7 @@ impl McpServer {
             p.tag_filter,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -1909,8 +1941,9 @@ impl McpServer {
             &mut *self.client.lock().await,
             &chain_index,
             &p.address,
-            &p.begin,
-            &p.end,
+            p.begin.as_deref(),
+            p.end.as_deref(),
+            p.since.as_deref(),
             p.limit.as_deref(),
             p.cursor.as_deref(),
             p.token.as_deref(),
@@ -2598,6 +2631,27 @@ impl McpServer {
             Ok(id) => id,
             Err(e) => return err(e),
         };
+        // FR-6: `all` fetches every leaderboard; mutually exclusive with sort_type.
+        if p.all == Some(true) {
+            if p.sort_type.is_some() {
+                return err(crate::commands::sink::CodedError::invalid_input(
+                    "sort-type",
+                    "all is mutually exclusive with sort_type",
+                )
+                .into());
+            }
+            return match competition::rank_all(
+                &mut client,
+                &resolved_id,
+                &identity,
+                p.limit.unwrap_or(20),
+            )
+            .await
+            {
+                Ok(data) => ok(data),
+                Err(e) => err(e),
+            };
+        }
         match competition::rank_for_mcp(
             &mut client,
             &resolved_id,

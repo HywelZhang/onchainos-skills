@@ -161,6 +161,11 @@ pub struct PreFetchedTaskContext {
     /// positive `expireTime`, else `now()+expireConfig.reviewDeadline` when that
     /// is positive, else `None` (no reminder — backward compatible).
     pub expire_time: Option<i64>,
+
+    /// FR-2: backend-derived sandbox-review flag (creator ∈ test-buyer allowlist ⇒ `true`).
+    /// Read-only, consumed only by the ASP accept decision. Absent/malformed ⇒ `false`.
+    /// MUST NOT be serialized, logged, or rendered into `format_inline()` / next-action text.
+    pub test_flag: bool,
 }
 
 impl PreFetchedTaskContext {
@@ -197,6 +202,8 @@ impl PreFetchedTaskContext {
             user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
             token_address: v["tokenAddress"].as_str().map(String::from),
             expire_time,
+            // FR-2: additive, backward compatible — absent/non-bool testFlag ⇒ false.
+            test_flag: v["testFlag"].as_bool().unwrap_or(false),
         }
     }
 
@@ -1466,5 +1473,33 @@ mod expire_time_tests {
         let after = chrono::Local::now().timestamp();
         let got = ctx.expire_time.expect("fallback should produce Some");
         assert!(got >= before + DAY && got <= after + DAY);
+    }
+
+    // ── FR-2: testFlag mapping (sandbox ASP review) ──────────────────────
+    // The backend stamps `testFlag` onto the task-detail response; the CLI
+    // maps it to the internal read-only `test_flag`. Absent/malformed ⇒ false.
+
+    // FR-2: `testFlag: true` ⇒ test_flag == true.
+    #[test]
+    fn from_api_response_test_flag_true_maps_true() {
+        let v = json!({ "title": "x", "testFlag": true });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert!(ctx.test_flag);
+    }
+
+    // FR-2: `testFlag` absent ⇒ test_flag == false (backward compatible).
+    #[test]
+    fn from_api_response_test_flag_absent_maps_false() {
+        let v = json!({ "title": "x" });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert!(!ctx.test_flag);
+    }
+
+    // FR-2: `testFlag: "true"` (wrong type, string) ⇒ false, no panic.
+    #[test]
+    fn from_api_response_test_flag_wrong_type_maps_false() {
+        let v = json!({ "title": "x", "testFlag": "true" });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert!(!ctx.test_flag);
     }
 }

@@ -743,6 +743,7 @@ pub(crate) fn deliverable_received_cli(
                 user_agent_address: None,
                 token_address: None,
                 expire_time: None,
+                test_flag: false,
             }
         });
         patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
@@ -1434,6 +1435,7 @@ Part B continues
             user_agent_address: None,
             token_address: None,
             expire_time,
+            test_flag: false,
         }
     }
 

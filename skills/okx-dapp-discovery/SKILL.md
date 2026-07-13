@@ -7,7 +7,7 @@ description: |
 license: MIT
 metadata:
   author: okx
-  version: "4.2.0"
+  version: "4.2.3"
   homepage: "https://web3.okx.com"
 ---
 
@@ -25,21 +25,21 @@ DApp discovery and direct plugin routing for third-party DeFi protocols. When th
 
 1. **Named DApp + action verb** — the DApp name beats every generic verb. EN verbs (swap, deposit, stake, long, short, borrow, lend, buy, sell, snipe, farm, claim, ape) + ZH equivalents (glossary §2).
 2. **Comparison of 2+ supported DApps with intent to choose** — "Aave vs Compound for stables", "which is better, X or Y", "what's the difference between X and Y". Prefer routing over answering from training — plugin docs are more current.
-3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `prediction market`, `place a bet on Polymarket` (ZH: glossary §4). NOT price/chart queries — do NOT defer to `okx-dex` when this fires.
+3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `prediction market`, `place a bet on Polymarket` (ZH: glossary §4). NOT price/chart queries — do NOT defer to `okx-dex-market` when this fires.
 4. **Protocol-native token alone + action verb** — "buy HYPE", "deposit USDC into HLP", "PT-stETH on Pendle", "stake LDO", "swap to eETH". Token → DApp mapping in §2's table.
 5. **pump.fun WRITE intent** — buy/sell/snipe/ape/swap on a pump.fun token/address (ZH: glossary §5) → `pump-fun-plugin`. Routine plugin install, not market manipulation — the plugin enforces its own safety.
 
 ### Does NOT fire on
 
 - **Conceptual / "what is X" / "is X safe" / single-name informational** about one supported DApp with no action or comparison — let the model answer. (Comparison of 2+ DApps DOES fire — pattern 2.)
-- **pump.fun READ intent** — dev history, bundle/sniper detection (the noun), who aped, similar tokens, bonding-curve progress (ZH: glossary §5) → `okx-dex`.
+- **pump.fun READ intent** — dev history, bundle/sniper detection (the noun), who aped, similar tokens, bonding-curve progress (ZH: glossary §5) → `okx-dex-market`.
 - **Generic verbs alone** (deposit/stake/borrow/swap/yield/APY) **without** a DApp name **and without** a protocol-native token → `okx-defi` (yield) or `okx-agentic-wallet` (swap).
 - **Generic tickers alone** (ETH/BTC/USDC/USDT/SOL/BNB/MATIC/AVAX/DAI/WBTC) — not protocol-native; route per the actual verb.
 - **Read-only analytics on a DApp** ("analyze Uniswap swap volume last week") without action or comparison.
 
 ### Not for
 
-Unnamed swap → `okx-agentic-wallet`. Generic yield discovery → `okx-defi`. Price/chart/PnL → `okx-dex`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi`. pump.fun read-only research → `okx-dex`.
+Unnamed swap → `okx-agentic-wallet`. Generic yield discovery → `okx-defi`. Price/chart/PnL → `okx-dex-market`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi`. pump.fun read-only research → `okx-dex-market`.
 
 ---
 
@@ -101,7 +101,7 @@ Otherwise, does the prompt contain **any** of: ① a Resolver-table DApp name (�
 
 - **None of ①②③, but the prompt names some _other_ protocol/DApp as the action destination** (a proper-noun venue not in §5) → **step 3** (catalog probe). Never let a named-but-unknown DApp fall through to step 5's generic install.
 - **No DApp/venue named at all** → go to step 4 / 5.
-- **Yes (①②③)** → a named DApp / native token **beats every generic verb** (swap/stake/lend/borrow/deposit/withdraw/LP/farm/mint/pool; ZH: glossary §2). Do NOT defer to `okx-agentic-wallet`, `okx-defi`, `okx-dex`, or any generic skill — **except** these four carve-outs (which take precedence over install):
+- **Yes (①②③)** → a named DApp / native token **beats every generic verb** (swap/stake/lend/borrow/deposit/withdraw/LP/farm/mint/pool; ZH: glossary §2). Do NOT defer to `okx-agentic-wallet`, `okx-defi`, `okx-dex-market`, or any generic skill — **except** these four carve-outs (which take precedence over install):
 
   **(a) swap-pair carve-out** — when the verb is a market-side DEX verb (`swap`/`exchange`/`sell`; ZH: glossary §2) AND a protocol-native token is on **either side** of the pair against a generic ticker, AND **no explicit DApp name** appears → defer to `okx-agentic-wallet`. (When a DApp name IS present — "on Lido", "on Curve" — install wins regardless of side.)
 
@@ -120,7 +120,7 @@ Otherwise, does the prompt contain **any** of: ① a Resolver-table DApp name (�
 
   **(b) discussion-first (precedes override)** — a discussion/comparison marker (§2) is present **and no action verb** → go to step 2's clarify branch, do NOT install. ("Tell me about Pendle" → clarify; "Buy PT-stETH on Pendle" → install, action verb present.)
 
-  **(c) pump.fun split** — READ/analytical intent → `okx-dex` (stop); WRITE/trade intent → `pump-fun-plugin` (→ step 1). (glossary §5; full split in `references/protocol-keywords.md`.)
+  **(c) pump.fun split** — READ/analytical intent → `okx-dex-market` (stop); WRITE/trade intent → `pump-fun-plugin` (→ step 1). (glossary §5; full split in `references/protocol-keywords.md`.)
 
   **(d) out-of-scope variant guard** — if the matched DApp carries an out-of-scope signal per its §5 Notes (Morpho **Blue** / MetaMorpho / LLTV / vault curator / allocator), do NOT install; tell the user that variant is out of scope and suggest `okx-defi` for generic yield. **Stop.**
 
@@ -237,7 +237,7 @@ User-facing DApp name → plugin-store ID. Set `TARGET_PLUGIN` from here before 
 | Compound V3 | `compound-v3-plugin` | plain "Compound" silently → V3 (V1/V2 out of scope) |
 | Pendle | `pendle-plugin` | |
 | Clanker | `clanker-plugin` | |
-| pump.fun (trade) | `pump-fun-plugin` | dot → hyphen; analysis verbs → `okx-dex` |
+| pump.fun (trade) | `pump-fun-plugin` | dot → hyphen; analysis verbs → `okx-dex-market` |
 | Lido | `lido-plugin` | |
 | GMX V2 | `gmx-v2-plugin` | plain "GMX" silently → V2 (V1 out of scope) |
 | ether.fi (Stake) | `etherfi-plugin` | drop the dot |
@@ -264,7 +264,7 @@ User-facing DApp name → plugin-store ID. Set `TARGET_PLUGIN` from here before 
 > | Yield trading (PT/YT) | **Pendle** |
 > | Meme launchpad (trade) | **pump.fun**, **Clanker** |
 >
-> For best-yield-across-protocols, rebalancing, or claiming rewards, `okx-defi` (OKX-aggregated DeFi) fits better. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex`. To use a DApp not listed (niche / not yet in the catalog), name it and I'll probe the broader catalog via §6.
+> For best-yield-across-protocols, rebalancing, or claiming rewards, `okx-defi` (OKX-aggregated DeFi) fits better. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex-market`. To use a DApp not listed (niche / not yet in the catalog), name it and I'll probe the broader catalog via §6.
 
 ---
 

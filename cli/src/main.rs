@@ -12,17 +12,9 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
+pub mod payment;
 mod payment_cache;
 mod payment_notify;
-mod permit2_eip712;
-mod permit2_rpc;
-mod permit2_sign;
-mod permit2_types;
-mod subscription_cache;
-mod subscription_eip712;
-mod subscription_facilitator;
-mod subscription_sign;
-mod subscription_types;
 pub mod token_alias;
 pub mod validators;
 mod wallet_api;
@@ -115,7 +107,7 @@ pub enum Commands {
     /// Agentic wallet: login, verify, create, switch, status, logout, balance
     Wallet {
         #[command(subcommand)]
-        command: commands::agentic_wallet::wallet::WalletCommand,
+        command: commands::agentic_wallet::WalletCommand,
     },
     /// Security scanning (tx-scan, token-scan, dapp-scan, sig-scan)
     Security {
@@ -150,7 +142,7 @@ pub enum Commands {
     /// Limit-order strategy trading on Agentic Wallet (create-limit / cancel / list / resume)
     Strategy {
         #[command(subcommand)]
-        command: Box<commands::strategy::StrategyCommand>,
+        command: Box<commands::agentic_wallet::strategy::StrategyCommand>,
     },
     /// Multi-step workflow commands that chain API calls for complete operations
     Workflow {
@@ -236,12 +228,14 @@ async fn run() {
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
         Commands::Mcp { .. } => unreachable!("handled above"),
-        Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
+        Commands::Wallet { command } => commands::agentic_wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
         Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
-        Commands::Strategy { command } => commands::strategy::execute(&ctx, *command).await,
+        Commands::Strategy { command } => {
+            commands::agentic_wallet::strategy::execute(&ctx, *command).await
+        }
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,

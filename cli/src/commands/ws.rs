@@ -23,9 +23,11 @@ fn resolve_trade_type(s: &str) -> &str {
 ///
 /// Delegates to the shared `sink::parse_duration_ms` (single source of truth).
 /// Behavior is preserved for existing `s|m|h` inputs; `d` (days) is now
-/// additionally accepted — an additive superset, no regression.
+/// additionally accepted — an additive superset, no regression. `allow_zero=true`
+/// keeps the pre-refactor "disable" semantics: `0` / `0s` / `0m` / `0h` all
+/// parse to `0`, which `run_ws_session` treats as "no idle timeout".
 fn parse_duration_ms(s: &str) -> Result<u64> {
-    crate::commands::sink::parse_duration_ms(s, "idle-timeout")
+    crate::commands::sink::parse_duration_ms(s, "idle-timeout", true)
 }
 
 #[derive(Subcommand)]

@@ -57,15 +57,25 @@ impl std::error::Error for CodedError {}
 
 // ── FR-1: duration + relative window ────────────────────────────────────
 
-/// Parse `<positive-int><s|m|h|d>` (or the literal `0`) into milliseconds.
+/// Parse `<int><s|m|h|d>` (or the bare literal `0`) into milliseconds.
 ///
 /// Extends `ws.rs`'s original grammar with `d` (days) — an additive superset,
 /// so existing `s|m|h` callers see no regression. `flag` is only used to build
 /// the error message (e.g. `"since"`, `"idle-timeout"`).
-pub fn parse_duration_ms(s: &str, flag: &str) -> Result<u64> {
+///
+/// `allow_zero` splits the two callers' semantics (WBW-13651 feedback):
+/// * `--idle-timeout` passes `true` — `0` / `0s` / `0m` / `0h` all parse to `0`,
+///   which `ws.rs` treats as "disable the idle timeout" (the pre-refactor grammar).
+/// * `--since` passes `false` — a zero-length window (`begin == end`) produces an
+///   empty upstream result with no explanation, so `0` and `0m`/`0h`/`0s`/`0d`
+///   are all rejected as invalid input.
+pub fn parse_duration_ms(s: &str, flag: &str, allow_zero: bool) -> Result<u64> {
     let t = s.trim();
     if t == "0" {
-        return Ok(0);
+        if allow_zero {
+            return Ok(0);
+        }
+        anyhow::bail!("invalid --{flag} '{s}'; duration must be positive");
     }
     let (num, mult) = if let Some(n) = t.strip_suffix('d') {
         (n, 86_400_000u64)
@@ -81,7 +91,12 @@ pub fn parse_duration_ms(s: &str, flag: &str) -> Result<u64> {
     let n: u64 = num
         .parse()
         .map_err(|_| anyhow::anyhow!("invalid --{flag} '{s}'; use e.g. 300s, 30m, 24h, 7d"))?;
-    anyhow::ensure!(n > 0, "invalid --{flag} '{s}'; duration must be positive");
+    if n == 0 {
+        if allow_zero {
+            return Ok(0);
+        }
+        anyhow::bail!("invalid --{flag} '{s}'; duration must be positive");
+    }
     n.checked_mul(mult)
         .ok_or_else(|| anyhow::anyhow!("--{flag} '{s}' overflows"))
 }
@@ -96,7 +111,7 @@ pub struct ResolvedWindow {
 /// `end = now_ms` (caller passes a single captured clock read); `begin = end - dur`.
 /// `now_ms` is injected so handlers pass one timestamp and unit tests stay deterministic.
 pub fn resolve_since_window(since: &str, now_ms: u64) -> Result<ResolvedWindow> {
-    let dur = parse_duration_ms(since, "since")?;
+    let dur = parse_duration_ms(since, "since", false)?;
     Ok(ResolvedWindow {
         end: now_ms,
         begin: now_ms.saturating_sub(dur),
@@ -559,24 +574,54 @@ mod tests {
     // ── FR-1 ──
     #[test]
     fn parse_duration_known_units() {
-        assert_eq!(parse_duration_ms("300s", "since").unwrap(), 300_000);
-        assert_eq!(parse_duration_ms("30m", "since").unwrap(), 1_800_000);
-        assert_eq!(parse_duration_ms("24h", "since").unwrap(), 86_400_000);
-        assert_eq!(parse_duration_ms("7d", "since").unwrap(), 604_800_000);
-        assert_eq!(parse_duration_ms("0", "since").unwrap(), 0);
+        assert_eq!(parse_duration_ms("300s", "since", false).unwrap(), 300_000);
+        assert_eq!(parse_duration_ms("30m", "since", false).unwrap(), 1_800_000);
+        assert_eq!(parse_duration_ms("24h", "since", false).unwrap(), 86_400_000);
+        assert_eq!(parse_duration_ms("7d", "since", false).unwrap(), 604_800_000);
     }
 
     #[test]
     fn parse_duration_rejects_bad_input() {
-        assert!(parse_duration_ms("-5m", "since").is_err());
-        assert!(parse_duration_ms("10", "since").is_err());
-        assert!(parse_duration_ms("10x", "since").is_err());
-        assert!(parse_duration_ms("", "since").is_err());
+        assert!(parse_duration_ms("-5m", "since", false).is_err());
+        assert!(parse_duration_ms("10", "since", false).is_err());
+        assert!(parse_duration_ms("10x", "since", false).is_err());
+        assert!(parse_duration_ms("", "since", false).is_err());
     }
 
     #[test]
     fn parse_duration_overflow_guard() {
-        assert!(parse_duration_ms("100000000000000000d", "since").is_err());
+        assert!(parse_duration_ms("100000000000000000d", "since", false).is_err());
+    }
+
+    #[test]
+    fn parse_duration_zero_disabled_for_since() {
+        // `--since` is positive-only: bare `0` and every `0<unit>` form is rejected
+        // (a zero-width window returns an unexplained empty result).
+        assert!(parse_duration_ms("0", "since", false).is_err());
+        assert!(parse_duration_ms("0s", "since", false).is_err());
+        assert!(parse_duration_ms("0m", "since", false).is_err());
+        assert!(parse_duration_ms("0h", "since", false).is_err());
+        assert!(parse_duration_ms("0d", "since", false).is_err());
+    }
+
+    #[test]
+    fn parse_duration_zero_allowed_for_idle_timeout() {
+        // `--idle-timeout` keeps the pre-refactor "disable" semantics: bare `0`
+        // and `0s`/`0m`/`0h`/`0d` all parse to 0 (= no idle timeout).
+        assert_eq!(parse_duration_ms("0", "idle-timeout", true).unwrap(), 0);
+        assert_eq!(parse_duration_ms("0s", "idle-timeout", true).unwrap(), 0);
+        assert_eq!(parse_duration_ms("0m", "idle-timeout", true).unwrap(), 0);
+        assert_eq!(parse_duration_ms("0h", "idle-timeout", true).unwrap(), 0);
+        assert_eq!(parse_duration_ms("0d", "idle-timeout", true).unwrap(), 0);
+        // Non-zero durations still parse identically regardless of allow_zero.
+        assert_eq!(parse_duration_ms("30m", "idle-timeout", true).unwrap(), 1_800_000);
+    }
+
+    #[test]
+    fn resolve_since_window_rejects_zero() {
+        // The public `--since` entry point rejects a zero-length window.
+        assert!(resolve_since_window("0", 1000).is_err());
+        assert!(resolve_since_window("0m", 1000).is_err());
     }
 
     #[test]

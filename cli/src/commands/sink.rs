@@ -366,11 +366,27 @@ pub enum AmountNorm {
 
 /// Normalize a raw `value` into a minimal-unit decimal integer string:
 /// null/`""`/`"0"`/`"0x0"` → `"0"`; `0x`-hex → exact decimal integer; a
-/// decimal-integer string → as-is; a JSON integer → its string; anything else → `Error`.
+/// decimal-integer string → leading zeros stripped; a non-negative integer JSON
+/// number → its string; anything else (fractional/negative number, non-digit
+/// string) → `Error`.
+///
+/// Both surfaces feed the result straight into `wallet contract-call --amt`,
+/// whose `validate_non_negative_integer` only accepts a leading-zero-free
+/// non-negative decimal integer. Values it would reject (`1.5`, `-5`, `"007"`)
+/// are turned into an explicit `AmountNorm::Error` here so the caller can flag a
+/// clear `valueNormalizeError` instead of leaking a confusing contract-call error.
 pub fn normalize_amount(raw: &Value) -> AmountNorm {
     match raw {
         Value::Null => AmountNorm::Value("0".to_string()),
-        Value::Number(n) => AmountNorm::Value(n.to_string()),
+        Value::Number(n) => {
+            if n.is_u64() {
+                AmountNorm::Value(n.to_string())
+            } else {
+                AmountNorm::Error(format!(
+                    "value must be a non-negative integer minimal unit, got '{n}'"
+                ))
+            }
+        }
         Value::String(s) => {
             let t = s.trim();
             if t.is_empty() || t == "0" || t.eq_ignore_ascii_case("0x0") {
@@ -383,8 +399,11 @@ pub fn normalize_amount(raw: &Value) -> AmountNorm {
                     Err(e) => AmountNorm::Error(e),
                 };
             }
-            if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
-                return AmountNorm::Value(t.to_string());
+            if t.bytes().all(|b| b.is_ascii_digit()) {
+                // Strip leading zeros ("007" → "7"); an all-zero string → "0".
+                let stripped = t.trim_start_matches('0');
+                let normalized = if stripped.is_empty() { "0" } else { stripped };
+                return AmountNorm::Value(normalized.to_string());
             }
             AmountNorm::Error(format!("unparseable value '{t}'"))
         }
@@ -877,6 +896,28 @@ mod tests {
             normalize_amount(&json!("abc")),
             AmountNorm::Error(_)
         ));
+    }
+
+    #[test]
+    fn normalize_amount_strips_leading_zeros() {
+        // Decimal-string leading zeros are stripped so `--amt` accepts the value.
+        assert!(matches!(normalize_amount(&json!("007")), AmountNorm::Value(v) if v == "7"));
+        assert!(matches!(normalize_amount(&json!("00123")), AmountNorm::Value(v) if v == "123"));
+        // An all-zero decimal string collapses to canonical "0".
+        assert!(matches!(normalize_amount(&json!("00")), AmountNorm::Value(v) if v == "0"));
+        assert!(matches!(normalize_amount(&json!("000")), AmountNorm::Value(v) if v == "0"));
+    }
+
+    #[test]
+    fn normalize_amount_rejects_non_integer_numbers() {
+        // JSON numbers that are not non-negative integers must become Error, not
+        // a `valueNormalized` the downstream `--amt` validator will reject.
+        assert!(matches!(normalize_amount(&json!(1.5)), AmountNorm::Error(_)));
+        assert!(matches!(normalize_amount(&json!(-5)), AmountNorm::Error(_)));
+        assert!(matches!(normalize_amount(&json!(-1.0)), AmountNorm::Error(_)));
+        // A non-negative integer JSON number is still accepted.
+        assert!(matches!(normalize_amount(&json!(42)), AmountNorm::Value(v) if v == "42"));
+        assert!(matches!(normalize_amount(&json!(0)), AmountNorm::Value(v) if v == "0"));
     }
 
     #[test]

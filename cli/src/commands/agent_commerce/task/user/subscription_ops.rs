@@ -30,14 +30,6 @@ pub enum SubscriptionRole {
 }
 
 impl SubscriptionRole {
-    /// Wire value for the `role` query param.
-    fn as_query(self) -> &'static str {
-        match self {
-            Self::Buyer => "buyer",
-            Self::Provider => "provider",
-        }
-    }
-
     /// Role code for resolving the representative agenticId header.
     fn agent_role(self) -> i64 {
         match self {
@@ -127,36 +119,62 @@ pub fn status_name(status: i64) -> String {
     }
 }
 
-/// `GET /priapi/v1/aieco/task/subscribe/my?role=&page=&pageSize=[&status=]`
+/// `GET /priapi/v1/aieco/task/subscribe/my`
+///
+/// Request path for the `/my` list endpoint — no query string. The endpoint
+/// defines no request params; role/status are applied client-side.
+fn my_subscriptions_path() -> String {
+    format!("{SUBSCRIBE_PREFIX}/my")
+}
+
+/// Client-side view + status filter over the flat `/my` list.
+///
+/// The endpoint returns the full list for the logged-in agent; there is no
+/// server-side paging, role, or status param. Buyer view keeps records whose
+/// `buyerAgentId` equals the logged-in agentId; provider view keeps records
+/// whose `providerAgentId` equals it. `status`, when given, keeps records whose
+/// raw status matches.
+fn filter_subscriptions(
+    list: Vec<SubscriptionInfo>,
+    role: SubscriptionRole,
+    self_agent_id: &str,
+    status: Option<i32>,
+) -> Vec<SubscriptionInfo> {
+    list.into_iter()
+        .filter(|item| match role {
+            SubscriptionRole::Buyer => item.buyer_agent_id == self_agent_id,
+            SubscriptionRole::Provider => item.provider_agent_id == self_agent_id,
+        })
+        .filter(|item| status.is_none_or(|s| item.status == i64::from(s)))
+        .collect()
+}
+
+/// `GET /priapi/v1/aieco/task/subscribe/my`
 ///
 /// Lists the logged-in agent's subscriptions (buyer or provider view).
 pub async fn handle_my_subscriptions(
     client: &mut TaskApiClient,
     role: SubscriptionRole,
     status: Option<i32>,
-    page: u32,
-    page_size: u32,
 ) -> Result<()> {
     let header_agent = common_query::resolve_agent_id("", role.agent_role()).await;
-    let mut path = format!(
-        "{SUBSCRIBE_PREFIX}/my?role={}&page={}&pageSize={}",
-        role.as_query(),
-        page,
-        page_size
-    );
-    if let Some(s) = status {
-        path.push_str(&format!("&status={s}"));
-    }
+    // The `/my` endpoint defines NO request params and returns a flat list
+    // (buyer + provider records for the logged-in agent), so `role` and
+    // `status` are applied client-side below. NOTE: if the flat list ever
+    // proves unable to carry provider-side records, confirm with backend
+    // before adding a server-side role/view param — do not fabricate one here.
+    let path = my_subscriptions_path();
     let data = client
         .get_with_identity(&path, &header_agent)
         .await
         .map_err(|e| anyhow!("failed to fetch subscriptions: {e}"))?;
-    let mut wrapper: SubscriptionList = serde_json::from_value(data)
+    let wrapper: SubscriptionList = serde_json::from_value(data)
         .map_err(|e| anyhow!("failed to parse subscription list: {e}"))?;
-    for item in &mut wrapper.list {
+    let mut list = filter_subscriptions(wrapper.list, role, &header_agent, status);
+    for item in &mut list {
         item.status_name = status_name(item.status);
     }
-    crate::output::success(serde_json::json!({ "list": wrapper.list }));
+    crate::output::success(serde_json::json!({ "list": list }));
     Ok(())
 }
 
@@ -282,11 +300,69 @@ mod tests {
     }
 
     #[test]
-    fn subscription_role_maps_query_and_agent_role() {
-        assert_eq!(SubscriptionRole::Buyer.as_query(), "buyer");
-        assert_eq!(SubscriptionRole::Provider.as_query(), "provider");
+    fn subscription_role_maps_agent_role() {
         assert_eq!(SubscriptionRole::Buyer.agent_role(), AGENT_ROLE_USER);
         assert_eq!(SubscriptionRole::Provider.agent_role(), AGENT_ROLE_ASP);
+    }
+
+    /// The `/my` endpoint takes NO request params — the path is exactly
+    /// `.../subscribe/my` with no query string.
+    #[test]
+    fn my_subscriptions_path_has_no_query_string() {
+        let path = my_subscriptions_path();
+        assert_eq!(path, "/priapi/v1/aieco/task/subscribe/my");
+        assert!(
+            !path.contains('?'),
+            "the /my endpoint takes no query params"
+        );
+    }
+
+    /// Build a record with a given buyer / provider / status over the fixture.
+    fn sub(buyer: &str, provider: &str, status: i64) -> SubscriptionInfo {
+        let mut s: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
+        s.buyer_agent_id = buyer.to_string();
+        s.provider_agent_id = provider.to_string();
+        s.status = status;
+        s
+    }
+
+    #[test]
+    fn filter_subscriptions_buyer_and_provider_views_are_client_side() {
+        // The flat /my list carries both viewpoints: record `a` is bought by
+        // agent 1001, record `b` is provided by agent 1001.
+        let list = || vec![sub("1001", "2002", 1), sub("3003", "1001", 4)];
+
+        // Buyer view for agent 1001 keeps only the record it bought.
+        let buyer = filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", None);
+        assert_eq!(buyer.len(), 1);
+        assert_eq!(buyer[0].provider_agent_id, "2002");
+
+        // Provider view for agent 1001 keeps only the record it provides.
+        let provider = filter_subscriptions(list(), SubscriptionRole::Provider, "1001", None);
+        assert_eq!(provider.len(), 1);
+        assert_eq!(provider[0].buyer_agent_id, "3003");
+    }
+
+    #[test]
+    fn filter_subscriptions_status_filter_is_client_side() {
+        let list = || {
+            vec![
+                sub("1001", "2002", 1),
+                sub("1001", "3003", 4),
+                sub("1001", "4004", 1),
+            ]
+        };
+        // No status → all buyer records for 1001 pass.
+        assert_eq!(
+            filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", None).len(),
+            3
+        );
+        // status=1 → only the two ACTIVE records pass.
+        let active = filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", Some(1));
+        assert_eq!(active.len(), 2);
+        assert!(active.iter().all(|s| s.status == 1));
+        // A status with no matches yields an empty list (no fabricated rows).
+        assert!(filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", Some(9)).is_empty());
     }
 
     #[test]

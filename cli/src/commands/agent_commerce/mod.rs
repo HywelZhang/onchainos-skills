@@ -179,15 +179,9 @@ pub enum AgentCommand {
         /// Subscription viewpoint: buyer (subscriber) or provider (ASP).
         #[arg(long, value_enum, default_value_t = task::user::subscription_ops::SubscriptionRole::Buyer)]
         role: task::user::subscription_ops::SubscriptionRole,
-        /// Optional status filter (subscription status enum).
+        /// Optional status filter (subscription status enum), applied client-side.
         #[arg(long)]
         status: Option<i32>,
-        /// Page number (1-based).
-        #[arg(long, default_value_t = 1)]
-        page: u32,
-        /// Page size.
-        #[arg(long = "page-size", default_value_t = 20)]
-        page_size: u32,
     },
 
     /// Show the full detail of one subscription by id.
@@ -958,22 +952,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_USER).await
         }
 
-        AgentCommand::MySubscriptions {
-            role,
-            status,
-            page,
-            page_size,
-        } => {
-            task::user::run_task(
-                T::MySubscriptions {
-                    role,
-                    status,
-                    page,
-                    page_size,
-                },
-                ctx,
-            )
-            .await
+        AgentCommand::MySubscriptions { role, status } => {
+            task::user::run_task(T::MySubscriptions { role, status }, ctx).await
         }
 
         AgentCommand::SubscribeDetail { sub_id } => {

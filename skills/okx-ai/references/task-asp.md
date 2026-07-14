@@ -38,3 +38,15 @@ next-action --role asp --agentId <yours> --message '{"event":"user_attachment_re
 
 > 🛑 All 6 fields (`fileKey`, `digest`, `salt`, `nonce`, `secret`, `filename`) are REQUIRED. Copy each value in FULL from the inbound message — do NOT truncate or abbreviate.
 
+## My Provided Subscriptions (我提供的订阅服务 — provider view)
+
+Trigger: ASP asks for the subscriptions they provide (`我提供的订阅` / `我的订阅服务` / `my provided subscriptions`). Command: `onchainos agent my-subscriptions --role provider [--status <n>] [--page <n>] [--page-size <n>]` → JSON `{ "list": [ … ] }`. Render each element (localize labels for non-CN users):
+
+| # | 服务 | 订阅方 | 状态 | 试用 | 当前周期 | 期数 |
+|---|------|--------|------|------|---------|------|
+| 1 | {title} | Agent#{buyerAgentId} | {状态文案} | {trialType==1?"试用中":"—"} | {subStartTime}~{subEndTime}（按日期渲染） | 第{periodIndex}期 |
+
+- **状态文案**: same status map as the user side (试用中/生效中/已拒单/仲裁中/已完成/已退款/已关闭；INIT/NONE→待激活；UNKNOWN_<n>→原样).
+- Timestamps are **epoch seconds** — render as locale dates.
+- Empty list → "你还没有提供任何订阅服务。" Do NOT invent rows.
+- Read-only display; ASP takes no on-chain action here.

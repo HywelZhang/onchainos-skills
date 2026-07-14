@@ -1968,11 +1968,23 @@ async fn cmd_mpp_session_voucher(
     let prior_cum_u = prior_cum.parse::<u128>().unwrap_or(0);
     let unit = new_cum_u.saturating_sub(prior_cum_u);
 
-    // Advance persisted cumulative to the newly authorized figure.
-    if let Some(mut s) = prior {
-        s.cumulative = cumulative_amount.to_string();
-        s.updated_at = session_state::now_unix();
-        let _ = s.write();
+    // Advance persisted cumulative only when the voucher is viable — i.e.
+    // unit > 0 and (deposit known ⇒ new cumulative within deposit). The stored
+    // value is the just-SIGNED cumulative, NOT one the seller has confirmed; a
+    // voucher that over-spends the deposit / needs top-up will be rejected by
+    // the seller, so advancing on it would make the next voucher's
+    // `unit = new − prior` baseline optimistic. When the deposit is unknown we
+    // still advance (best-effort). Over-deposit / top-up drift is ultimately
+    // corrected by the 70015 `server_cumulative` re-sign (seller SDK is the
+    // final authority). Same `needsTopUp` predicate as `fetch_session`.
+    let deposit_u = deposit.as_deref().and_then(|d| d.parse::<u128>().ok());
+    let viable = unit > 0 && deposit_u.is_none_or(|d| new_cum_u <= d);
+    if viable {
+        if let Some(mut s) = prior {
+            s.cumulative = cumulative_amount.to_string();
+            s.updated_at = session_state::now_unix();
+            let _ = s.write();
+        }
     }
 
     emit_session(

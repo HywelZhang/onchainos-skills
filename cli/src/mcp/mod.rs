@@ -879,6 +879,11 @@ struct PaymentSessionParams {
     unit_amount: Option<String>,
     /// Prior authorized cumulative amount (atomic string). The decision layer
     /// adds unit_amount to this; omit for the first voucher (treated as 0).
+    /// NOTE: this is the PRIOR cumulative (unit_amount is added on top), NOT the
+    /// absolute new cumulative — the opposite of the CLI's
+    /// `payment session voucher --cumulative-amount`, which takes the absolute
+    /// new cumulative and derives `unit = new − prior` internally (the CLI has
+    /// persisted session state; this stateless MCP entry does not).
     cumulative_amount: Option<String>,
     /// Escrow address (op-dependent).
     escrow: Option<String>,

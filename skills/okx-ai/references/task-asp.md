@@ -40,7 +40,7 @@ next-action --role asp --agentId <yours> --message '{"event":"user_attachment_re
 
 ## My Provided Subscriptions (我提供的订阅服务 — provider view)
 
-Trigger: ASP asks for the subscriptions they provide (`我提供的订阅` / `我的订阅服务` / `my provided subscriptions`). Command: `onchainos agent my-subscriptions --role provider [--status <n>] [--page <n>] [--page-size <n>]` → JSON `{ "list": [ … ] }`. Render each element (localize labels for non-CN users):
+Trigger: ASP asks for the subscriptions they provide (`我提供的订阅` / `我的订阅服务` / `my provided subscriptions`). Command: `onchainos agent my-subscriptions --role provider` → JSON `{ "list": [ … ] }`. Render each element (localize labels for non-CN users):
 
 | # | 服务 | 订阅方 | 状态 | 试用 | 当前周期 | 期数 |
 |---|------|--------|------|------|---------|------|

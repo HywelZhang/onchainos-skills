@@ -39,7 +39,7 @@
 
 Trigger: user asks for their subscriptions (`我的订阅` / `订阅列表` / `我订阅了哪些服务` / `my subscriptions` / `what am I subscribed to`). Routing entry lives in [`task-user-intent-routing.md`](task-user-intent-routing.md).
 
-Command: `onchainos agent my-subscriptions --role buyer [--status <n>] [--page <n>] [--page-size <n>]` → JSON `{ "list": [ … ] }`. Render each element as one row (localize labels for non-CN users):
+Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ] }`. Render each element as one row (localize labels for non-CN users):
 
 | # | 服务 | ASP | 状态 | 试用 | 当前周期 | 下次扣款 | 自动续费 |
 |---|------|-----|------|------|---------|---------|---------|

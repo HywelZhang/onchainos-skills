@@ -1,4 +1,4 @@
-//! Read-only subscription display commands (user-side) — G02.
+//! Read-only subscription display commands (user-side).
 //!
 //! Two commands under `onchainos agent`:
 //! - `my-subscriptions` — list the logged-in agent's AI-service subscriptions
@@ -17,8 +17,8 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::{AGENT_ROLE_ASP, AGENT_ROLE_USER};
 
-/// Full path prefix for the subscription endpoints (§8: the per-endpoint paths
-/// carrying `/task/` win over the doc-header prefix).
+/// Full path prefix for the subscription endpoints. Per-endpoint paths
+/// carrying `/task/` take precedence over the header prefix.
 const SUBSCRIBE_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
 
 /// Subscription viewpoint for `my-subscriptions`.
@@ -48,7 +48,7 @@ impl SubscriptionRole {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct SubscriptionInfo {
-    /// Primary key (§9.9). NOT `subId`.
+    /// Primary key. NOT `subId`.
     pub job_id: String,
     /// 0=JOB_TASK, 1=JOB_SUBSCRIBE.
     pub job_type: i64,
@@ -69,7 +69,7 @@ pub struct SubscriptionInfo {
     pub provider_agent_address: String,
     /// 0=non-trial, 1=trial.
     pub trial_type: i64,
-    /// Seconds epoch; `null` for non-trial. KEEP the wire misspelling `trail` (§9.6).
+    /// Seconds epoch; `null` for non-trial. KEEP the wire misspelling `trail`.
     pub trail_start_time: Option<i64>,
     /// Seconds epoch; `null` for non-trial. KEEP `trail`.
     pub trail_end_time: Option<i64>,
@@ -87,7 +87,7 @@ pub struct SubscriptionInfo {
     /// Opaque JSON string, pass-through.
     pub service_params: String,
     pub service_token_address: String,
-    /// Decimal STRING — never a float (§6.2).
+    /// Decimal STRING — never a float.
     pub service_token_amount: String,
     pub payment_token_address: String,
     /// Decimal STRING — never a float.
@@ -104,7 +104,7 @@ struct SubscriptionList {
 }
 
 /// English status label derived from `status` alone. Defensive `UNKNOWN_<n>`
-/// fallback for unmapped values (AC-05).
+/// fallback for unmapped values.
 pub fn status_name(status: i64) -> String {
     match status {
         -1 => "INIT".to_string(),
@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// A representative detail fixture with all §3.2 fields present (trial case).
+    /// A representative detail fixture with all detail fields present (trial case).
     fn detail_fixture() -> serde_json::Value {
         json!({
             "jobId": "1234567890",

@@ -108,13 +108,12 @@ struct SubscriptionList {
 pub fn status_name(status: i64) -> String {
     match status {
         -1 => "INIT".to_string(),
-        0 => "NONE".to_string(),
-        1 => "ACTIVE".to_string(),
-        2 => "REJECTED".to_string(),
-        3 => "DISPUTED".to_string(),
-        4 => "COMPLETED".to_string(),
-        5 => "FAILED".to_string(),
-        6 => "CLOSED".to_string(),
+        100 => "ACTIVE".to_string(),
+        101 => "REJECTED".to_string(),
+        102 => "DISPUTED".to_string(),
+        103 => "COMPLETED".to_string(),
+        104 => "FAILED".to_string(),
+        105 => "CLOSED".to_string(),
         n => format!("UNKNOWN_{n}"),
     }
 }
@@ -208,7 +207,7 @@ mod tests {
         json!({
             "jobId": "1234567890",
             "jobType": 1,
-            "status": 1,
+            "status": 100,
             "chainId": 196,
             "title": "Alpha signals subscription",
             "description": "Daily alpha signals",
@@ -241,7 +240,7 @@ mod tests {
         let info: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
         assert_eq!(info.job_id, "1234567890");
         assert_eq!(info.job_type, 1);
-        assert_eq!(info.status, 1);
+        assert_eq!(info.status, 100);
         assert_eq!(info.chain_id, 196);
         assert_eq!(info.title, "Alpha signals subscription");
         assert_eq!(info.buyer_agent_id, "1001");
@@ -266,17 +265,18 @@ mod tests {
     }
 
     #[test]
-    fn status_name_covers_all_nine_cases_and_unknown() {
+    fn status_name_covers_all_seven_codes_and_unknown() {
         assert_eq!(status_name(-1), "INIT");
-        assert_eq!(status_name(0), "NONE");
-        assert_eq!(status_name(1), "ACTIVE");
-        assert_eq!(status_name(2), "REJECTED");
-        assert_eq!(status_name(3), "DISPUTED");
-        assert_eq!(status_name(4), "COMPLETED");
-        assert_eq!(status_name(5), "FAILED");
-        assert_eq!(status_name(6), "CLOSED");
+        assert_eq!(status_name(100), "ACTIVE");
+        assert_eq!(status_name(101), "REJECTED");
+        assert_eq!(status_name(102), "DISPUTED");
+        assert_eq!(status_name(103), "COMPLETED");
+        assert_eq!(status_name(104), "FAILED");
+        assert_eq!(status_name(105), "CLOSED");
+        // Retired small codes are no longer in the contract — they fall through
+        // to UNKNOWN_<n> (no legacy 0..6 compatibility mapping).
+        assert_eq!(status_name(1), "UNKNOWN_1");
         // UNKNOWN_<n> fallback for any unmapped value.
-        assert_eq!(status_name(9), "UNKNOWN_9");
         assert_eq!(status_name(42), "UNKNOWN_42");
     }
 
@@ -330,7 +330,7 @@ mod tests {
     fn filter_subscriptions_buyer_and_provider_views_are_client_side() {
         // The flat /my list carries both viewpoints: record `a` is bought by
         // agent 1001, record `b` is provided by agent 1001.
-        let list = || vec![sub("1001", "2002", 1), sub("3003", "1001", 4)];
+        let list = || vec![sub("1001", "2002", 100), sub("3003", "1001", 103)];
 
         // Buyer view for agent 1001 keeps only the record it bought.
         let buyer = filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", None);
@@ -347,9 +347,9 @@ mod tests {
     fn filter_subscriptions_status_filter_is_client_side() {
         let list = || {
             vec![
-                sub("1001", "2002", 1),
-                sub("1001", "3003", 4),
-                sub("1001", "4004", 1),
+                sub("1001", "2002", 100),
+                sub("1001", "3003", 103),
+                sub("1001", "4004", 100),
             ]
         };
         // No status → all buyer records for 1001 pass.
@@ -357,10 +357,10 @@ mod tests {
             filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", None).len(),
             3
         );
-        // status=1 → only the two ACTIVE records pass.
-        let active = filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", Some(1));
+        // status=100 → only the two ACTIVE records pass.
+        let active = filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", Some(100));
         assert_eq!(active.len(), 2);
-        assert!(active.iter().all(|s| s.status == 1));
+        assert!(active.iter().all(|s| s.status == 100));
         // A status with no matches yields an empty list (no fabricated rows).
         assert!(filter_subscriptions(list(), SubscriptionRole::Buyer, "1001", Some(9)).is_empty());
     }

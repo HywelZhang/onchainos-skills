@@ -73,16 +73,19 @@ pub struct SubscriptionInfo {
     pub trail_start_time: Option<i64>,
     /// Seconds epoch; `null` for non-trial. KEEP `trail`.
     pub trail_end_time: Option<i64>,
-    pub sub_start_time: i64,
-    pub sub_end_time: i64,
-    /// subEndTime + 1 day.
-    pub sub_buffer_end_time: i64,
+    /// Seconds epoch. `null` for a not-yet-on-chain INIT (status -1) record
+    /// whose on-chain period does not exist yet.
+    pub sub_start_time: Option<i64>,
+    /// Seconds epoch. `null` for a not-yet-on-chain INIT record.
+    pub sub_end_time: Option<i64>,
+    /// subEndTime + 1 day. `null` for a not-yet-on-chain INIT record.
+    pub sub_buffer_end_time: Option<i64>,
     /// 0/1.
     pub auto_renew: i64,
     /// 0/1.
     pub copy_trade: i64,
-    /// Starts at 1.
-    pub period_index: i64,
+    /// Starts at 1. `null` for a not-yet-on-chain INIT record (no period yet).
+    pub period_index: Option<i64>,
     pub service_id: String,
     /// Opaque JSON string, pass-through.
     pub service_params: String,
@@ -252,12 +255,12 @@ mod tests {
         assert_eq!(info.buyer_agent_id, "1001");
         assert_eq!(info.provider_agent_id, "2002");
         assert_eq!(info.trial_type, 1);
-        assert_eq!(info.sub_start_time, 1700600000);
-        assert_eq!(info.sub_end_time, 1703192000);
-        assert_eq!(info.sub_buffer_end_time, 1703278400);
+        assert_eq!(info.sub_start_time, Some(1700600000));
+        assert_eq!(info.sub_end_time, Some(1703192000));
+        assert_eq!(info.sub_buffer_end_time, Some(1703278400));
         assert_eq!(info.auto_renew, 1);
         assert_eq!(info.copy_trade, 0);
-        assert_eq!(info.period_index, 1);
+        assert_eq!(info.period_index, Some(1));
         assert_eq!(info.service_id, "svc-1");
         assert_eq!(info.service_params, "{\"k\":\"v\"}");
     }
@@ -303,6 +306,35 @@ mod tests {
         assert_eq!(info.trail_start_time, None);
         assert_eq!(info.trail_end_time, None);
         assert_eq!(info.trial_type, 0);
+    }
+
+    /// An INIT (status -1, not-yet-on-chain) record carries explicit `null`
+    /// for the on-chain period fields. `serde(default)` only rescues a MISSING
+    /// key, not an explicit `null` into a non-`Option` numeric — so these
+    /// fields must be `Option<i64>` or the whole `/my` list command errors.
+    #[test]
+    fn init_record_null_sub_times_deserialize_to_none() {
+        let mut wire = detail_fixture();
+        wire["status"] = json!(-1);
+        wire["subStartTime"] = serde_json::Value::Null;
+        wire["subEndTime"] = serde_json::Value::Null;
+        wire["subBufferEndTime"] = serde_json::Value::Null;
+        wire["periodIndex"] = serde_json::Value::Null;
+
+        // A single INIT record deserializes without error.
+        let info: SubscriptionInfo = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(info.status, -1);
+        assert_eq!(info.sub_start_time, None);
+        assert_eq!(info.sub_end_time, None);
+        assert_eq!(info.sub_buffer_end_time, None);
+        assert_eq!(info.period_index, None);
+
+        // A `/my` list containing such a record still parses and renders.
+        let wrapper: SubscriptionList =
+            serde_json::from_value(json!({ "list": [ wire, detail_fixture() ] })).unwrap();
+        assert_eq!(wrapper.list.len(), 2);
+        assert_eq!(wrapper.list[0].sub_start_time, None);
+        assert_eq!(wrapper.list[1].sub_start_time, Some(1700600000));
     }
 
     #[test]

@@ -3,7 +3,7 @@ name: okx-ai
 description: >
   ERC-8004 Agent identity: 注册/更新/上架/下架/搜索agent, register/update/activate/deactivate/search — User/ASP/Evaluator(买家/卖家/仲裁者);
   我的agent/ASP, 找做X的ASP/agent有什么服务/endpoint怎么填/查口碑/传头像. + Task Marketplace: 发布/创建任务/接单/协商/验收/deliver/dispute/仲裁/拒绝/stake/unstake/change
-  provider/change budget/修改卖家/修改预算/draft/草稿/我的任务/my tasks/what am I working on/关闭/取消任务/决策列表/decision list/指定服务商/browse
+  provider/change budget/修改卖家/修改预算/draft/草稿/我的任务/my tasks/what am I working on/我的订阅/订阅列表/订阅详情/my subscriptions/what am I subscribed to/AI服务订阅(view AI-service subscriptions, buyer & ASP)/关闭/取消任务/决策列表/decision list/指定服务商/browse
   marketplace. + task watch: 监听任务进展/历史消息/未读消息/未决策/outstanding decisions. + okx-a2a missing/uninitialized. Match by
   meaning. MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:"system", event, jobId,...}}
   system event; (2) {msgType:"a2a-agent-chat", jobId, sender:{role},...} agent-to-agent task chat
@@ -65,6 +65,7 @@ Do **not** apply the free-text Routing table below to any of these — envelope 
 | a CLI call returns an error / non-success (identity ops) | [`references/identity-errors.md`](references/identity-errors.md) (on demand) |
 | fee / gas / "how much to register" / "example at X USDT" | answer in **§Cost** — do NOT enter register |
 | publish / accept / deliver / dispute / negotiate a **task**, browse marketplace, my tasks, hire agent | See **§Task Marketplace** below |
+| my subscriptions / 我的订阅 / 订阅列表 / 订阅详情 — AI-service subscriptions (buyer or ASP view) | [`references/task-user-playbook.md`](references/task-user-playbook.md) §My Subscriptions / §Subscription Detail. User session answers directly (do NOT 6-step forward). |
 | 监听任务进展 / 历史消息 / 未决策 / task watch / outstanding decisions | See **§Task Watch** below |
 | missing/uninitialized OKX A2A communication runtime, `okx-a2a` errors | See **§Communication Readiness** below |
 

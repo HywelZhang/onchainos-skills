@@ -112,6 +112,52 @@ fn parse_a2a_file(path: &str) -> Option<DeliverPayload> {
     parse_deliver_content(content)
 }
 
+/// Extract the FR-2 `autotrade: <json>` line from a delivery `content` block.
+fn extract_autotrade_line(content: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("autotrade:")
+            .map(|rest| rest.trim().to_string())
+            .filter(|s| !s.is_empty())
+    })
+}
+
+/// Extract the auto-trade signal JSON from the inbound `--message` envelope, if any.
+///
+/// Pure local I/O (no network): reads the `a2aFile` temp file and scans its
+/// `content` for the `autotrade:` line. Returns `None` for ordinary deliveries so
+/// the caller can short-circuit before any `.await` (AC-10: zero added network).
+fn extract_autotrade_from_message(message: Option<&serde_json::Value>) -> Option<String> {
+    let a2a_file = message
+        .and_then(|m| m.get("a2aFile"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let fp = std::path::Path::new(a2a_file);
+    if !is_safe_temp_path(fp) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(fp).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let content = json.get("content").and_then(|v| v.as_str())?;
+    extract_autotrade_line(content)
+}
+
+/// Serialize a buyer delivery-handler payload into the same envelope shape as
+/// `output::success(data)` (`{"ok":true,"data":…}`). The auto-trade branch returns
+/// this string so it flows through the caller's existing `println!` path.
+fn success_envelope<T: serde::Serialize>(data: &T) -> String {
+    serde_json::to_string(&serde_json::json!({ "ok": true, "data": data }))
+        .unwrap_or_else(|_| "{\"ok\":false,\"error\":\"failed to serialize card\"}".to_string())
+}
+
+/// Milliseconds since the Unix epoch (buyer receive time).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Try to recover a deliverable from `/tmp/a2a_deliver_<jobId>.json`.
 ///
 /// Called by `check_status_freshness` when `job_submitted` finds no manifest.
@@ -428,7 +474,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
 ///
 /// Legacy `--message` fields (deliverableType/fileKey/text/filePath) are
 /// still accepted as fallback for backward compatibility.
-pub(crate) fn deliverable_received_cli(
+pub(crate) async fn deliverable_received_cli(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
@@ -439,6 +485,11 @@ pub(crate) fn deliverable_received_cli(
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+
+    // FR-3/4/5/7: detect an auto-trade signal up front (pure local I/O). When
+    // absent, the rest of this function runs exactly as before with no `.await`
+    // (AC-10: ordinary delivery unchanged, zero added network calls).
+    let autotrade_signal = extract_autotrade_from_message(message);
 
     let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
 
@@ -645,6 +696,36 @@ pub(crate) fn deliverable_received_cli(
             }
         }
     };
+
+    // ── FR-3/4/5/7 auto-trade execution branch ──────────────────────────
+    // The deliverable is now saved locally (`saved_path`). If it carried an
+    // `autotrade:` signal line, the CLI — not the model — decides whether to
+    // execute: run the fixed-order pipeline and emit either an execution card
+    // (all checks pass) or a notify-only payload (any degrade). This is the ONLY
+    // path that awaits; ordinary deliveries never reach it (AC-10).
+    if let Some(signal_json) = autotrade_signal.as_deref() {
+        use crate::commands::agent_commerce::task::common::autotrade::pipeline;
+        audit::log(
+            "cli",
+            crate::commands::agent_commerce::task::common::autotrade::ACTION_AUTOTRADE_DELIVER,
+            true,
+            Duration::default(),
+            Some(base_tags.clone()),
+            None,
+        );
+        let outcome = pipeline::run(pipeline::PipelineInput {
+            signal_json,
+            job_id,
+            agent_id,
+            received_at_ms: now_ms(),
+            saved_path: &saved_path,
+        })
+        .await;
+        return match outcome {
+            pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
+            pipeline::PipelineOutcome::Notify(notify) => success_envelope(&notify),
+        };
+    }
 
     // Pre-decide the ASP rating + pre-translate the rating_submitted notify
     // + pre-translate the JobCompleted notify on the backup session (escrow

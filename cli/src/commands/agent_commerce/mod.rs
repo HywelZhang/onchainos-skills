@@ -400,6 +400,37 @@ pub enum AgentCommand {
         #[arg(long = "deliverable-text", default_value = "")] deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
+        /// Single-line JSON auto-trade signal (omitting `signalTime`). When non-empty the CLI
+        /// stamps `signalTime`, structure-validates the signal, and appends an `autotrade:` line
+        /// to the delivery content. Invalid ⇒ `signal rejected: <reason>` (exit 1), nothing sent.
+        #[arg(long, default_value = "")] autotrade: String,
+    },
+
+    /// Check a per-trade amount against the buyer's written authorization (bespoke
+    /// `{ok,reason?}` process contract; NOT the standard `data` envelope).
+    #[command(name = "autotrade-grant-check")]
+    AutotradeGrantCheck {
+        #[arg(long = "job-id")] job_id: String,
+        /// `dex` | `defi` | `polymarket`.
+        #[arg(long)] venue: String,
+        /// `buy` | `sell`.
+        #[arg(long)] action: String,
+        /// Decimal per-trade amount to check against the written cap (mandatory).
+        #[arg(long)] amount: String,
+        /// Only `json` is accepted; any other value denies.
+        #[arg(long)] format: String,
+    },
+
+    /// [dev only] Seed a local grant file for testing (compiled out of release; AC-11).
+    #[cfg(debug_assertions)]
+    #[command(name = "autotrade-grant-write", hide = true)]
+    AutotradeGrantWrite {
+        #[arg(long = "job-id")] job_id: String,
+        /// `dex` | `defi` | `polymarket`.
+        #[arg(long)] venue: String,
+        #[arg(long = "max-buy")] max_buy: Option<String>,
+        #[arg(long = "max-sell")] max_sell: Option<String>,
+        #[arg(long = "ttl-sec")] ttl_sec: u64,
     },
 
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
@@ -1078,10 +1109,42 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             ).await,
 
-        AgentCommand::Deliver { job_id, file, message, deliverable_text, agent_id } =>
+        AgentCommand::Deliver { job_id, file, message, deliverable_text, agent_id, autotrade } =>
             task::asp::run_provider(
-                task::asp::ProviderCommand::Deliver { job_id, file, message, deliverable_text, agent_id }, ctx,
+                task::asp::ProviderCommand::Deliver { job_id, file, message, deliverable_text, agent_id, autotrade }, ctx,
             ).await,
+
+        // ── Auto copy-trade (grant-check public; grant-write debug-only) ─────
+        AgentCommand::AutotradeGrantCheck { job_id, venue, action, amount, format } => {
+            use task::common::autotrade::{grants, CliBespokeExit};
+            // --format must be exactly "json"; any other value denies.
+            if format != "json" {
+                crate::output::bespoke_deny(grants::DENY_INVALID_FORMAT);
+                return Err(CliBespokeExit(1).into());
+            }
+            // Bespoke process contract: top-level {ok} / {ok,reason}, no `data` wrapper.
+            // audit::log (main.rs) fires for both allow and deny before the exit.
+            match grants::check_grant(&job_id, &venue, &action, &amount) {
+                Ok(()) => {
+                    crate::output::bespoke_ok();
+                    Ok(())
+                }
+                Err(deny) => {
+                    // NFR-3: `reason` is a process-level description only — never the file/path.
+                    crate::output::bespoke_deny(deny.0);
+                    Err(CliBespokeExit(1).into())
+                }
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        AgentCommand::AutotradeGrantWrite { job_id, venue, max_buy, max_sell, ttl_sec } => {
+            task::common::autotrade::grants::write_grant(
+                &job_id, &venue, max_buy.as_deref(), max_sell.as_deref(), ttl_sec,
+            )?;
+            crate::output::success_empty();
+            Ok(())
+        }
 
         AgentCommand::AgreeRefund { job_id, agent_id } =>
             task::asp::run_provider(

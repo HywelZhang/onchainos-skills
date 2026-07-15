@@ -180,6 +180,10 @@ const REDACT_FULL: &[&str] = &[
     "--input-data",
     "--data",
     "--message",
+    // Auto-trade signal: carries a whole JSON blob incl. tokenAddress (FR-9).
+    // Note: grant caps (--max-buy / --max-sell) and grant-check --amount are policy
+    // caps, not secrets, and are deliberately NOT redacted.
+    "--autotrade",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -401,6 +405,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::FindJobs => "find-jobs".into(),
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
+        #[cfg(debug_assertions)]
+        AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
         AgentCommand::ContactUser { .. } => "contact-user".into(),
@@ -905,6 +912,43 @@ mod tests {
         let out = redact_args(&args);
         assert_eq!(out[5], "--signed-tx");
         assert_eq!(out[6], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_autotrade() {
+        // The --autotrade value is a whole JSON signal blob (incl. tokenAddress);
+        // it must be fully redacted (FR-9), while --max-buy / --amount are not.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "deliver",
+            "JOB1",
+            "--agent-id",
+            "A1",
+            "--autotrade",
+            r#"{"schemaVersion":1,"deliveryId":"d1","tokenAddress":"0xsecret"}"#,
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "--autotrade");
+        assert_eq!(out[7], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_autotrade_equals_form() {
+        let args = vec_s(&["onchainos", "agent", "deliver", "--autotrade={\"a\":1}"]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--autotrade=[REDACTED]");
+    }
+
+    #[test]
+    fn grant_caps_not_redacted() {
+        // Policy caps are not secrets — must survive verbatim for audit review.
+        let args = vec_s(&[
+            "onchainos", "agent", "autotrade-grant-check", "--job-id", "j1", "--venue", "dex",
+            "--action", "buy", "--amount", "100.5", "--format", "json",
+        ]);
+        let out = redact_args(&args);
+        assert!(out.contains(&"100.5".to_string()), "amount cap must not be redacted");
     }
 
     #[test]

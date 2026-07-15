@@ -415,7 +415,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         }
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
         Event::DeliverableReceived => {
-            super::flow_lifecycle::deliverable_received_cli(&ctx, message)
+            super::flow_lifecycle::deliverable_received_cli(&ctx, message).await
         }
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),

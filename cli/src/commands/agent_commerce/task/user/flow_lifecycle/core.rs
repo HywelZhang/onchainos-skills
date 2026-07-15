@@ -705,12 +705,16 @@ pub(crate) async fn deliverable_received_cli(
     // path that awaits; ordinary deliveries never reach it (AC-10).
     if let Some(signal_json) = autotrade_signal.as_deref() {
         use crate::commands::agent_commerce::task::common::autotrade::pipeline;
+        use crate::commands::agent_commerce::task::common::autotrade::ACTION_AUTOTRADE_DELIVER;
+        // Entry marker: an autotrade signal was detected and the pipeline is starting.
+        // `phase=detected` disambiguates this from the result audit below — the old
+        // single `success=true` here was misleading (it fired before any decision).
         audit::log(
             "cli",
-            crate::commands::agent_commerce::task::common::autotrade::ACTION_AUTOTRADE_DELIVER,
+            ACTION_AUTOTRADE_DELIVER,
             true,
             Duration::default(),
-            Some(base_tags.clone()),
+            Some([base_tags.clone(), vec!["phase=detected".to_string()]].concat()),
             None,
         );
         let outcome = pipeline::run(pipeline::PipelineInput {
@@ -721,6 +725,49 @@ pub(crate) async fn deliverable_received_cli(
             saved_path: &saved_path,
         })
         .await;
+        // Result audit: record whether the pipeline emitted an execution card or
+        // degraded, and — for a degrade — the machine-readable reason. This is the
+        // money-moving path, so the final decision (executed a card vs. why it
+        // degraded) must be traceable after the fact, not just the entry marker.
+        match &outcome {
+            pipeline::PipelineOutcome::Card(card) => audit::log(
+                "cli",
+                ACTION_AUTOTRADE_DELIVER,
+                true,
+                Duration::default(),
+                Some(
+                    [
+                        base_tags.clone(),
+                        vec![
+                            "phase=result".to_string(),
+                            "outcome=card".to_string(),
+                            format!("deliveryId={}", card.delivery_id),
+                            format!("signalType={}", card.signal_type),
+                        ],
+                    ]
+                    .concat(),
+                ),
+                None,
+            ),
+            pipeline::PipelineOutcome::Notify(notify) => audit::log(
+                "cli",
+                ACTION_AUTOTRADE_DELIVER,
+                false,
+                Duration::default(),
+                Some(
+                    [
+                        base_tags.clone(),
+                        vec![
+                            "phase=result".to_string(),
+                            "outcome=degrade".to_string(),
+                            format!("reason={}", notify.reason),
+                        ],
+                    ]
+                    .concat(),
+                ),
+                Some(&notify.reason),
+            ),
+        }
         return match outcome {
             pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
             pipeline::PipelineOutcome::Notify(notify) => success_envelope(&notify),

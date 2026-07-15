@@ -253,7 +253,7 @@ async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTrade
     let wallet = match chain_index {
         Some(idx) => resolve_active_wallet_address(idx)
             .ok_or(AutoTradeError::Degrade(DegradeReason::NoActiveWallet))?,
-        // polymarket has no on-chain --chain arg; still require an active wallet.
+        // polymarket has no on-chain chain argument; still require an active wallet.
         None => resolve_active_wallet_address("1")
             .ok_or(AutoTradeError::Degrade(DegradeReason::NoActiveWallet))?,
     };
@@ -286,7 +286,7 @@ async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTrade
     ))
 }
 
-/// The chain index that governs the executed command's `--chain`, if any.
+/// The chain index that governs the executed command's chain flag, if any.
 fn signal_chain_index(typed: &TypedParams) -> Option<&str> {
     match typed {
         TypedParams::Dex(p) => Some(&p.chain_index),

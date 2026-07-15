@@ -12,12 +12,13 @@ use super::{AutoTradeError, DegradeReason};
 
 /// Confirmed "Active" subscription status code.
 ///
-/// The authoritative Subscribe interface doc §1.1 ("订阅状态枚举, 对齐合约 SubStatus")
-/// defines `100 = Active` (legal values `-1` / `100..=105`; there is no `1`). The
-/// `status:1` in its §3.1 response example is a stale placeholder and is not
-/// authoritative. `100` is therefore the correct value (WBW-13715 Q1 resolved). The
-/// exact-equality check is kept as the fail-safe: any unexpected value *degrades*
-/// (safe, non-executing) rather than fail-opening.
+/// The authoritative Subscribe interface doc §1.1 (subscription-status enum,
+/// aligned with the contract SubStatus) defines `100 = Active` (legal values
+/// `-1` / `100..=105`; there is no `1`). The `status:1` in its §3.1 response
+/// example is a stale placeholder and is not authoritative. `100` is therefore the
+/// correct value (WBW-13715 Q1 resolved). The exact-equality check is kept as the
+/// fail-safe: any unexpected value *degrades* (safe, non-executing) rather than
+/// fail-opening.
 const AUTOTRADE_ACTIVE_STATUS: i64 = 100;
 
 /// The `copyTrade` flag value that means "copy-trade enabled".

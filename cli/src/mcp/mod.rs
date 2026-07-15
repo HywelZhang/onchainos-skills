@@ -277,6 +277,9 @@ struct TokenSearchParams {
     limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    max_results: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -342,6 +345,9 @@ struct TokenTagAddressParams {
     limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    max_results: Option<String>,
 }
 
 // ── Memepump ──────────────────────────────────────────────────────────
@@ -372,10 +378,12 @@ struct PortfolioPnlDexHistoryParams {
     address: String,
     /// Chain name (e.g. ethereum, solana)
     chain: String,
-    /// Start timestamp (milliseconds)
-    begin: String,
-    /// End timestamp (milliseconds)
-    end: String,
+    /// Start timestamp (milliseconds). Supply with `end`, OR use `since` instead.
+    begin: Option<String>,
+    /// End timestamp (milliseconds). Supply with `begin`, OR use `since` instead.
+    end: Option<String>,
+    /// Relative time window: <positive-int><s|m|h|d>, e.g. "24h", "7d". Supply this OR begin+end.
+    since: Option<String>,
     /// Page size (1-100, default 20)
     limit: Option<String>,
     /// Pagination cursor from previous response
@@ -642,6 +650,9 @@ struct CompetitionRankParams {
     sort_type: Option<i32>,
     /// Max leaderboard entries (default 20, max 100)
     limit: Option<u32>,
+    /// Fetch ALL leaderboards for the activity in one call (enumerated from competition_detail).
+    /// Returns {activityId, boards:[…]}. Mutually exclusive with sort_type.
+    all: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -923,6 +934,24 @@ fn err(e: anyhow::Error) -> Result<String, String> {
         return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
     }
 
+    // `CodedError` carries a machine code + optional field; surface the same
+    // structured envelope the CLI prints via `output::error_coded`, so MCP
+    // callers can distinguish validation failures (invalid_input, etc.).
+    if let Some(c) = e.downcast_ref::<crate::commands::sink::CodedError>() {
+        let mut payload = serde_json::json!({
+            "ok": false,
+            "error": c.message,
+            "errorCode": c.code,
+        });
+        if let Some(f) = &c.field {
+            payload["errorField"] = serde_json::Value::String(f.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
     let base = format!("{e:#}");
     if events.is_empty() {
         Err(base)
@@ -936,7 +965,7 @@ fn err(e: anyhow::Error) -> Result<String, String> {
 impl McpServer {
     #[tool(
         name = "token_search",
-        description = "Search tokens by name/symbol/address across chains. Default limit is 20 to prevent token overflow. Use cursor for pagination."
+        description = "Search tokens by name/symbol/address across chains. Default limit is 20 to prevent token overflow. Use cursor for pagination, or pass max_results (1-500) to auto-paginate up to N results in one call — the response then becomes {items, nextCursor, fetchedCount} (items is the aggregated list; nextCursor continues beyond N; fetchedCount is how many were pulled)."
     )]
     async fn token_search(
         &self,
@@ -949,6 +978,7 @@ impl McpServer {
             chains,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -978,7 +1008,7 @@ impl McpServer {
 
     #[tool(
         name = "token_holders",
-        description = "Get token holder distribution. Default limit is 20 to prevent token overflow. Use cursor for pagination."
+        description = "Get token holder distribution. Default limit is 20 to prevent token overflow. Use cursor for pagination, or pass max_results (1-500) to auto-paginate up to N holders in one call — the response then becomes {items, nextCursor, fetchedCount}."
     )]
     async fn token_holders(
         &self,
@@ -996,6 +1026,7 @@ impl McpServer {
             p.tag_filter,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -1343,7 +1374,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_latest",
-        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor. detail_level='2' includes full article body."
+        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), since (relative window <int><s|m|h|d> e.g. 24h/7d, mutually exclusive with begin/end), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor, OR pass max_results (1-500) to auto-paginate up to N articles in one call — the response then becomes {items, nextCursor, fetchedCount}. detail_level='2' includes full article body."
     )]
     async fn social_news_latest(
         &self,
@@ -1357,7 +1388,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_by_symbol",
-        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback). limit range [1, 50]."
+        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), OR since (relative window <int><s|m|h|d> e.g. 24h/7d, mutually exclusive with begin/end). limit range [1, 50], OR pass max_results (1-500) to auto-paginate up to N articles in one call — the response then becomes {items, nextCursor, fetchedCount}."
     )]
     async fn social_news_by_symbol(
         &self,
@@ -1371,7 +1402,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_search",
-        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), detail_level, limit range [1, 50], cursor, language."
+        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback) OR since (relative window <int><s|m|h|d> e.g. 24h/7d, mutually exclusive with begin/end), detail_level, limit range [1, 50], cursor, OR pass max_results (1-500) to auto-paginate up to N articles in one call — the response then becomes {items, nextCursor, fetchedCount}. language."
     )]
     async fn social_news_search(
         &self,
@@ -1852,6 +1883,7 @@ impl McpServer {
             p.tag_filter,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -1909,8 +1941,9 @@ impl McpServer {
             &mut *self.client.lock().await,
             &chain_index,
             &p.address,
-            &p.begin,
-            &p.end,
+            p.begin.as_deref(),
+            p.end.as_deref(),
+            p.since.as_deref(),
             p.limit.as_deref(),
             p.cursor.as_deref(),
             p.token.as_deref(),
@@ -2482,7 +2515,7 @@ impl McpServer {
 
     #[tool(
         name = "defi_invest",
-        description = "One-step DeFi deposit. Internally handles: detail check, prepare, precision conversion, V3 calculate-entry, calldata generation. Amount must be in minimal units (integer). For V3 pools pass range (e.g. 5 for ±5%). Returns calldata for signing."
+        description = "One-step DeFi deposit. Internally handles: detail check, prepare, precision conversion, V3 calculate-entry, calldata generation. Amount must be in minimal units (integer). For V3 pools pass range (e.g. 5 for ±5%). Returns calldata for signing: each dataList[] step carries a valueNormalized field (minimal-unit decimal integer) — pass it verbatim as wallet contract-call --amt; do NOT re-convert or divide by decimals. If a step could not be normalized it also carries valueNormalizeError and valueNormalized='0' — surface that instead of guessing."
     )]
     async fn defi_invest(
         &self,
@@ -2511,7 +2544,7 @@ impl McpServer {
 
     #[tool(
         name = "defi_withdraw",
-        description = "One-step DeFi withdrawal. Internally handles: position-detail lookup, parameter construction, calldata generation. For full exit use ratio='1'. For V3 pools pass token_id + ratio."
+        description = "One-step DeFi withdrawal. Internally handles: position-detail lookup, parameter construction, calldata generation. For full exit use ratio='1'. For V3 pools pass token_id + ratio. Returns calldata for signing: each dataList[] step carries a valueNormalized field (minimal-unit decimal integer) — pass it verbatim as wallet contract-call --amt; do NOT re-convert or divide by decimals. A step that could not be normalized also carries valueNormalizeError and valueNormalized='0'."
     )]
     async fn defi_withdraw(
         &self,
@@ -2558,7 +2591,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_detail",
-        description = "Get trading competition details (rules, prize pool, timeline). `activity_id` accepts a numeric id or the activity `name` / `shortName` — both resolved server-side. Returns `chainId` (claim chain), `participateChainIds` (trading chains), pre-formatted UTC+8 time strings `startTimeFormatted` / `endTimeFormatted` (already end in `(UTC+8)` — render verbatim, do not recompute, do not re-append the suffix), `tabConfigs[]` (leaderboards), `prizePoolDistribution[]` (read `rules[]` for actual rank distribution — never derive rank rules by dividing the pool). Identify the activity by `name` — never expose `activityId` / `chainIndex`."
+        description = "Get trading competition details (rules, prize pool, timeline). `activity_id` accepts a numeric id or the activity `name` / `shortName` — both resolved server-side. Returns `chainId` (claim chain), `participateChainIds` (trading chains), pre-formatted UTC+8 time strings `startTimeFormatted` / `endTimeFormatted` (already end in `(UTC+8)` — render verbatim, do not recompute, do not re-append the suffix), `tabConfigs[]` (leaderboards), `prizePoolDistribution[]` (read `rules[]` for actual rank distribution — never derive rank rules by dividing the pool), and a pre-summed `totalPrizePool` object `{amountByUnit:[{amount, rewardUnit}], display}` (the exact prize pool summed per reward unit) — render `totalPrizePool.display` verbatim, do NOT sum the distributions yourself. Identify the activity by `name` — never expose `activityId` / `chainIndex`."
     )]
     async fn competition_detail(
         &self,
@@ -2577,7 +2610,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_rank",
-        description = "Get ONE leaderboard for a trading competition: top-N entries (`allRankInfos[]`) plus the user's own rank (`myRankInfo`). `activity_id` accepts a numeric id or activity `name` / `shortName`. Scoped by `sort_type` — discover available values from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). A competition can have multiple leaderboards (PnL%, PnL, ...); to answer 'my overall rank', call once per `sort_type` so every board is covered. `nickName` is already backend-masked — render verbatim, do not re-mask. `format` field: 1=number, 2=percentage, 3=token+unit. `rankUpdateTime` ships alongside `rankUpdateTimeFormatted` (UTC+8 string ending in `(UTC+8)`) — render the formatted field verbatim."
+        description = "Get trading competition leaderboard(s). Two modes: (1) default — ONE leaderboard scoped by `sort_type`: top-N entries (`allRankInfos[]`) plus the user's own rank (`myRankInfo`); (2) `all=true` — fetch EVERY leaderboard for the activity in a SINGLE call, returning `{activityId, boards:[…]}` where each board is one sort_type's result (a failed board is `{sortType, error}`, the rest still return). `all` is mutually exclusive with `sort_type`. To answer 'my overall rank' across all boards, prefer `all=true` — do NOT fan out one call per sort_type. `activity_id` accepts a numeric id or activity `name` / `shortName`. Available `sort_type` values come from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). `nickName` is already backend-masked — render verbatim, do not re-mask. `format` field: 1=number, 2=percentage, 3=token+unit. `rankUpdateTime` ships alongside `rankUpdateTimeFormatted` (UTC+8 string ending in `(UTC+8)`) — render the formatted field verbatim."
     )]
     async fn competition_rank(
         &self,
@@ -2598,6 +2631,27 @@ impl McpServer {
             Ok(id) => id,
             Err(e) => return err(e),
         };
+        // FR-6: `all` fetches every leaderboard; mutually exclusive with sort_type.
+        if p.all == Some(true) {
+            if p.sort_type.is_some() {
+                return err(crate::commands::sink::CodedError::invalid_input(
+                    "sort-type",
+                    "all is mutually exclusive with sort_type",
+                )
+                .into());
+            }
+            return match competition::rank_all(
+                &mut client,
+                &resolved_id,
+                &identity,
+                p.limit.unwrap_or(20),
+            )
+            .await
+            {
+                Ok(data) => ok(data),
+                Err(e) => err(e),
+            };
+        }
         match competition::rank_for_mcp(
             &mut client,
             &resolved_id,
@@ -2742,7 +2796,7 @@ Pre-check rejections (rewardStatus 0/2/3, code 11002, code 11008) are semantic �
 
     #[tool(
         name = "defi_collect",
-        description = "One-step DeFi reward claim. Internally handles: position-detail lookup, reward check, expectOutputList construction, calldata generation. Skips if no rewards available."
+        description = "One-step DeFi reward claim. Internally handles: position-detail lookup, reward check, expectOutputList construction, calldata generation. Skips if no rewards available. Returns calldata for signing: each dataList[] step carries a valueNormalized field (minimal-unit decimal integer) — pass it verbatim as wallet contract-call --amt; do NOT re-convert or divide by decimals. A step that could not be normalized also carries valueNormalizeError and valueNormalized='0'."
     )]
     async fn defi_collect(
         &self,

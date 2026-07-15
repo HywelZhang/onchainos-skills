@@ -15,8 +15,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Recommended default applied when `slippageBps` is absent (5%).
 pub const DEFAULT_SLIPPAGE_BPS: u32 = 500;
 /// Two-sided hard cap; `slippageBps > MAX_SLIPPAGE_BPS` is rejected at the schema layer.
-/// Placeholder value pending product confirmation (arch §10 Q3): 10%.
-pub const MAX_SLIPPAGE_BPS: u32 = 1000;
+/// Set conservatively to 5% (== `DEFAULT_SLIPPAGE_BPS`), resolving arch §10 Q3: the cap
+/// bounds how much slippage an ASP may authorize against a buyer's real funds, so it
+/// errs safe and matches the default. Tightening only ever rejects more (fail-safe),
+/// never permits more; a higher cap, if product later wants one, is a one-constant edit.
+pub const MAX_SLIPPAGE_BPS: u32 = 500;
 
 // Charset / length caps for command-bound strings.
 const MAX_DELIVERY_ID: usize = 64;
@@ -26,6 +29,9 @@ const MAX_PLATFORM_ID: usize = 64;
 const MAX_CONDITION_ID: usize = 128;
 const MAX_OUTCOME: usize = 32;
 const MAX_TTL_SEC: u64 = 86_400;
+/// Polymarket share-price ceiling in cents: a share can never be worth more than
+/// $1.00 (100¢), so `maxPriceCents` must be in `1..=100` (renders `--price ≤ 1.00`).
+const MAX_PRICE_CENTS: u32 = 100;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -148,24 +154,30 @@ pub enum TypedParams {
     Polymarket(PolymarketParams),
 }
 
+/// The shared command-bound charset: `[A-Za-z0-9_-]` — identical to `deliveryId`.
+/// Covers hex / base58 addresses, Polymarket outcome tokens, and platform / product ids.
+fn is_command_charset(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
 /// Reject a command-bound string that could break out of its argument position
 /// or inject a flag into the assembled recipe command (AC-2).
+///
+/// This is a strict *whitelist* (`[A-Za-z0-9_-]`), not a blacklist of shell
+/// metacharacters. A blacklist silently passes the shell *expansion* characters —
+/// glob (`* ? [ ]`), brace (`{ }`) and `~` — which are not quoted in the assembled
+/// recipe, so a malicious ASP could set `tokenAddress` to `0x{a,b}` (brace-split
+/// into two arguments) or `*` (glob-expanded against the cwd), splitting or
+/// replacing an argument even though no `--flag` can be injected.
 fn command_safe(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
-    // Flag injection (e.g. "--slippage").
+    // Flag injection (e.g. "--slippage"); `-` is otherwise a legal charset member.
     if s.contains("--") {
         return false;
     }
-    // Shell metacharacters / whitespace / quotes.
-    !s.chars().any(|c| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                ';' | '&' | '|' | '$' | '`' | '(' | ')' | '<' | '>' | '\'' | '"' | '\\'
-            )
-    })
+    s.chars().all(is_command_charset)
 }
 
 /// Charset-lock + length-cap a command-bound string; `Reject` on violation.
@@ -190,10 +202,7 @@ fn check_delivery_id(id: &str) -> Result<(), AutoTradeError> {
             "deliveryId length must be 1..=64".to_string(),
         ));
     }
-    if let Some(bad) = id
-        .chars()
-        .find(|c| !(c.is_ascii_alphanumeric() || *c == '_' || *c == '-'))
-    {
+    if let Some(bad) = id.chars().find(|c| !is_command_charset(*c)) {
         return Err(AutoTradeError::Reject(format!(
             "deliveryId contains illegal character '{bad}'"
         )));
@@ -328,6 +337,15 @@ pub fn parse_and_validate(signal: &AutoTradeSignal) -> Result<TypedParams, AutoT
                 .map_err(|e| AutoTradeError::Reject(format!("polymarket params invalid: {e}")))?;
             check_field("conditionId", &p.condition_id, MAX_CONDITION_ID)?;
             check_field("outcome", &p.outcome, MAX_OUTCOME)?;
+            // maxPriceCents renders `--price = cents/100`; a share is worth at most
+            // $1.00, so cap it at 1..=100 (0 or >100 is meaningless / >$1.00).
+            if let Some(cents) = p.max_price_cents {
+                if cents == 0 || cents > MAX_PRICE_CENTS {
+                    return Err(AutoTradeError::Reject(format!(
+                        "maxPriceCents must be in 1..={MAX_PRICE_CENTS}"
+                    )));
+                }
+            }
             // unit-by-side: buy ⇒ quote (spend USDC); sell ⇒ base (sell shares).
             match (p.side, p.amount_unit) {
                 (Side::Buy, AmountUnit::Quote) => check_positive_decimal(&p.amount, "amount")?,
@@ -410,6 +428,31 @@ mod tests {
                 "should reject {bad}"
             );
         }
+    }
+
+    // ── AC-2: whitelist rejects glob / brace / tilde expansion chars ──
+    #[test]
+    fn ac2_charset_lock_rejects_glob_brace_tilde() {
+        // Chars a shell would expand (glob `* ? [ ]`, brace `{ }`, `~`) that the old
+        // metacharacter blacklist let through — all must now be rejected.
+        for bad in [
+            "0x{a,b}", "0x*", "0x?", "~", "0x[ab]", "*", "{a,b}", "0x~1", "a[0-9]",
+        ] {
+            let sig = dex_signal(serde_json::json!({
+                "chainIndex": "8453", "tokenAddress": bad,
+                "side": "buy", "amount": "10", "amountUnit": "quote"
+            }));
+            assert!(
+                matches!(validate_structure(&sig), Err(AutoTradeError::Reject(_))),
+                "should reject tokenAddress={bad}"
+            );
+        }
+        // A plain hex address still passes the whitelist.
+        let ok = dex_signal(serde_json::json!({
+            "chainIndex": "8453", "tokenAddress": "0xAbc123_DEF-456",
+            "side": "buy", "amount": "10", "amountUnit": "quote"
+        }));
+        assert!(validate_structure(&ok).is_ok());
     }
 
     #[test]
@@ -565,5 +608,40 @@ mod tests {
             params: serde_json::json!({"conditionId":"c1","outcome":"Yes","side":"sell","amount":"5","amountUnit":"quote"}),
         };
         assert!(validate_structure(&sig).is_err());
+    }
+
+    // ── FR-1: polymarket maxPriceCents bound (0 < cents <= 100) ──
+    #[test]
+    fn polymarket_max_price_cents_bounds() {
+        let mk = |cents: serde_json::Value| AutoTradeSignal {
+            schema_version: 1,
+            delivery_id: "d1".into(),
+            signal_type: SignalType::Polymarket,
+            signal_time: 1,
+            ttl_sec: 60,
+            params: serde_json::json!({
+                "conditionId": "c1", "outcome": "Yes", "side": "buy",
+                "amount": "10", "amountUnit": "quote", "maxPriceCents": cents
+            }),
+        };
+        // 0 rejected (meaningless), 101 rejected (> $1.00).
+        assert!(validate_structure(&mk(serde_json::json!(0))).is_err());
+        assert!(validate_structure(&mk(serde_json::json!(101))).is_err());
+        // 100 ok (boundary == $1.00), 55 ok.
+        assert!(validate_structure(&mk(serde_json::json!(100))).is_ok());
+        assert!(validate_structure(&mk(serde_json::json!(55))).is_ok());
+        // absent ok (optional field).
+        let absent = AutoTradeSignal {
+            schema_version: 1,
+            delivery_id: "d1".into(),
+            signal_type: SignalType::Polymarket,
+            signal_time: 1,
+            ttl_sec: 60,
+            params: serde_json::json!({
+                "conditionId": "c1", "outcome": "Yes", "side": "buy",
+                "amount": "10", "amountUnit": "quote"
+            }),
+        };
+        assert!(validate_structure(&absent).is_ok());
     }
 }

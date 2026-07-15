@@ -45,7 +45,7 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 |---|------|-----|------|------|---------|---------|---------|
 | 1 | {title} | Agent#{providerAgentId} | {状态文案} | {trialType==1?"试用中":"—"} | {subStartTime}~{subEndTime}（按日期渲染） | {下次扣款} | {autoRenew==1?"✓":"✗"} |
 
-- **状态文案**: map `statusName`(+`trialType`) per the status map (试用中/生效中/已拒单…). INIT/NONE→待激活；UNKNOWN_<n>→原样。
+- **状态文案**: map `statusName`(+`trialType`) per the status map (试用中/生效中/已拒单…). INIT→待激活；UNKNOWN_<n>→原样。
 - **下次扣款** (no CLI field — derive): `trialType==1` → `subStartTime`(试用转正扣款日); else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
 - All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.

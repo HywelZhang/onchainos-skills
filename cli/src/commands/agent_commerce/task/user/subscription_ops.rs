@@ -163,8 +163,12 @@ pub async fn handle_my_subscriptions(
     // proves unable to carry provider-side records, confirm with backend
     // before adding a server-side role/view param — do not fabricate one here.
     let path = my_subscriptions_path();
+    // The `/my` query endpoint authenticates by JWT login-state + `agenticId`
+    // header only; per the backend interface doc (§3.2) it takes NO request
+    // params. Use `get_with_agent_id` (no sessionCert query injection) rather
+    // than `get_with_identity`, which auto-appends `?sessionCert=`.
     let data = client
-        .get_with_identity(&path, &header_agent)
+        .get_with_agent_id(&path, &header_agent)
         .await
         .map_err(|e| anyhow!("failed to fetch subscriptions: {e}"))?;
     let wrapper: SubscriptionList = serde_json::from_value(data)
@@ -186,8 +190,10 @@ pub async fn handle_subscribe_detail(client: &mut TaskApiClient, sub_id: &str) -
     }
     let header_agent = common_query::resolve_agent_id("", AGENT_ROLE_USER).await;
     let path = format!("{SUBSCRIBE_PREFIX}/{sub_id}");
+    // §3.x query endpoint: JWT login-state + `agenticId` header, no request
+    // params. Use `get_with_agent_id` (no sessionCert query injection).
     let data = client
-        .get_with_identity(&path, &header_agent)
+        .get_with_agent_id(&path, &header_agent)
         .await
         .map_err(|e| anyhow!("failed to fetch subscription {sub_id}: {e}"))?;
     let mut info: SubscriptionInfo = serde_json::from_value(data)

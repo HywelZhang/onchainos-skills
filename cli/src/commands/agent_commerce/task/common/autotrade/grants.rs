@@ -67,8 +67,34 @@ impl std::fmt::Display for GrantDeny {
 
 impl std::error::Error for GrantDeny {}
 
+impl GrantDeny {
+    /// A stable snake_case machine code for this denial, used for the buyer-inbound
+    /// notify-only `reason` + audit. Distinct from the human message carried in `.0`,
+    /// which is the bespoke grant-check `{ok,reason}` stdout contract (NFR-3). Keeping
+    /// the real reason (no-grant-file / expired / venue-not-authorized / no-cap / …)
+    /// instead of collapsing every denial onto `over_cap`.
+    pub fn code(&self) -> &'static str {
+        match self.0 {
+            DENY_INVALID_JOB_ID => "grant_invalid_job_id",
+            DENY_INVALID_VENUE => "grant_invalid_venue",
+            DENY_INVALID_ACTION => "grant_invalid_action",
+            DENY_INVALID_AMOUNT => "grant_invalid_amount",
+            DENY_INVALID_FORMAT => "grant_invalid_format",
+            DENY_NO_GRANT_FILE => "no_grant_file",
+            DENY_GRANT_UNREADABLE => "grant_unreadable",
+            DENY_VERSION_TOO_NEW => "grant_version_too_new",
+            DENY_JOB_MISMATCH => "grant_job_mismatch",
+            DENY_EXPIRED => "grant_expired",
+            DENY_VENUE_NOT_AUTHORIZED => "venue_not_authorized",
+            DENY_NO_CAP => "no_cap",
+            DENY_OVER_CAP => "over_cap",
+            _ => "grant_denied",
+        }
+    }
+}
+
 /// `jobId` charset for use as a filename: `[A-Za-z0-9_-]` (path-traversal defense).
-fn job_id_is_safe(job_id: &str) -> bool {
+pub(crate) fn job_id_is_safe(job_id: &str) -> bool {
     !job_id.is_empty()
         && job_id
             .chars()
@@ -333,5 +359,31 @@ mod tests {
             assert!(write_grant("job1", "dex", Some("abc"), None, 3600).is_err());
             // unparseable cap
         });
+    }
+
+    // ── FR-8: GrantDeny → stable snake_case code (no over_cap collapsing) ──
+    #[test]
+    fn grant_deny_code_maps_reasons() {
+        assert_eq!(GrantDeny(DENY_NO_GRANT_FILE).code(), "no_grant_file");
+        assert_eq!(GrantDeny(DENY_EXPIRED).code(), "grant_expired");
+        assert_eq!(
+            GrantDeny(DENY_VENUE_NOT_AUTHORIZED).code(),
+            "venue_not_authorized"
+        );
+        assert_eq!(GrantDeny(DENY_NO_CAP).code(), "no_cap");
+        assert_eq!(GrantDeny(DENY_OVER_CAP).code(), "over_cap");
+        assert_eq!(
+            GrantDeny(DENY_INVALID_JOB_ID).code(),
+            "grant_invalid_job_id"
+        );
+        assert_eq!(
+            GrantDeny(DENY_VERSION_TOO_NEW).code(),
+            "grant_version_too_new"
+        );
+        // Distinct reasons must not all collapse onto the same code.
+        assert_ne!(
+            GrantDeny(DENY_NO_GRANT_FILE).code(),
+            GrantDeny(DENY_OVER_CAP).code()
+        );
     }
 }

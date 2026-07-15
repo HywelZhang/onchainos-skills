@@ -206,7 +206,25 @@ pub async fn run(input: PipelineInput<'_>) -> PipelineOutcome {
     }
 }
 
+/// Entry charset guard for `job_id` (defense-in-depth). Pure so it is unit-testable
+/// without the async network chain. `job_id` is system-issued (not ASP-controlled)
+/// but is interpolated into the latch path
+/// `<home>/autotrade/latch/<jobId>/<deliveryId>` for ALL types — including defi
+/// withdraw/claim, which skip the grant check where `job_id` is otherwise validated.
+/// Locking it here, identical to `deliveryId`'s charset, closes the path-traversal
+/// surface for every path.
+fn check_job_id(job_id: &str) -> Result<(), AutoTradeError> {
+    if super::grants::job_id_is_safe(job_id) {
+        Ok(())
+    } else {
+        Err(AutoTradeError::Degrade(DegradeReason::InvalidJobId))
+    }
+}
+
 async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTradeError> {
+    // 0. jobId charset (defense-in-depth; before any filesystem/path use).
+    check_job_id(input.job_id)?;
+
     // 1. structure.
     let signal: AutoTradeSignal = serde_json::from_str(input.signal_json)
         .map_err(|e| AutoTradeError::Reject(format!("signal parse: {e}")))?;
@@ -243,8 +261,12 @@ async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTrade
     // 6 + 7. grant cap (+ holding resolution for dex sell+pct).
     let grant_target = resolve_grant_target(&typed, &wallet).await?;
     if let Some(gt) = &grant_target {
+        // Preserve the specific grant-deny reason (no-grant-file / expired /
+        // venue-not-authorized / no-cap / over-cap …) rather than collapsing every
+        // denial onto `over_cap`. Security is unchanged (all fail-closed); this only
+        // makes NotifyOnly.reason + audit truthful about *why* it degraded.
         super::grants::check_grant(input.job_id, gt.venue, gt.action, &gt.amount)
-            .map_err(|_| AutoTradeError::Degrade(DegradeReason::OverCap))?;
+            .map_err(|d| AutoTradeError::Degrade(DegradeReason::GrantDenied(d.code())))?;
     }
 
     // Assemble the command before latching (so a build failure doesn't burn the latch).
@@ -323,5 +345,41 @@ mod tests {
         assert!(write_latch("job1", "d-2").is_ok());
 
         std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    // ── FR-4: jobId entry charset guard (path-traversal defense) ──
+    #[test]
+    fn job_id_charset_guard_at_entry() {
+        // Safe ids pass.
+        assert!(check_job_id("job1").is_ok());
+        assert!(check_job_id("JOB_9-abc").is_ok());
+        // Traversal / illegal chars degrade to invalid_job_id (not a filesystem touch).
+        for bad in ["../../etc/passwd", "job/1", "", "job.1", "job 1", "a/b"] {
+            assert!(
+                matches!(
+                    check_job_id(bad),
+                    Err(AutoTradeError::Degrade(DegradeReason::InvalidJobId))
+                ),
+                "should reject job_id={bad}"
+            );
+        }
+        assert_eq!(DegradeReason::InvalidJobId.as_str(), "invalid_job_id");
+    }
+
+    // ── FR-8: grant-deny reason is preserved, not collapsed onto over_cap ──
+    #[test]
+    fn grant_denied_reason_flows_to_notify() {
+        use super::super::grants::{GrantDeny, DENY_EXPIRED, DENY_NO_GRANT_FILE};
+        // The pipeline maps a GrantDeny to DegradeReason::GrantDenied(code); that code
+        // is what make_notify_only surfaces as the notify-only reason.
+        let expired = DegradeReason::GrantDenied(GrantDeny(DENY_EXPIRED).code());
+        assert_eq!(expired.as_str(), "grant_expired");
+        let notify = card::make_notify_only("/tmp/x", expired.as_str());
+        assert_eq!(notify.reason, "grant_expired");
+
+        let no_file = DegradeReason::GrantDenied(GrantDeny(DENY_NO_GRANT_FILE).code());
+        assert_eq!(no_file.as_str(), "no_grant_file");
+        // And it is distinct from the old blanket over_cap.
+        assert_ne!(no_file.as_str(), DegradeReason::OverCap.as_str());
     }
 }

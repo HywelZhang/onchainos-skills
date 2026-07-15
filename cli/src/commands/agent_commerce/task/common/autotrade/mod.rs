@@ -51,6 +51,12 @@ pub enum DegradeReason {
     LatchWriteFail,
     LookupOff,
     SchemaVersionTooNew,
+    /// `jobId` failed the entry charset check (path-traversal defense; FR-4).
+    InvalidJobId,
+    /// A grant-check denial, carrying the specific grant-deny code so the real
+    /// reason (no-grant-file / expired / venue-not-authorized / no-cap / over-cap …)
+    /// is surfaced instead of being collapsed onto `over_cap`.
+    GrantDenied(&'static str),
 }
 
 impl DegradeReason {
@@ -70,6 +76,8 @@ impl DegradeReason {
             DegradeReason::LatchWriteFail => "latch_write_fail",
             DegradeReason::LookupOff => "lookup_off",
             DegradeReason::SchemaVersionTooNew => "schema_version_too_new",
+            DegradeReason::InvalidJobId => "invalid_job_id",
+            DegradeReason::GrantDenied(code) => code,
         }
     }
 }

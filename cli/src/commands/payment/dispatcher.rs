@@ -1890,6 +1890,17 @@ async fn cmd_mpp_session_open(
     Ok(())
 }
 
+/// Viability gate for advancing the persisted session cumulative after signing a
+/// voucher. Advance only when the voucher moves the cumulative forward (`unit > 0`)
+/// and — when the deposit is known — the new cumulative stays within it. When the
+/// deposit is unknown we still advance (best-effort). Mirrors `fetch_session`'s
+/// `needsTopUp` predicate: a voucher that over-spends the deposit / needs top-up
+/// (which the seller rejects) must NOT push the local cumulative forward, or the
+/// next voucher's `unit = new − prior` baseline becomes optimistic.
+fn voucher_advances_cumulative(unit: u128, new_cum_u: u128, deposit_u: Option<u128>) -> bool {
+    unit > 0 && deposit_u.is_none_or(|d| new_cum_u <= d)
+}
+
 /// onchainos payment session voucher: sign EIP-712 voucher (or wrap an existing
 /// signature when `reuse_signature` is supplied).
 /// Returns authorization_header for replaying business requests.
@@ -1978,7 +1989,7 @@ async fn cmd_mpp_session_voucher(
     // corrected by the 70015 `server_cumulative` re-sign (seller SDK is the
     // final authority). Same `needsTopUp` predicate as `fetch_session`.
     let deposit_u = deposit.as_deref().and_then(|d| d.parse::<u128>().ok());
-    let viable = unit > 0 && deposit_u.is_none_or(|d| new_cum_u <= d);
+    let viable = voucher_advances_cumulative(unit, new_cum_u, deposit_u);
     if viable {
         if let Some(mut s) = prior {
             s.cumulative = cumulative_amount.to_string();
@@ -3364,5 +3375,42 @@ mod tests {
             names,
             vec!["name", "version", "chainId", "verifyingContract"]
         );
+    }
+
+    // ── voucher_advances_cumulative (session viability gate) ──────────
+    // Locks in the P2-1 fix (commit 7ff655ed): the persisted session cumulative
+    // is advanced only for a viable voucher, so a rejected over-deposit voucher
+    // cannot make the next voucher's `unit = new − prior` baseline optimistic.
+
+    #[test]
+    fn voucher_advances_when_within_known_deposit() {
+        // unit > 0 and new cumulative within deposit ⇒ advance.
+        assert!(voucher_advances_cumulative(50, 150, Some(200)));
+    }
+
+    #[test]
+    fn voucher_advances_at_exact_deposit_boundary() {
+        // new cumulative == deposit is still within budget ⇒ advance.
+        assert!(voucher_advances_cumulative(200, 200, Some(200)));
+    }
+
+    #[test]
+    fn voucher_does_not_advance_over_deposit() {
+        // new_cum > deposit (needs top-up / seller rejects) ⇒ do NOT advance.
+        assert!(!voucher_advances_cumulative(50, 250, Some(200)));
+    }
+
+    #[test]
+    fn voucher_advances_when_deposit_unknown() {
+        // deposit = None ⇒ advance best-effort (only bounded by unit > 0).
+        assert!(voucher_advances_cumulative(50, 250, None));
+    }
+
+    #[test]
+    fn voucher_does_not_advance_when_unit_zero() {
+        // unit == 0 (no forward progress) ⇒ do NOT advance, even within deposit.
+        assert!(!voucher_advances_cumulative(0, 100, Some(200)));
+        // ...and also when the deposit is unknown.
+        assert!(!voucher_advances_cumulative(0, 100, None));
     }
 }

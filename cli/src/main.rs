@@ -11,6 +11,7 @@ mod file_keyring;
 mod home;
 mod keyring_store;
 mod mcp;
+mod mcp_client;
 mod output;
 pub mod payment;
 mod payment_cache;

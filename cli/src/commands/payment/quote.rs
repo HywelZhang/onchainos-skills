@@ -17,6 +17,7 @@ use super::payment_flow::{self, extract_amount};
 use super::state::{
     self, AcceptEntry, Candidate, DecodedChallenge, ParamCarrier, ParamSpec, PaymentState,
 };
+use crate::mcp_client::{self, McpClient, McpTool, ToolCallOutcome};
 use crate::output;
 
 /// Machine tokens (leading word of `output::error`).
@@ -59,19 +60,50 @@ struct QuoteData {
     wallet_error: Option<String>,
 }
 
+/// MCP discovery output (`cli_command_spec.md` Output A) — the tool catalog
+/// only. Deliberately a minimal shape (no `paymentId`) so `jq '.data.paymentId'`
+/// is `null` in discovery mode (AC-2). Discovery is free and persists nothing.
+#[derive(Serialize)]
+struct McpDiscoveryData {
+    #[serde(rename = "mcpTools")]
+    mcp_tools: Vec<McpTool>,
+}
+
+/// MCP free (unpaid / first-N-free) `tools/call` output (Output C) — the tool
+/// result only. Emitted when a `tools/call` returns a non-402 result.
+#[derive(Serialize)]
+struct McpFreeData {
+    result: Value,
+}
+
 /// CLI handler: run the quote and print the always-on envelope. Classified
 /// probe/parse failures propagate as `Err` so `main.rs` renders `output::error`
 /// (exit 1); `walletError` / all-zero-balance are `Ok` data (exit 0).
-pub async fn run(url: &str, param: &[String], method: &str) -> Result<()> {
-    let data = fetch_quote(url, param, method).await?;
+pub async fn run(url: &str, param: &[String], method: &str, tool: Option<&str>) -> Result<()> {
+    let data = fetch_quote(url, param, method, tool).await?;
     output::success(data);
     Ok(())
 }
 
 /// Data path shared by the CLI handler and the `payment_quote` MCP tool.
 /// Returns the `data` payload (`QuoteData` serialized to `Value`).
-pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Value> {
+///
+/// Detection order (arch §3) — the MCP-transport branch is entered when **any**
+/// fires: (1) `--tool` supplied (forces MCP); (2) the URL path ends `/mcp`|`/sse`;
+/// (3) the bare probe signals MCP (`text/event-stream` or a JSON-RPC body). When
+/// none fire, the existing REST path is unchanged.
+pub async fn fetch_quote(
+    url: &str,
+    param: &[String],
+    method: &str,
+    tool: Option<&str>,
+) -> Result<Value> {
     let known_params = parse_params(param)?;
+
+    // (1) explicit --tool or (2) URL looks like MCP → force the MCP branch.
+    if tool.is_some() || mcp_client::url_looks_like_mcp(url) {
+        return fetch_quote_mcp(url, &known_params, tool).await;
+    }
 
     let outcome = probe_endpoint(url, &known_params, method).await?;
     let (challenge_header, merchant_body) = match outcome {
@@ -95,12 +127,87 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
             };
             return serde_json::to_value(data).map_err(Into::into);
         }
+        // (3) bare probe signaled MCP transport → hand off to the MCP branch.
+        ProbeOutcome::MaybeMcp => {
+            return fetch_quote_mcp(url, &known_params, tool).await;
+        }
         ProbeOutcome::Challenge { header, body } => (header, body),
     };
 
+    build_quote_from_challenge(
+        url,
+        known_params,
+        method,
+        &challenge_header,
+        merchant_body,
+        None,
+    )
+    .await
+}
+
+/// MCP-transport quote (arch §3/§5). Assumes the caller already decided this is
+/// MCP mode. Handshakes via `McpClient`, then:
+/// - `tool = None` → **discovery**: `tools/list` → Output A (`mcpTools[]` only).
+/// - `tool = Some(name)` → validate against the catalog, coerce `--param` from
+///   the tool's `inputSchema`, and `tools/call`: a 402 reuses the REST
+///   challenge→candidate→state path (Output B, byte-identical) with the
+///   `mcp_tool` marker + coerced arguments persisted; a non-402 result is a free
+///   tool (Output C).
+async fn fetch_quote_mcp(
+    url: &str,
+    known_params: &Map<String, Value>,
+    tool: Option<&str>,
+) -> Result<Value> {
+    let mut client = McpClient::new(url)?;
+    client.initialize().await?;
+    let tools = client.list_tools().await?;
+
+    let Some(name) = tool else {
+        // Discovery: return the catalog only (no paymentId).
+        return serde_json::to_value(McpDiscoveryData { mcp_tools: tools }).map_err(Into::into);
+    };
+
+    // Validate the requested tool against the discovered catalog.
+    let selected = tools.iter().find(|t| t.name == name).ok_or_else(|| {
+        let available: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        anyhow!(
+            "{TOKEN_INVALID_INPUT}: tool '{name}' not found; available tools: [{}]",
+            available.join(", ")
+        )
+    })?;
+
+    // Coerce --param values per the tool's inputSchema, then invoke tools/call.
+    let arguments = mcp_client::coerce_arguments(known_params, selected.input_schema.as_ref());
+    match client.call_tool(name, &arguments).await? {
+        ToolCallOutcome::Paid { header, body } => {
+            // 402 → reuse the REST challenge pipeline, persisting the coerced
+            // arguments as known_params and the mcp_tool marker so `pay` replays
+            // the SAME tools/call. Output B (byte-identical to a REST quote).
+            let coerced_params = arguments.as_object().cloned().unwrap_or_default();
+            build_quote_from_challenge(url, coerced_params, "POST", &header, body, Some(name)).await
+        }
+        ToolCallOutcome::Free(result) => {
+            // Non-402 result → a free / first-N-free tool. Output C.
+            serde_json::to_value(McpFreeData { result }).map_err(Into::into)
+        }
+    }
+}
+
+/// Decode a 402 challenge (REST or MCP `tools/call`), rank candidates, run the
+/// wallet preflight, and persist `PaymentState`. Shared by the REST path and the
+/// MCP paid path — the only MCP-specific input is `mcp_tool` (the tool name to
+/// persist, flipping `pay` into the `replay_mcp` branch).
+async fn build_quote_from_challenge(
+    url: &str,
+    known_params: Map<String, Value>,
+    method: &str,
+    challenge_header: &str,
+    merchant_body: String,
+    mcp_tool: Option<&str>,
+) -> Result<Value> {
     // Decode the challenge blob (reuses the shared base64 / WWW-Authenticate
     // decoder) and pull the accepts[] array.
-    let decoded = super::dispatcher::decode_payment_blob(&challenge_header)
+    let decoded = super::dispatcher::decode_payment_blob(challenge_header)
         .map_err(|e| anyhow!("{TOKEN_UNSUPPORTED}: could not decode 402 challenge: {e}"))?;
     let accepts_val = decoded
         .get("accepts")
@@ -175,6 +282,7 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
         resource: decoded.get("resource").cloned(),
         method: paid_method,
         param_plan: param_plan.clone(),
+        mcp_tool: mcp_tool.map(|s| s.to_string()),
     };
     st.write()?;
 
@@ -228,6 +336,10 @@ enum ProbeOutcome {
     NoCharge { body: String },
     /// HTTP 402 — a payment challenge header + the merchant response body.
     Challenge { header: String, body: String },
+    /// The bare probe signaled MCP transport (`Content-Type: text/event-stream`
+    /// or a JSON-RPC body). The MCP handshake re-runs from scratch, so no probe
+    /// state needs to be carried forward.
+    MaybeMcp,
 }
 
 /// Probe the merchant endpoint with a freshly-built `reqwest::Client`
@@ -266,20 +378,39 @@ async fn probe_endpoint(
         .or_else(|| resp.headers().get("WWW-Authenticate"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let body = resp.text().await.unwrap_or_default();
 
     if status.as_u16() == 402 {
         // Some servers put the challenge in the body rather than a header.
         let header = header.unwrap_or_else(|| body.clone());
         Ok(ProbeOutcome::Challenge { header, body })
+    } else if mcp_client::probe_signals_mcp(&content_type, &body) {
+        // Detection order (3): a bare probe that advertises SSE or replies with a
+        // JSON-RPC body is an MCP-transport endpoint — hand off to the MCP branch.
+        Ok(ProbeOutcome::MaybeMcp)
     } else if status.is_success() {
         Ok(ProbeOutcome::NoCharge { body })
     } else {
         let code = status.as_u16();
-        Err(anyhow!(
-            "{}: unexpected HTTP {code} (expected 402 or 200)",
-            classify_probe_error(code)
-        ))
+        let token = classify_probe_error(code);
+        if code == 405 {
+            // A POST-only REST A2MCP (or an MCP endpoint that rejects the GET
+            // probe) — advise the two ways forward rather than a dead end.
+            Err(anyhow!(
+                "{token}: endpoint returned HTTP 405 to the {method} probe — if this is an \
+                 A2MCP endpoint, retry with --tool <name> (MCP transport) or --method POST (REST)"
+            ))
+        } else {
+            Err(anyhow!(
+                "{token}: unexpected HTTP {code} (expected 402 or 200)"
+            ))
+        }
     }
 }
 

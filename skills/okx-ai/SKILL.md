@@ -79,6 +79,8 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 
 "Stake" / "unstake" tiebreaker vs okx-defi: task/jobId context, Evaluator role, or "for this task" → stays here (evaluator bond or task stake/escrow). Generic DeFi-protocol yield staking with no task context → okx-defi.
 
+"订阅" / "subscription" tiebreaker vs okx-agent-payments-protocol: AI-service/agent-marketplace context (ASP / Agent#N / 服务方 / 任务 / 试用期 / 自动续费的服务) → stays here (agent my-subscriptions / subscribe-detail). Resource-URL / HTTP 402 / paymentId / Permit2 / recurring billing for an API endpoint → okx-agent-payments-protocol (payment subscription …). A bare "我的订阅 / my subscriptions" with neither signal → ask the user once: AI 服务订阅 (agent marketplace) or 付费资源订阅 (x402)?
+
 ## Execution Checklist (identity ops)
 
 - [ ] Step 0: Pre-flight — run §Pre-flight before the first `onchainos` command this session (read-only lookups included) — **BLOCKING, no exception**

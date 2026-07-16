@@ -2581,6 +2581,7 @@ dependencies = [
  "k256",
  "keyring",
  "libc",
+ "percent-encoding",
  "predicates",
  "qrcode",
  "rand 0.8.5",

@@ -285,17 +285,40 @@ pub(crate) fn try_recover_from_temp_file(
     token_amount: &str,
     provider_agent_id: Option<&str>,
 ) -> Option<(String, String, Option<String>)> {
-    let temp_path = oldest_spool_candidate(job_id)?;
-    process_recovered_file(
-        &temp_path,
-        job_id,
-        agent_id,
-        short_id,
-        title,
-        token_symbol,
-        token_amount,
-        provider_agent_id,
-    )
+    // FB2: skip past poison-pill spool files instead of re-selecting the same oldest
+    // one forever. `oldest_spool_candidate` re-picks the oldest-by-mtime each pass, so
+    // a file that always fails (corrupt JSON, permanently un-downloadable) would block
+    // every newer per-delivery file — a silent drop on high-frequency subscriptions.
+    // On a processing failure we move the file aside (rename → `.failed`, which no
+    // longer matches the `*.json` scan) and try the next-oldest; if it cannot even be
+    // moved, stop to avoid an infinite reselect loop. Each iteration removes one
+    // candidate (success deletes, failure quarantines), so this always terminates.
+    loop {
+        let temp_path = oldest_spool_candidate(job_id)?;
+        if let Some(recovered) = process_recovered_file(
+            &temp_path,
+            job_id,
+            agent_id,
+            short_id,
+            title,
+            token_symbol,
+            token_amount,
+            provider_agent_id,
+        ) {
+            return Some(recovered);
+        }
+        if !quarantine_failed_spool_file(&temp_path) {
+            return None;
+        }
+    }
+}
+
+/// Move a spool file that failed to process out of the scan set (FB2 poison-pill
+/// guard). Renaming to `<path>.failed` drops it from [`oldest_spool_candidate`]
+/// (which only matches `*.json`) WITHOUT deleting it, so it stays on disk for manual
+/// inspection / recovery. Returns `true` when the file was moved aside.
+fn quarantine_failed_spool_file(path: &str) -> bool {
+    std::fs::rename(path, format!("{path}.failed")).is_ok()
 }
 
 // --- Execution stage ----------------------------------------------------

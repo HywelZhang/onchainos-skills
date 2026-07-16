@@ -204,10 +204,36 @@ fn oldest_spool_candidate(job_id: &str) -> Option<String> {
     candidates.into_iter().next().map(|p| p.display().to_string())
 }
 
+/// Read a spool file and return its FR-2 `autotrade:` signal line, if present.
+/// Recovery-path analogue of [`extract_autotrade_from_message`] (which reads the
+/// live inbound `a2aFile`); lets a delivery recovered from the spool run the same
+/// copy-trade pipeline as the live path (FB3).
+fn extract_autotrade_from_spool_file(path: &str) -> Option<String> {
+    let fp = std::path::Path::new(path);
+    if !is_safe_temp_path(fp) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(fp).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let content = json.get("content").and_then(|v| v.as_str())?;
+    extract_autotrade_line(content)
+}
+
+/// A deliverable recovered from the A2A spool. Beyond the saved artifact, it carries
+/// the FR-2 `autotrade:` signal line (when the delivery had one) so the caller can
+/// run the copy-trade pipeline — recovery parity with the live
+/// `deliverable_received_cli` path (FB3).
+pub(crate) struct RecoveredDeliverable {
+    pub saved_path: String,
+    pub deliverable_type: String,
+    pub text_content: Option<String>,
+    pub autotrade_signal: Option<String>,
+}
+
 /// Parse one A2A spool file, download (file) or write (text) its deliverable, save
-/// via `handle_save`, delete the file on success, and return
-/// `(saved_path, deliverable_type, text_content)`. On any failure returns `None`
-/// and leaves the file in place (a later pass / manual recovery can retry it).
+/// via `handle_save`, delete the file on success, and return a [`RecoveredDeliverable`]
+/// (including any `autotrade:` signal line, extracted before deletion). On any failure
+/// returns `None` and leaves the file in place (the caller quarantines it — FB2).
 #[allow(clippy::too_many_arguments)]
 fn process_recovered_file(
     temp_path: &str,
@@ -218,7 +244,7 @@ fn process_recovered_file(
     token_symbol: &str,
     token_amount: &str,
     provider_agent_id: Option<&str>,
-) -> Option<(String, String, Option<String>)> {
+) -> Option<RecoveredDeliverable> {
     use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
 
     let payload = parse_a2a_file(temp_path)?;
@@ -263,8 +289,17 @@ fn process_recovered_file(
         }
     };
 
+    let (saved_path, deliverable_type, text_content) = result;
+    // FB3: capture the autotrade signal BEFORE the file is deleted so the caller can
+    // run the copy-trade pipeline on the recovered delivery.
+    let autotrade_signal = extract_autotrade_from_spool_file(temp_path);
     let _ = std::fs::remove_file(temp_path);
-    Some(result)
+    Some(RecoveredDeliverable {
+        saved_path,
+        deliverable_type,
+        text_content,
+        autotrade_signal,
+    })
 }
 
 /// Try to recover a deliverable from an A2A spool file (FR-10 dual-scan).
@@ -284,7 +319,7 @@ pub(crate) fn try_recover_from_temp_file(
     token_symbol: &str,
     token_amount: &str,
     provider_agent_id: Option<&str>,
-) -> Option<(String, String, Option<String>)> {
+) -> Option<RecoveredDeliverable> {
     // FB2: skip past poison-pill spool files instead of re-selecting the same oldest
     // one forever. `oldest_spool_candidate` re-picks the oldest-by-mtime each pass, so
     // a file that always fails (corrupt JSON, permanently un-downloadable) would block
@@ -319,6 +354,91 @@ pub(crate) fn try_recover_from_temp_file(
 /// inspection / recovery. Returns `true` when the file was moved aside.
 fn quarantine_failed_spool_file(path: &str) -> bool {
     std::fs::rename(path, format!("{path}.failed")).is_ok()
+}
+
+/// Run the FR-3/4/5/7 copy-trade pipeline for a deliverable recovered from the A2A
+/// spool (FB3: recovery parity with the live `deliverable_received_cli` path). The
+/// deliverable is already saved at `saved_path`; `signal_json` is the extracted
+/// `autotrade:` line. The CLI — not the model — decides execution and returns the
+/// same `{ok,data}` envelope the live path emits (execution card or notify-only).
+pub(crate) async fn run_recovered_autotrade(
+    signal_json: &str,
+    job_id: &str,
+    agent_id: &str,
+    saved_path: &str,
+) -> String {
+    use crate::audit;
+    use crate::commands::agent_commerce::task::common::autotrade::pipeline;
+    use crate::commands::agent_commerce::task::common::autotrade::ACTION_AUTOTRADE_DELIVER;
+    use std::time::Duration;
+
+    let base_tags = vec![
+        format!("jobId={job_id}"),
+        format!("agentId={agent_id}"),
+        "source=recover".to_string(),
+    ];
+    // Entry marker: an autotrade signal was recovered and the pipeline is starting.
+    audit::log(
+        "cli",
+        ACTION_AUTOTRADE_DELIVER,
+        true,
+        Duration::default(),
+        Some([base_tags.clone(), vec!["phase=detected".to_string()]].concat()),
+        None,
+    );
+    let outcome = pipeline::run(pipeline::PipelineInput {
+        signal_json,
+        job_id,
+        agent_id,
+        received_at_ms: now_ms(),
+        saved_path,
+    })
+    .await;
+    // Result audit: the money-moving decision (card vs. degrade reason) must be
+    // traceable after the fact, exactly as on the live path.
+    match &outcome {
+        pipeline::PipelineOutcome::Card(card) => audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        "phase=result".to_string(),
+                        "outcome=card".to_string(),
+                        format!("deliveryId={}", card.delivery_id),
+                        format!("signalType={}", card.signal_type),
+                    ],
+                ]
+                .concat(),
+            ),
+            None,
+        ),
+        pipeline::PipelineOutcome::Notify(notify) => audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            false,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        "phase=result".to_string(),
+                        "outcome=degrade".to_string(),
+                        format!("reason={}", notify.reason),
+                    ],
+                ]
+                .concat(),
+            ),
+            Some(&notify.reason),
+        ),
+    }
+    match outcome {
+        pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
+        pipeline::PipelineOutcome::Notify(notify) => success_envelope(&notify),
+    }
 }
 
 // --- Execution stage ----------------------------------------------------
@@ -1098,17 +1218,22 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
                 return job_submitted_escrow(&patched_ctx);
             }
         }
-        if let Some((saved_path, dtype, text_content)) = try_recover_from_temp_file(
+        if let Some(recovered) = try_recover_from_temp_file(
             job_id, agent_id, short_id, &p.title,
             &p.token_symbol, &p.token_amount,
             p.provider_agent_id.as_deref(),
         ) {
+            // NOTE: this sync fallback only archives the deliverable into the review
+            // flow. Autotrade execution on a recovered delivery runs in the async
+            // `check_status_freshness` recovery path (FB3), which consumes the spool
+            // file first — so by the time this fallback runs the file is already gone
+            // and `recovered.autotrade_signal` is not actionable here (sync context).
             let mut patched = p.clone();
             patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
-                path: saved_path,
-                deliverable_type: dtype,
+                path: recovered.saved_path,
+                deliverable_type: recovered.deliverable_type,
                 original_name: String::new(),
-                text_content,
+                text_content: recovered.text_content,
             });
             let patched_ctx = super::super::flow::FlowContext {
                 job_id: ctx.job_id,
@@ -1675,14 +1800,14 @@ Part B continues
             .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000))
             .unwrap();
 
-        let (_saved, dtype, text) = try_recover_from_temp_file(
+        let recovered = try_recover_from_temp_file(
             job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
         )
         .expect("should recover from the oldest spool file");
 
-        assert_eq!(dtype, "text");
+        assert_eq!(recovered.deliverable_type, "text");
         assert_eq!(
-            text.as_deref(),
+            recovered.text_content.as_deref(),
             Some("OLDEST"),
             "must process the OLDEST delivery first (order-preserving)"
         );
@@ -1690,6 +1815,114 @@ Part B continues
         assert!(
             newer.exists(),
             "the newer file must remain for the next recovery pass"
+        );
+
+        std::env::remove_var("TMPDIR");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    // ── FB2: a poison-pill oldest spool file is quarantined, not re-selected ──
+    #[test]
+    fn recover_skips_poison_pill_and_processes_next() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let spool = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", spool.path());
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xPOISON";
+        let poison = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
+        let good = spool.path().join(format!("a2a_deliver_{job_id}_d2.json"));
+        // Poison: not valid JSON → parse_a2a_file returns None → processing fails.
+        std::fs::write(&poison, "not json at all").unwrap();
+        std::fs::write(
+            &good,
+            r#"{"content":"deliverableType: text\n- - -\nGOOD\n- - -\n[intent:deliver]"}"#,
+        )
+        .unwrap();
+        // Deterministic mtimes: poison (oldest) < good.
+        std::fs::File::options()
+            .write(true)
+            .open(&poison)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000))
+            .unwrap();
+
+        let recovered = try_recover_from_temp_file(
+            job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should skip the poison pill and recover the good file");
+
+        assert_eq!(recovered.text_content.as_deref(), Some("GOOD"));
+        assert!(!poison.exists(), "poison file must be moved aside");
+        assert!(
+            spool
+                .path()
+                .join(format!("a2a_deliver_{job_id}_d1.json.failed"))
+                .exists(),
+            "poison file must be quarantined as .failed, not deleted"
+        );
+        assert!(!good.exists(), "processed good file must be deleted");
+
+        std::env::remove_var("TMPDIR");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    // ── FB3: recovery surfaces the autotrade signal for live-path pipeline parity ──
+    #[test]
+    fn recover_surfaces_autotrade_signal_from_spool() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let spool = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", spool.path());
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xFB3";
+        // A text delivery whose content also carries an `autotrade:` block.
+        let body = r#"{"content":"deliverableType: text\nautotrade: {\"schemaVersion\":1,\"deliveryId\":\"d1\",\"signalType\":\"dexTrade\",\"signalTime\":1,\"ttlSec\":60,\"params\":{}}\n- - -\nSIGNAL BODY\n- - -\n[intent:deliver]"}"#;
+        let f = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
+        std::fs::write(&f, body).unwrap();
+
+        let recovered = try_recover_from_temp_file(
+            job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should recover the delivery");
+
+        assert_eq!(recovered.deliverable_type, "text");
+        assert!(
+            recovered.autotrade_signal.is_some(),
+            "recovery must surface the autotrade signal line so the caller can run the pipeline"
+        );
+        assert!(
+            recovered
+                .autotrade_signal
+                .as_deref()
+                .unwrap()
+                .contains("dexTrade"),
+            "the surfaced signal must be the raw autotrade JSON line"
+        );
+
+        // A plain delivery (no autotrade block) surfaces None — live path unchanged.
+        let plain_job = "0xPLAIN";
+        let plain = spool.path().join(format!("a2a_deliver_{plain_job}_d1.json"));
+        std::fs::write(
+            &plain,
+            r#"{"content":"deliverableType: text\n- - -\nPLAIN\n- - -\n[intent:deliver]"}"#,
+        )
+        .unwrap();
+        let plain_recovered = try_recover_from_temp_file(
+            plain_job, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should recover the plain delivery");
+        assert!(
+            plain_recovered.autotrade_signal.is_none(),
+            "a delivery without an autotrade block must not surface a signal"
         );
 
         std::env::remove_var("TMPDIR");

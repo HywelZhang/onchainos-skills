@@ -1757,7 +1757,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
                     text_content,
                 });
             }
-        } else if let Some((saved_path, dtype, text_content)) = {
+        } else if let Some(recovered) = {
             let short_id_fallback = &job_id[..job_id.len().min(10)];
             task::user::try_recover_from_temp_file(
                 job_id, agent_id, short_id_fallback, &ctx.title,
@@ -1767,14 +1767,25 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         }
         {
             if DEBUG_LOG {
-                eprintln!("[check-freshness] job_submitted: recovered deliverable from temp file: {saved_path}");
+                eprintln!("[check-freshness] job_submitted: recovered deliverable from temp file: {}", recovered.saved_path);
             }
             ctx.deliverable = Some(task::common::PreFetchedDeliverable {
-                path: saved_path,
-                deliverable_type: dtype,
+                path: recovered.saved_path.clone(),
+                deliverable_type: recovered.deliverable_type.clone(),
                 original_name: String::new(),
-                text_content,
+                text_content: recovered.text_content.clone(),
             });
+            // FB3: recovery parity with the live deliverable_received_cli path — a
+            // recovered delivery carrying an `autotrade:` block must run the copy-trade
+            // pipeline (extract signal → pipeline::run), not just be archived into the
+            // review flow. Emit the execution card / notify as the response and stop
+            // (same early-return short-circuit as the freshness warning below).
+            if let Some(signal) = recovered.autotrade_signal.as_deref() {
+                let card = task::user::run_recovered_autotrade(
+                    signal, job_id, agent_id, &recovered.saved_path,
+                ).await;
+                return (Some(card), Some(ctx));
+            }
         } else if DEBUG_LOG {
             eprintln!("[check-freshness] job_submitted: no deliverable found — waiting for deliverable_received");
         }

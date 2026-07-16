@@ -25,7 +25,7 @@ mod create;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::try_recover_from_temp_file;
+pub(crate) use flow_lifecycle::{try_recover_from_temp_file, run_recovered_autotrade};
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;

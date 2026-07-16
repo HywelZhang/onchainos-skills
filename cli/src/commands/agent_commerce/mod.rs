@@ -1767,7 +1767,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         }
         {
             if DEBUG_LOG {
-                eprintln!("[check-freshness] job_submitted: recovered deliverable from temp file: {}", recovered.saved_path);
+                eprintln!("[check-freshness] job_submitted: recovered deliverable from A2A spool file");
             }
             ctx.deliverable = Some(task::common::PreFetchedDeliverable {
                 path: recovered.saved_path.clone(),

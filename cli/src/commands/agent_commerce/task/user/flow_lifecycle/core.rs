@@ -158,13 +158,59 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Try to recover a deliverable from `/tmp/a2a_deliver_<jobId>.json`.
+/// The directory scanned for A2A deliver spool files. Defaults to the OS temp dir
+/// (`/tmp` on Linux when `TMPDIR` is unset — matching the playbook's
+/// `/tmp/a2a_deliver_…` write path), and is redirectable via `TMPDIR` so tests / CI
+/// / sandbox never need to touch a hardcoded `/tmp`.
+fn a2a_spool_dir() -> std::path::PathBuf {
+    std::env::temp_dir()
+}
+
+/// Collect the A2A spool candidates for `job_id` and return the OLDEST by mtime.
 ///
-/// Called by `check_status_freshness` when `job_submitted` finds no manifest.
-/// Parses the temp file, downloads (file) or writes (text), saves via
-/// `handle_save`, and returns `(saved_path, deliverable_type, text_content)`.
-/// On any failure returns `None` and falls through to the "wait" path.
-pub(crate) fn try_recover_from_temp_file(
+/// Candidates (FR-10): the fixed-name file `a2a_deliver_<jobId>.json` (old / no
+/// auto-trade block) **plus** every per-delivery file matching the
+/// `a2a_deliver_<jobId>_` prefix. Subscription copy-trade delivers repeatedly under
+/// one `jobId`, so the write side uses per-delivery names to avoid same-round
+/// overwrite; recovery must therefore dual-scan. Oldest-first preserves delivery
+/// order (first-in first-out). Returns `None` when no candidate exists.
+fn oldest_spool_candidate(job_id: &str) -> Option<String> {
+    let dir = a2a_spool_dir();
+    let fixed = dir.join(format!("a2a_deliver_{job_id}.json"));
+    let prefix = format!("a2a_deliver_{job_id}_");
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if fixed.is_file() {
+        candidates.push(fixed);
+    }
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix) && name.ends_with(".json") {
+                candidates.push(entry.path());
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    // Oldest first (stable): sort by mtime ascending; unknown mtime sorts earliest.
+    candidates.sort_by_key(|p| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    candidates.into_iter().next().map(|p| p.display().to_string())
+}
+
+/// Parse one A2A spool file, download (file) or write (text) its deliverable, save
+/// via `handle_save`, delete the file on success, and return
+/// `(saved_path, deliverable_type, text_content)`. On any failure returns `None`
+/// and leaves the file in place (a later pass / manual recovery can retry it).
+#[allow(clippy::too_many_arguments)]
+fn process_recovered_file(
+    temp_path: &str,
     job_id: &str,
     agent_id: &str,
     short_id: &str,
@@ -175,8 +221,7 @@ pub(crate) fn try_recover_from_temp_file(
 ) -> Option<(String, String, Option<String>)> {
     use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
 
-    let temp_path = format!("/tmp/a2a_deliver_{job_id}.json");
-    let payload = parse_a2a_file(&temp_path)?;
+    let payload = parse_a2a_file(temp_path)?;
 
     let result = match payload {
         DeliverPayload::File { ref file_key, ref digest, ref salt, ref nonce, ref secret, ref filename } => {
@@ -218,8 +263,39 @@ pub(crate) fn try_recover_from_temp_file(
         }
     };
 
-    let _ = std::fs::remove_file(&temp_path);
+    let _ = std::fs::remove_file(temp_path);
     Some(result)
+}
+
+/// Try to recover a deliverable from an A2A spool file (FR-10 dual-scan).
+///
+/// Called by `check_status_freshness` when `job_submitted` finds no manifest.
+/// Picks the OLDEST spool candidate for `job_id` (fixed name + per-delivery prefix;
+/// see [`oldest_spool_candidate`]), processes exactly that one, and deletes it —
+/// any remaining files are handled on the next `job_submitted` recovery pass so
+/// high-frequency / out-of-order subscription deliveries are not silently dropped.
+/// On any failure returns `None` and falls through to the "wait" path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_recover_from_temp_file(
+    job_id: &str,
+    agent_id: &str,
+    short_id: &str,
+    title: &str,
+    token_symbol: &str,
+    token_amount: &str,
+    provider_agent_id: Option<&str>,
+) -> Option<(String, String, Option<String>)> {
+    let temp_path = oldest_spool_candidate(job_id)?;
+    process_recovered_file(
+        &temp_path,
+        job_id,
+        agent_id,
+        short_id,
+        title,
+        token_symbol,
+        token_amount,
+        provider_agent_id,
+    )
 }
 
 // --- Execution stage ----------------------------------------------------
@@ -1028,7 +1104,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         let _ = deliverables::write_review_marker(job_id);
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
-             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}.json` and re-trigger:\n\
+             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}_<deliveryId>.json` (or `/tmp/a2a_deliver_{job_id}.json` when the delivery carries no auto-trade block), then re-trigger:\n\
              `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
              Otherwise, end this turn and wait.\n"
         );
@@ -1528,6 +1604,64 @@ Part B continues
             }
             _ => panic!("expected Text"),
         }
+    }
+
+    // ── FR-10: recover dual-scans the spool and processes oldest → newest ──
+    #[test]
+    fn recover_processes_oldest_spool_file_first() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        // Redirect BOTH the spool dir (via TMPDIR → a2a_spool_dir) and ONCHAINOS_HOME
+        // to isolated temp dirs so the test is hermetic and never touches a hardcoded
+        // /tmp. The tempdirs are created BEFORE TMPDIR is set, so they land in the real
+        // OS temp; the recover code then reads the redirected TMPDIR.
+        let spool = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", spool.path());
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xJOB";
+        let a2a = |body: &str| {
+            format!(
+                r#"{{"content":"deliverableType: text\n- - -\n{body}\n- - -\n[intent:deliver]"}}"#
+            )
+        };
+        let older = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
+        let newer = spool.path().join(format!("a2a_deliver_{job_id}_d2.json"));
+        std::fs::write(&older, a2a("OLDEST")).unwrap();
+        std::fs::write(&newer, a2a("NEWEST")).unwrap();
+        // Force deterministic mtimes: older < newer (no sleep — avoids flakiness).
+        std::fs::File::options()
+            .write(true)
+            .open(&older)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&newer)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000))
+            .unwrap();
+
+        let (_saved, dtype, text) = try_recover_from_temp_file(
+            job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should recover from the oldest spool file");
+
+        assert_eq!(dtype, "text");
+        assert_eq!(
+            text.as_deref(),
+            Some("OLDEST"),
+            "must process the OLDEST delivery first (order-preserving)"
+        );
+        assert!(!older.exists(), "processed spool file must be deleted");
+        assert!(
+            newer.exists(),
+            "the newer file must remain for the next recovery pass"
+        );
+
+        std::env::remove_var("TMPDIR");
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     // ── job_submitted_escrow review-deadline reminder (FR-2) ─────────────

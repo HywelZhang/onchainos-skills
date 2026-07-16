@@ -17,9 +17,10 @@ internally. Do NOT hand-write JSON-RPC or parse SSE yourself.
    → the CLI issues `tools/call`. A paid tool returns 402 → `data.{paymentId,accepts,candidates}`
      (identical to a REST quote). A free / first-N-free tool returns `data.result` instead.
 3. **Pay** — confirm the amount/scheme (Step A3), then
-   `onchainos payment pay --payment-id <id> --yes`
+   `onchainos payment pay --payment-id <id> [--selected-index <n>] --yes`
    → the CLI TEE-signs and replays the SAME `tools/call` with a `PAYMENT-SIGNATURE` header, then
      parses the SSE response + `PAYMENT-RESPONSE` receipt.
+   (`--selected-index <n>` picks an `accepts[]` entry when the 402 offered multiple schemes.)
 
 ## `--param` coercion (must match the tool's `inputSchema`)
 The CLI coerces each `--param` value per `inputSchema.properties[key].type`:
@@ -36,6 +37,13 @@ notifications (e.g. `progress`) that arrive before the response are skipped; the
 carrying a JSON-RPC `result`/`error` is taken. Tiered billing is supported: `tools/list` is free,
 a paid `tools/call` returns 402, and a "first N calls free" tool returns no 402 — that non-402
 `tools/call` is a **free result** surfaced as `data.result`.
+
+## Do NOT hallucinate a payment
+A bare probe / `tools/list` returning no 402 does **NOT** mean the service is free — on an MCP
+endpoint the paywall lives at the `tools/call` layer, so a tool's price only surfaces when you
+actually invoke it. Never invent or assume a payment. If a real `tools/call` genuinely returns no
+402 (a non-402 `data.result`), report the endpoint as **free / not x402-enabled** and stop — do not
+fabricate a `paymentId`, an `accepts[]` challenge, or a signing step that the server never asked for.
 
 ## Error tokens (grep-able first word of `.error`)
 - `endpoint_unreachable` — `initialize` / `tools/list` / `tools/call` transport failure; or a bare

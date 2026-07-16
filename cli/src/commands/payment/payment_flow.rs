@@ -1556,7 +1556,7 @@ async fn pay_from_state(
     // replays the SAME signed `tools/call`; a REST quote replays the merchant
     // HTTP request, honoring the persisted paid-call method + carrier plan.
     let (status, tx_hash, result, error, decoded_receipt) = match st.mcp_tool.as_deref() {
-        Some(tool) => replay_mcp(st, tool, &header_value, biz_params).await,
+        Some(tool) => replay_mcp(st, tool, header_name, &header_value, biz_params).await,
         None => {
             replay_merchant(
                 &st.endpoint_url,
@@ -1704,6 +1704,7 @@ async fn replay_merchant(
 async fn replay_mcp(
     st: &PaymentState,
     tool: &str,
+    header_name: &str,
     payment_signature: &str,
     biz_params: &[(String, String)],
 ) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
@@ -1742,19 +1743,21 @@ async fn replay_mcp(
         arguments,
     };
 
-    let (status_code, payment_response, result) =
-        match client.call_tool_signed(&replay, payment_signature).await {
-            Ok(t) => t,
-            Err(e) => {
-                return (
-                    "failed".into(),
-                    None,
-                    Value::Null,
-                    Some(e.to_string()),
-                    None,
-                )
-            }
-        };
+    let (status_code, payment_response, result) = match client
+        .call_tool_signed(&replay, header_name, payment_signature)
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                "failed".into(),
+                None,
+                Value::Null,
+                Some(e.to_string()),
+                None,
+            )
+        }
+    };
 
     let decoded_receipt = payment_response
         .as_deref()
@@ -3510,8 +3513,14 @@ mod tests {
             None,
         );
         let st = mcp_replay_state(&url);
-        let (status, _tx, result, error, _receipt) =
-            replay_mcp(&st, "premium_tool", "dummy-signature", &[]).await;
+        let (status, _tx, result, error, _receipt) = replay_mcp(
+            &st,
+            "premium_tool",
+            "PAYMENT-SIGNATURE",
+            "dummy-signature",
+            &[],
+        )
+        .await;
         let _ = handle.join();
         assert_eq!(status, "success", "200 must map to success");
         assert!(error.is_none(), "success must carry no error: {error:?}");
@@ -3523,8 +3532,14 @@ mod tests {
         let (url, handle) =
             spawn_mock_mcp_server("402 Payment Required", r#"{"status":"settling"}"#, None);
         let st = mcp_replay_state(&url);
-        let (status, _tx, result, error, _receipt) =
-            replay_mcp(&st, "premium_tool", "dummy-signature", &[]).await;
+        let (status, _tx, result, error, _receipt) = replay_mcp(
+            &st,
+            "premium_tool",
+            "PAYMENT-SIGNATURE",
+            "dummy-signature",
+            &[],
+        )
+        .await;
         let _ = handle.join();
         assert_eq!(status, "pending", "402 must map to non-terminal pending");
         assert!(
@@ -3544,8 +3559,14 @@ mod tests {
         let (url, handle) =
             spawn_mock_mcp_server("500 Internal Server Error", r#"{"error":"boom"}"#, None);
         let st = mcp_replay_state(&url);
-        let (status, _tx, result, error, _receipt) =
-            replay_mcp(&st, "premium_tool", "dummy-signature", &[]).await;
+        let (status, _tx, result, error, _receipt) = replay_mcp(
+            &st,
+            "premium_tool",
+            "PAYMENT-SIGNATURE",
+            "dummy-signature",
+            &[],
+        )
+        .await;
         let _ = handle.join();
         assert_eq!(status, "failed", "non-2xx/non-402 must map to failed");
         assert!(

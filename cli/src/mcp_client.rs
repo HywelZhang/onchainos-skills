@@ -32,6 +32,7 @@ const MCP_TIMEOUT_SECS: u64 = 30;
 /// CLI envelope) and `Deserialize` (from the JSON-RPC catalog).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct McpTool {
+    #[serde(default)]
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -188,9 +189,12 @@ pub fn jsonrpc_result(envelope: &Value) -> Result<Value> {
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("unknown JSON-RPC error");
-        return Err(anyhow!(
-            "{TOKEN_ENDPOINT_UNREACHABLE}: JSON-RPC error: {msg}"
-        ));
+        // Preserve the JSON-RPC error `code` (e.g. -32601 method-not-found,
+        // -32000 server error) so the agent can distinguish failure classes.
+        return Err(match err.get("code").and_then(|c| c.as_i64()) {
+            Some(code) => anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: JSON-RPC error {code}: {msg}"),
+            None => anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: JSON-RPC error: {msg}"),
+        });
     }
     envelope
         .get("result")
@@ -201,6 +205,26 @@ pub fn jsonrpc_result(envelope: &Value) -> Result<Value> {
 /// A signed-replay outcome, mirroring `replay_merchant`'s tuple contract:
 /// `(status_code, PAYMENT-RESPONSE header, parsed tool result)`.
 pub type SignedReplay = (u16, Option<String>, Value);
+
+/// Cap a server error body so a large/HTML 4xx/5xx page does not flood the
+/// error envelope, while still surfacing the server's explanation for triage.
+const MAX_ERROR_BODY_CHARS: usize = 500;
+
+/// Build an `endpoint_unreachable` error for a non-2xx MCP HTTP response,
+/// carrying the (truncated) response body so the server's 4xx/5xx explanation
+/// is not lost when diagnosing a failed handshake / call.
+fn http_error(stage: &str, status: u16, body: &str) -> anyhow::Error {
+    let trimmed = body.trim();
+    let truncated: String = trimmed.chars().take(MAX_ERROR_BODY_CHARS).collect();
+    let suffix = if truncated.is_empty() {
+        String::new()
+    } else if truncated.len() < trimmed.len() {
+        format!(": {truncated}…")
+    } else {
+        format!(": {truncated}")
+    };
+    anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {stage} returned HTTP {status}{suffix}")
+}
 
 /// JSON-RPC / SSE client for one A2MCP endpoint. Constructs its own
 /// `reqwest::Client`; captures `Mcp-Session-Id` on `initialize` and reuses it
@@ -228,6 +252,20 @@ impl McpClient {
     /// The `Mcp-Session-Id` captured on `initialize` (process-local).
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
+    }
+
+    /// Refresh the process-local `Mcp-Session-Id` from any response that carries
+    /// one. The id is issued on `initialize`, but capturing it on every response
+    /// keeps a rotating-session server in sync (the spec allows the server to
+    /// re-issue it).
+    fn capture_session_id(&mut self, resp: &reqwest::Response) {
+        if let Some(sid) = resp
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|v| v.to_str().ok())
+        {
+            self.session_id = Some(sid.to_string());
+        }
     }
 
     /// Send one JSON-RPC message. `id = None` → notification (no `id`, response
@@ -273,20 +311,11 @@ impl McpClient {
             "clientInfo": { "name": "onchainos", "version": env!("CARGO_PKG_VERSION") },
         });
         let resp = self.send_rpc(Some(1), "initialize", params).await?;
-        if let Some(sid) = resp
-            .headers()
-            .get("Mcp-Session-Id")
-            .and_then(|v| v.to_str().ok())
-        {
-            self.session_id = Some(sid.to_string());
-        }
+        self.capture_session_id(&resp);
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(anyhow!(
-                "{TOKEN_ENDPOINT_UNREACHABLE}: initialize returned HTTP {}",
-                status.as_u16()
-            ));
+            return Err(http_error("initialize", status.as_u16(), &body));
         }
         let envelope = parse_streamable_body(&body)?;
         jsonrpc_result(&envelope)?;
@@ -301,19 +330,28 @@ impl McpClient {
     /// Discovery: `tools/list` (id 2) → the endpoint's tool catalog.
     pub async fn list_tools(&mut self) -> Result<Vec<McpTool>> {
         let resp = self.send_rpc(Some(2), "tools/list", json!({})).await?;
+        self.capture_session_id(&resp);
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(anyhow!(
-                "{TOKEN_ENDPOINT_UNREACHABLE}: tools/list returned HTTP {}",
-                status.as_u16()
-            ));
+            return Err(http_error("tools/list", status.as_u16(), &body));
         }
         let envelope = parse_streamable_body(&body)?;
         let result = jsonrpc_result(&envelope)?;
-        let tools = result.get("tools").cloned().unwrap_or(Value::Array(vec![]));
-        serde_json::from_value(tools)
-            .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: malformed tools/list result: {e}"))
+        let entries = result
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        // Per-entry tolerance: a single non-conforming tool (e.g. missing
+        // `name`, which degrades to "") must not fail the whole catalog — the
+        // remaining tools stay discoverable. An entry that is not even an object
+        // is skipped rather than aborting discovery.
+        let tools = entries
+            .into_iter()
+            .filter_map(|entry| serde_json::from_value::<McpTool>(entry).ok())
+            .collect();
+        Ok(tools)
     }
 
     /// `tools/call` (id 3). HTTP 402 → `Paid` (the x402 challenge to decode);
@@ -322,6 +360,7 @@ impl McpClient {
     pub async fn call_tool(&mut self, tool: &str, arguments: &Value) -> Result<ToolCallOutcome> {
         let params = json!({ "name": tool, "arguments": arguments });
         let resp = self.send_rpc(Some(3), "tools/call", params).await?;
+        self.capture_session_id(&resp);
         let status = resp.status();
         let header = resp
             .headers()
@@ -336,10 +375,7 @@ impl McpClient {
             return Ok(ToolCallOutcome::Paid { header, body });
         }
         if !status.is_success() {
-            return Err(anyhow!(
-                "{TOKEN_ENDPOINT_UNREACHABLE}: tools/call returned HTTP {}",
-                status.as_u16()
-            ));
+            return Err(http_error("tools/call", status.as_u16(), &body));
         }
         let envelope = parse_streamable_body(&body)?;
         let result = jsonrpc_result(&envelope)?;
@@ -347,12 +383,16 @@ impl McpClient {
     }
 
     /// Signed replay (id 4): replay the SAME `tools/call` with a TEE-signed
-    /// `PAYMENT-SIGNATURE` header. Returns `(status_code, PAYMENT-RESPONSE,
-    /// result)` — the caller (`replay_mcp`) maps the status to
+    /// payment header. `header_name` is the payment-flow-computed header name
+    /// (normally `PAYMENT-SIGNATURE`, but threaded through — like the REST
+    /// `replay_merchant` — so a future scheme/version that emits a different
+    /// header name still sends the correct one). Returns `(status_code,
+    /// PAYMENT-RESPONSE, result)` — the caller (`replay_mcp`) maps the status to
     /// success/pending/failed and never discards a signed authorization.
     pub async fn call_tool_signed(
         &mut self,
         replay: &McpReplay,
+        header_name: &str,
         payment_signature: &str,
     ) -> Result<SignedReplay> {
         if replay.session_id.is_some() {
@@ -370,7 +410,7 @@ impl McpClient {
                 reqwest::header::ACCEPT,
                 "application/json, text/event-stream",
             )
-            .header("PAYMENT-SIGNATURE", payment_signature)
+            .header(header_name, payment_signature)
             .body(payload);
         if let Some(sid) = &self.session_id {
             req = req.header("Mcp-Session-Id", sid);
@@ -379,6 +419,7 @@ impl McpClient {
             .send()
             .await
             .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {e}"))?;
+        self.capture_session_id(&resp);
         let status_code = resp.status().as_u16();
         let payment_response = resp
             .headers()
@@ -514,6 +555,24 @@ data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"ok\":true}}\n\
         let e = jsonrpc_result(&err).unwrap_err();
         assert!(e.to_string().starts_with(TOKEN_ENDPOINT_UNREACHABLE));
         assert!(e.to_string().contains("boom"));
+        // The JSON-RPC error code is preserved for failure-class triage.
+        assert!(e.to_string().contains("-32000"));
+    }
+
+    #[test]
+    fn http_error_carries_truncated_body() {
+        // A short body is surfaced verbatim.
+        let e = http_error("tools/call", 500, "  server exploded  ");
+        assert!(e.to_string().contains("HTTP 500"));
+        assert!(e.to_string().contains("server exploded"));
+        // An empty body yields no trailing separator.
+        let e2 = http_error("initialize", 503, "   ");
+        assert!(e2.to_string().ends_with("HTTP 503"));
+        // An oversized body is truncated with an ellipsis marker.
+        let big = "x".repeat(MAX_ERROR_BODY_CHARS + 50);
+        let e3 = http_error("tools/list", 500, &big);
+        assert!(e3.to_string().contains('…'));
+        assert!(e3.to_string().len() < big.len() + 80);
     }
 
     // ── call_tool / list_tools result mapping (mock endpoint, hermetic) ──────
@@ -636,6 +695,8 @@ data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"ok\":true}}\n\
             "non-402/non-2xx must carry the endpoint_unreachable token: {err}"
         );
         assert!(err.to_string().contains("500"));
+        // The server's 4xx/5xx body is preserved for triage (item D).
+        assert!(err.to_string().contains("boom"));
     }
 
     #[tokio::test]
@@ -652,14 +713,20 @@ data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"ok\":true}}\n\
     }
 
     #[tokio::test]
-    async fn list_tools_rejects_malformed_catalog() {
-        // A tools[] entry missing the required `name` → serde parse fails → Err.
-        let body = r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"description":"no name"}]}}"#;
+    async fn list_tools_tolerates_malformed_entry() {
+        // A tools[] entry missing `name` degrades to "" (it must NOT fail the
+        // whole catalog); a valid tool alongside it is still discovered; a
+        // non-object entry is skipped entirely.
+        let body = r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"description":"no name"},{"name":"good"},"not-an-object"]}}"#;
         let (url, handle) = spawn_mock_mcp("200 OK", "", "application/json", body);
         let mut client = McpClient::new(&url).unwrap();
-        let err = client.list_tools().await.unwrap_err();
+        let tools = client.list_tools().await.unwrap();
         let _ = handle.join();
-        assert!(err.to_string().starts_with(TOKEN_ENDPOINT_UNREACHABLE));
-        assert!(err.to_string().contains("malformed"));
+        // Bad object degraded to name "", good tool preserved, non-object
+        // skipped → 2 tools discovered rather than a whole-catalog failure.
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "");
+        assert_eq!(tools[0].description.as_deref(), Some("no name"));
+        assert_eq!(tools[1].name, "good");
     }
 }

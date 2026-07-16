@@ -114,50 +114,65 @@ fn write_latch(job_id: &str, delivery_id: &str) -> Result<(), AutoTradeError> {
     }
 }
 
-/// The venue + action + spend amount used for the grant-check, plus (for dex
-/// sell+pct) the resolved readable amount to embed in the command.
+/// The venue + action + spend amount used for the grant-check.
 struct GrantTarget {
     venue: &'static str,
     action: &'static str,
     amount: String,
-    /// Set only for dex sell+pct (the holding-derived absolute amount).
+}
+
+/// Result of grant-target resolution: the optional grant to enforce plus the
+/// pipeline-resolved absolute dex amount to embed in the command.
+///
+/// `grant` is `None` when the action is intentionally NOT grant-gated (dex sell —
+/// L1; defi withdraw/claim — spend nothing). `resolved_dex_amount` is `Some` only
+/// for dex sell+pct, where the pct is converted against on-chain holdings; it is
+/// deliberately independent of `grant` so the command still carries an absolute
+/// amount even though dex sell is not cap-checked.
+struct GrantResolution {
+    grant: Option<GrantTarget>,
     resolved_dex_amount: Option<String>,
 }
 
-/// Determine the grant-check target. For `dex_trade` sell+pct this resolves the
-/// on-chain holding first (FR-7) so the cap is checked against the absolute
-/// amount. Withdraw / claim spend nothing, so they are not grant-gated.
+/// Determine the grant-check target + resolved command amount. For `dex_trade`
+/// sell+pct this resolves the on-chain holding (FR-7) so the command carries the
+/// absolute amount. Withdraw / claim spend nothing, so they are not grant-gated.
+///
+/// L1 (WBW-13715): dex SELL is NOT grant-gated. A sell is naturally capped by the
+/// position held, so v1 configures no `maxSell`; gating it would let a maxBuy-only
+/// provisioning silently kill copy-sells. The sell+pct holding resolution is kept
+/// (it feeds the command), only the cap check is dropped for sells.
 async fn resolve_grant_target(
     typed: &TypedParams,
     wallet: &str,
-) -> Result<Option<GrantTarget>, AutoTradeError> {
+) -> Result<GrantResolution, AutoTradeError> {
     match typed {
         TypedParams::Dex(p) => match (p.side, p.amount_unit) {
-            (Side::Buy, _) => Ok(Some(GrantTarget {
-                venue: "dex",
-                action: "buy",
-                amount: p.amount.clone(),
+            (Side::Buy, _) => Ok(GrantResolution {
+                grant: Some(GrantTarget {
+                    venue: "dex",
+                    action: "buy",
+                    amount: p.amount.clone(),
+                }),
                 resolved_dex_amount: None,
-            })),
-            (Side::Sell, AmountUnit::Base) => Ok(Some(GrantTarget {
-                venue: "dex",
-                action: "sell",
-                amount: p.amount.clone(),
+            }),
+            // dex sell — not grant-gated (L1); no pct resolution needed for +base.
+            (Side::Sell, AmountUnit::Base) => Ok(GrantResolution {
+                grant: None,
                 resolved_dex_amount: None,
-            })),
+            }),
+            // dex sell+pct — not grant-gated (L1), but still resolve the holding so
+            // the executed command embeds an absolute amount.
             (Side::Sell, AmountUnit::Pct) => {
                 let pct = Decimal::parse(&p.amount)
                     .map_err(|_| AutoTradeError::Degrade(DegradeReason::PctHoldingFail))?;
                 let abs =
                     holding::resolve_pct_holding(wallet, &p.chain_index, &p.token_address, &pct)
                         .await?;
-                let abs_str = abs.to_plain_string();
-                Ok(Some(GrantTarget {
-                    venue: "dex",
-                    action: "sell",
-                    amount: abs_str.clone(),
-                    resolved_dex_amount: Some(abs_str),
-                }))
+                Ok(GrantResolution {
+                    grant: None,
+                    resolved_dex_amount: Some(abs.to_plain_string()),
+                })
             }
             // schema rejects sell+quote; unreachable, treat defensively.
             (Side::Sell, AmountUnit::Quote) => {
@@ -165,26 +180,33 @@ async fn resolve_grant_target(
             }
         },
         TypedParams::Defi(p) => match p.action {
-            DefiAction::Deposit => Ok(Some(GrantTarget {
-                venue: "defi",
-                action: "buy",
-                amount: p.amount.clone().unwrap_or_default(),
+            DefiAction::Deposit => Ok(GrantResolution {
+                grant: Some(GrantTarget {
+                    venue: "defi",
+                    action: "buy",
+                    amount: p.amount.clone().unwrap_or_default(),
+                }),
                 resolved_dex_amount: None,
-            })),
+            }),
             // withdraw / claim spend nothing → not grant-gated.
-            DefiAction::Withdraw | DefiAction::Claim => Ok(None),
+            DefiAction::Withdraw | DefiAction::Claim => Ok(GrantResolution {
+                grant: None,
+                resolved_dex_amount: None,
+            }),
         },
         TypedParams::Polymarket(p) => {
             let action = match p.side {
                 Side::Buy => "buy",
                 Side::Sell => "sell",
             };
-            Ok(Some(GrantTarget {
-                venue: "polymarket",
-                action,
-                amount: p.amount.clone(),
+            Ok(GrantResolution {
+                grant: Some(GrantTarget {
+                    venue: "polymarket",
+                    action,
+                    amount: p.amount.clone(),
+                }),
                 resolved_dex_amount: None,
-            }))
+            })
         }
     }
 }
@@ -258,21 +280,21 @@ async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTrade
             .ok_or(AutoTradeError::Degrade(DegradeReason::NoActiveWallet))?,
     };
 
-    // 6 + 7. grant cap (+ holding resolution for dex sell+pct).
-    let grant_target = resolve_grant_target(&typed, &wallet).await?;
-    if let Some(gt) = &grant_target {
-        // Preserve the specific grant-deny reason (no-grant-file / expired /
-        // venue-not-authorized / no-cap / over-cap …) rather than collapsing every
-        // denial onto `over_cap`. Security is unchanged (all fail-closed); this only
-        // makes NotifyOnly.reason + audit truthful about *why* it degraded.
+    // 6 + 7. grant cap (+ holding resolution for dex sell+pct). Dex sell / defi
+    // withdraw+claim are not grant-gated (resolution.grant == None), so no cap check
+    // fires for them; the sell+pct absolute amount is still resolved for the command.
+    let resolution = resolve_grant_target(&typed, &wallet).await?;
+    if let Some(gt) = &resolution.grant {
+        // Preserve the specific grant-deny reason (expired / venue-not-authorized /
+        // no-cap / over-cap …) rather than collapsing every denial onto `over_cap`.
+        // Security is unchanged (all fail-closed); this only makes NotifyOnly.reason +
+        // audit truthful about *why* it degraded.
         super::grants::check_grant(input.job_id, gt.venue, gt.action, &gt.amount)
             .map_err(|d| AutoTradeError::Degrade(DegradeReason::GrantDenied(d.code())))?;
     }
 
     // Assemble the command before latching (so a build failure doesn't burn the latch).
-    let resolved = grant_target
-        .as_ref()
-        .and_then(|gt| gt.resolved_dex_amount.as_deref());
+    let resolved = resolution.resolved_dex_amount.as_deref();
     let command = card::assemble_command(&typed, &wallet, input.job_id, resolved)?;
 
     // 8. idempotency latch — write marker first, THEN return the card.
@@ -381,5 +403,46 @@ mod tests {
         assert_eq!(no_file.as_str(), "no_grant_file");
         // And it is distinct from the old blanket over_cap.
         assert_ne!(no_file.as_str(), DegradeReason::OverCap.as_str());
+    }
+
+    // ── L1 (WBW-13715): dex sell is NOT grant-gated; buy/defi-deposit still are ──
+    fn dex_typed(params: serde_json::Value) -> schema::TypedParams {
+        use super::schema::{parse_and_validate, AutoTradeSignal, SignalType};
+        let sig = AutoTradeSignal {
+            schema_version: 1,
+            delivery_id: "d1".into(),
+            signal_type: SignalType::DexTrade,
+            signal_time: 1,
+            ttl_sec: 60,
+            params,
+        };
+        parse_and_validate(&sig).unwrap()
+    }
+
+    #[tokio::test]
+    async fn dex_sell_base_is_not_grant_gated() {
+        let typed = dex_typed(serde_json::json!({
+            "chainIndex": "8453", "tokenAddress": "0xToken",
+            "side": "sell", "amount": "25", "amountUnit": "base"
+        }));
+        let res = resolve_grant_target(&typed, "0xBuyer").await.unwrap();
+        assert!(res.grant.is_none(), "dex sell must not be grant-gated (L1)");
+        assert!(
+            res.resolved_dex_amount.is_none(),
+            "sell+base needs no pct holding resolution"
+        );
+    }
+
+    #[tokio::test]
+    async fn dex_buy_is_grant_gated() {
+        let typed = dex_typed(serde_json::json!({
+            "chainIndex": "8453", "tokenAddress": "0xToken",
+            "side": "buy", "amount": "25", "amountUnit": "quote", "slippageBps": 500
+        }));
+        let res = resolve_grant_target(&typed, "0xBuyer").await.unwrap();
+        let gt = res.grant.expect("dex buy is grant-gated");
+        assert_eq!(gt.venue, "dex");
+        assert_eq!(gt.action, "buy");
+        assert_eq!(gt.amount, "25");
     }
 }

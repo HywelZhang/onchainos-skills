@@ -139,10 +139,20 @@ pub fn check_grant(job_id: &str, venue: &str, action: &str, amount: &str) -> Res
     }
     // 4. amount parseable (overflow / non-decimal ⇒ deny).
     let amount = Decimal::parse(amount).map_err(|_| GrantDeny(DENY_INVALID_AMOUNT))?;
-    // 5. grant file exists.
+    // 5. grant file. PERMISSIVE-BY-DEFAULT (v1, WBW-13715): a MISSING grant file ⇒
+    // ALLOW (no per-trade cap configured). Turning copyTrade on is informed consent to
+    // an uncapped single-trade amount: the residual risk is only "over-buys within its
+    // own balance", never a transfer out (every autotrade recipe resolves the payee to
+    // the buyer's own locally-loaded wallet, and honeypot/rug is stopped at the swap
+    // layer — autotrade never passes --force). Re-arm the cap by dropping a grant file
+    // at <home>/autotrade/grants/<jobId>.json; this same gate then enforces it, and a
+    // file that is PRESENT-but-invalid (version/jobId/expiry/venue/no-cap/over-cap/
+    // parse) still denies below. The grant-check subcommand audits this allow
+    // (ACTION_GRANT_CHECK, success=true), so "no cap configured, allowed" is observable
+    // rather than silent — do not mistake the absent-file allow for active protection.
     let path = grant_path(job_id)?;
     if !path.exists() {
-        return Err(GrantDeny(DENY_NO_GRANT_FILE));
+        return Ok(());
     }
     // 6. JSON parseable.
     let raw = std::fs::read_to_string(&path).map_err(|_| GrantDeny(DENY_GRANT_UNREADABLE))?;
@@ -251,10 +261,13 @@ mod tests {
     }
 
     #[test]
-    fn ac9_no_file_denies() {
+    fn ac9_no_file_allows_permissive_by_default() {
         with_home(|| {
-            let err = check_grant("nogrant", "dex", "buy", "1").unwrap_err();
-            assert_eq!(err.0, DENY_NO_GRANT_FILE);
+            // v1 permissive-by-default (WBW-13715): no grant file ⇒ allow (no cap).
+            assert!(check_grant("nogrant", "dex", "buy", "1").is_ok());
+            // charset guard still runs BEFORE the filesystem, so traversal is denied
+            // (covered by ac9_path_traversal_job_id_denied); a present-but-invalid file
+            // still denies (covered by the expired/version/venue/no-cap tests).
         });
     }
 

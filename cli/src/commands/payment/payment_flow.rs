@@ -1556,7 +1556,7 @@ async fn pay_from_state(
     // replays the SAME signed `tools/call`; a REST quote replays the merchant
     // HTTP request, honoring the persisted paid-call method + carrier plan.
     let (status, tx_hash, result, error, decoded_receipt) = match st.mcp_tool.as_deref() {
-        Some(tool) => replay_mcp(st, tool, &header_value).await,
+        Some(tool) => replay_mcp(st, tool, &header_value, biz_params).await,
         None => {
             replay_merchant(
                 &st.endpoint_url,
@@ -1691,9 +1691,10 @@ async fn replay_merchant(
 
 /// Signed MCP replay for a two-phase pay whose quote landed via an MCP
 /// `tools/call` 402. Re-handshakes (`initialize`) and replays the SAME
-/// `tools/call` with the persisted (coerced) arguments plus a TEE-signed
-/// `PAYMENT-SIGNATURE` header, then parses the SSE response + `PAYMENT-RESPONSE`
-/// receipt into the shared `PayResult` tuple.
+/// `tools/call` with the persisted (coerced) arguments — with any pay-time
+/// `--param` overlaid on top (pay-time wins, matching REST `replay_merchant`) —
+/// plus a TEE-signed `PAYMENT-SIGNATURE` header, then parses the SSE response +
+/// `PAYMENT-RESPONSE` receipt into the shared `PayResult` tuple.
 ///
 /// Mirrors [`replay_merchant`]'s state-integrity contract: never returns `Err` —
 /// HTTP 2xx → `success` (state deleted by the caller), 402 → non-terminal
@@ -1704,15 +1705,9 @@ async fn replay_mcp(
     st: &PaymentState,
     tool: &str,
     payment_signature: &str,
+    biz_params: &[(String, String)],
 ) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
     use crate::mcp_client::{McpClient, McpReplay};
-
-    // The persisted (coerced) arguments are replayed verbatim (FR-3).
-    let replay = McpReplay {
-        session_id: None,
-        tool: tool.to_string(),
-        arguments: Value::Object(st.known_params.clone()),
-    };
 
     let mut client = match McpClient::new(&st.endpoint_url) {
         Ok(c) => c,
@@ -1735,6 +1730,18 @@ async fn replay_mcp(
             None,
         );
     }
+
+    // Merge pay-time `--param` over the persisted (quote-time, coerced) args so
+    // `payment pay --param k=v` overrides the persisted value — parity with the
+    // REST `replay_merchant` path where pay-time `--param` wins (FR-3).
+    let arguments = merge_mcp_replay_args(&mut client, st, tool, biz_params).await;
+
+    let replay = McpReplay {
+        session_id: None,
+        tool: tool.to_string(),
+        arguments,
+    };
+
     let (status_code, payment_response, result) =
         match client.call_tool_signed(&replay, payment_signature).await {
             Ok(t) => t,
@@ -1780,6 +1787,56 @@ async fn replay_mcp(
             decoded_receipt,
         )
     }
+}
+
+/// Build the arguments for the signed MCP replay: the persisted (quote-time,
+/// already-coerced) args with any pay-time `--param` overlaid on top. Pay-time
+/// values win, mirroring the REST `replay_merchant` contract. When the tool
+/// still advertises an `inputSchema` (re-discovered during the pay-time
+/// handshake), the pay-time overrides are coerced to the declared JSON types so
+/// a strict server receives correctly-typed values; on any catalog/tool-lookup
+/// failure the overrides fall through as strings (the same fallback
+/// `coerce_arguments` uses when no schema is present).
+async fn merge_mcp_replay_args(
+    client: &mut crate::mcp_client::McpClient,
+    st: &PaymentState,
+    tool: &str,
+    biz_params: &[(String, String)],
+) -> Value {
+    if biz_params.is_empty() {
+        return Value::Object(st.known_params.clone());
+    }
+    // Best-effort: re-discover the tool's inputSchema so a strict server still
+    // gets the overrides in their declared types.
+    let input_schema = client
+        .list_tools()
+        .await
+        .ok()
+        .and_then(|tools| tools.into_iter().find(|t| t.name == tool))
+        .and_then(|t| t.input_schema);
+    apply_param_overrides(&st.known_params, biz_params, input_schema.as_ref())
+}
+
+/// Overlay pay-time `--param` (raw strings) onto the persisted quote args,
+/// coercing each override to the tool's declared JSON type when an `inputSchema`
+/// is available (else kept as a string). Pay-time values override the persisted
+/// ones. Pure (no I/O) so the precedence contract is unit-testable.
+fn apply_param_overrides(
+    known: &serde_json::Map<String, Value>,
+    biz_params: &[(String, String)],
+    input_schema: Option<&Value>,
+) -> Value {
+    let mut merged = known.clone();
+    let overrides: serde_json::Map<String, Value> = biz_params
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    if let Value::Object(coerced) = crate::mcp_client::coerce_arguments(&overrides, input_schema) {
+        for (k, v) in coerced {
+            merged.insert(k, v);
+        }
+    }
+    Value::Object(merged)
 }
 
 /// Parameters for `fetch_session` (mirrors the MCP `payment_session` tool).
@@ -3454,7 +3511,7 @@ mod tests {
         );
         let st = mcp_replay_state(&url);
         let (status, _tx, result, error, _receipt) =
-            replay_mcp(&st, "premium_tool", "dummy-signature").await;
+            replay_mcp(&st, "premium_tool", "dummy-signature", &[]).await;
         let _ = handle.join();
         assert_eq!(status, "success", "200 must map to success");
         assert!(error.is_none(), "success must carry no error: {error:?}");
@@ -3467,7 +3524,7 @@ mod tests {
             spawn_mock_mcp_server("402 Payment Required", r#"{"status":"settling"}"#, None);
         let st = mcp_replay_state(&url);
         let (status, _tx, result, error, _receipt) =
-            replay_mcp(&st, "premium_tool", "dummy-signature").await;
+            replay_mcp(&st, "premium_tool", "dummy-signature", &[]).await;
         let _ = handle.join();
         assert_eq!(status, "pending", "402 must map to non-terminal pending");
         assert!(
@@ -3488,7 +3545,7 @@ mod tests {
             spawn_mock_mcp_server("500 Internal Server Error", r#"{"error":"boom"}"#, None);
         let st = mcp_replay_state(&url);
         let (status, _tx, result, error, _receipt) =
-            replay_mcp(&st, "premium_tool", "dummy-signature").await;
+            replay_mcp(&st, "premium_tool", "dummy-signature", &[]).await;
         let _ = handle.join();
         assert_eq!(status, "failed", "non-2xx/non-402 must map to failed");
         assert!(
@@ -3498,5 +3555,33 @@ mod tests {
         // replay_mcp never returns Err — a failed non-200 still yields a tuple,
         // so the caller keeps the state and the signed authorization survives.
         assert_eq!(result["error"].as_str(), Some("boom"));
+    }
+
+    #[test]
+    fn pay_time_param_overrides_persisted_and_coerces() {
+        // Persisted (quote-time) args: q="hello", keep="x".
+        let mut known = serde_json::Map::new();
+        known.insert("q".into(), json!("hello"));
+        known.insert("keep".into(), json!("x"));
+        // Pay-time --param overrides q and adds n; schema types n as integer.
+        let biz = vec![
+            ("q".to_string(), "world".to_string()),
+            ("n".to_string(), "5".to_string()),
+        ];
+        let schema = json!({ "properties": { "n": { "type": "integer" } } });
+        let merged = apply_param_overrides(&known, &biz, Some(&schema));
+        // Pay-time value wins; untouched persisted key survives; new int coerced.
+        assert_eq!(merged["q"], json!("world"));
+        assert_eq!(merged["keep"], json!("x"));
+        assert_eq!(merged["n"], json!(5));
+    }
+
+    #[test]
+    fn empty_pay_time_params_keep_persisted_args() {
+        let mut known = serde_json::Map::new();
+        known.insert("q".into(), json!("hello"));
+        // No schema, no overrides → persisted args unchanged.
+        let merged = apply_param_overrides(&known, &[], None);
+        assert_eq!(merged, json!({ "q": "hello" }));
     }
 }

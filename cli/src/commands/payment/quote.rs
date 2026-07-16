@@ -36,7 +36,7 @@ const PROBE_TIMEOUT_SECS: u64 = 10;
 /// `payment quote` `data` shape (stability contract — see `cli_command_spec.md`).
 #[derive(Serialize)]
 struct QuoteData {
-    #[serde(rename = "paymentId")]
+    #[serde(rename = "paymentId", skip_serializing_if = "String::is_empty")]
     payment_id: String,
     #[serde(rename = "needsConfirm")]
     needs_confirm: bool,
@@ -58,22 +58,15 @@ struct QuoteData {
     decoded_challenge: DecodedChallenge,
     #[serde(rename = "walletError", skip_serializing_if = "Option::is_none")]
     wallet_error: Option<String>,
-}
-
-/// MCP discovery output (`cli_command_spec.md` Output A) — the tool catalog
-/// only. Deliberately a minimal shape (no `paymentId`) so `jq '.data.paymentId'`
-/// is `null` in discovery mode (AC-2). Discovery is free and persists nothing.
-#[derive(Serialize)]
-struct McpDiscoveryData {
-    #[serde(rename = "mcpTools")]
+    /// MCP discovery catalog (`cli_command_spec.md` Output A). Populated only in
+    /// MCP discovery mode; omitted (empty) for REST and paid MCP quotes so the
+    /// REST output stays byte-identical.
+    #[serde(rename = "mcpTools", default, skip_serializing_if = "Vec::is_empty")]
     mcp_tools: Vec<McpTool>,
-}
-
-/// MCP free (unpaid / first-N-free) `tools/call` output (Output C) — the tool
-/// result only. Emitted when a `tools/call` returns a non-402 result.
-#[derive(Serialize)]
-struct McpFreeData {
-    result: Value,
+    /// Free / first-N-free MCP `tools/call` result (Output C). Populated only
+    /// when an unpaid tool returns a result; omitted otherwise.
+    #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
+    mcp_result: Option<Value>,
 }
 
 /// CLI handler: run the quote and print the always-on envelope. Classified
@@ -124,6 +117,8 @@ pub async fn fetch_quote(
                 alternatives: vec![],
                 decoded_challenge: free_challenge(),
                 wallet_error: None,
+                mcp_tools: vec![],
+                mcp_result: None,
             };
             return serde_json::to_value(data).map_err(Into::into);
         }
@@ -147,12 +142,15 @@ pub async fn fetch_quote(
 
 /// MCP-transport quote (arch §3/§5). Assumes the caller already decided this is
 /// MCP mode. Handshakes via `McpClient`, then:
-/// - `tool = None` → **discovery**: `tools/list` → Output A (`mcpTools[]` only).
+/// - `tool = None` → **discovery**: `tools/list` → Output A. Returns the unified
+///   `QuoteData` envelope (needsConfirm:false + summary + nextStep) carrying the
+///   tool catalog in `mcpTools[]`, isomorphic with a REST quote.
 /// - `tool = Some(name)` → validate against the catalog, coerce `--param` from
 ///   the tool's `inputSchema`, and `tools/call`: a 402 reuses the REST
 ///   challenge→candidate→state path (Output B, byte-identical) with the
 ///   `mcp_tool` marker + coerced arguments persisted; a non-402 result is a free
-///   tool (Output C).
+///   tool (Output C) returned as a `QuoteData` envelope (needsConfirm:false +
+///   summary) carrying the tool result in `result`.
 async fn fetch_quote_mcp(
     url: &str,
     known_params: &Map<String, Value>,
@@ -163,8 +161,37 @@ async fn fetch_quote_mcp(
     let tools = client.list_tools().await?;
 
     let Some(name) = tool else {
-        // Discovery: return the catalog only (no paymentId).
-        return serde_json::to_value(McpDiscoveryData { mcp_tools: tools }).map_err(Into::into);
+        // Discovery (Output A): the unified QuoteData envelope carrying the tool
+        // catalog plus machine-readable next-step guidance. No paymentId
+        // (discovery is free, persists nothing) so `jq '.data.paymentId'` is
+        // null (AC-2); `mcpTools[]` carries the catalog.
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        let summary = format!(
+            "MCP server exposes {} tool(s): {}",
+            tools.len(),
+            names.join(", ")
+        );
+        let next_step = format!(
+            "onchainos payment quote {url} --tool <name> [--param k=v] — pick a tool to trigger its 402"
+        );
+        let data = QuoteData {
+            payment_id: String::new(),
+            needs_confirm: false,
+            summary,
+            next_step,
+            accepts: vec![],
+            known_params: known_params.clone(),
+            merchant_body: String::new(),
+            missing_params: vec![],
+            param_plan: vec![],
+            candidates: vec![],
+            alternatives: vec![],
+            decoded_challenge: free_challenge(),
+            wallet_error: None,
+            mcp_tools: tools,
+            mcp_result: None,
+        };
+        return serde_json::to_value(data).map_err(Into::into);
     };
 
     // Validate the requested tool against the discovered catalog.
@@ -187,8 +214,28 @@ async fn fetch_quote_mcp(
             build_quote_from_challenge(url, coerced_params, "POST", &header, body, Some(name)).await
         }
         ToolCallOutcome::Free(result) => {
-            // Non-402 result → a free / first-N-free tool. Output C.
-            serde_json::to_value(McpFreeData { result }).map_err(Into::into)
+            // Non-402 result → a free / first-N-free tool (Output C). Unified
+            // QuoteData envelope (needsConfirm:false + summary explaining no
+            // payment is required) carrying the tool result in `result`.
+            let summary = format!("MCP tool '{name}' returned a result — no payment required");
+            let data = QuoteData {
+                payment_id: String::new(),
+                needs_confirm: false,
+                summary,
+                next_step: String::new(),
+                accepts: vec![],
+                known_params: known_params.clone(),
+                merchant_body: String::new(),
+                missing_params: vec![],
+                param_plan: vec![],
+                candidates: vec![],
+                alternatives: vec![],
+                decoded_challenge: free_challenge(),
+                wallet_error: None,
+                mcp_tools: vec![],
+                mcp_result: Some(result),
+            };
+            serde_json::to_value(data).map_err(Into::into)
         }
     }
 }
@@ -304,6 +351,8 @@ async fn build_quote_from_challenge(
         alternatives,
         decoded_challenge,
         wallet_error,
+        mcp_tools: vec![],
+        mcp_result: None,
     };
     serde_json::to_value(data).map_err(Into::into)
 }
@@ -1058,6 +1107,66 @@ mod tests {
         let id = new_payment_id("https://m.example/x", 1000);
         assert!(id.starts_with("pay_"));
         assert_eq!(id.len(), 4 + 24);
+    }
+
+    /// A helper mirroring how discovery/free build the unified envelope, used to
+    /// assert the serialized MCP-output contract without a live endpoint.
+    fn envelope(mcp_tools: Vec<McpTool>, mcp_result: Option<Value>, summary: &str) -> Value {
+        let data = QuoteData {
+            payment_id: String::new(),
+            needs_confirm: false,
+            summary: summary.to_string(),
+            next_step: String::new(),
+            accepts: vec![],
+            known_params: Map::new(),
+            merchant_body: String::new(),
+            missing_params: vec![],
+            param_plan: vec![],
+            candidates: vec![],
+            alternatives: vec![],
+            decoded_challenge: free_challenge(),
+            wallet_error: None,
+            mcp_tools,
+            mcp_result,
+        };
+        serde_json::to_value(data).unwrap()
+    }
+
+    #[test]
+    fn discovery_envelope_is_isomorphic_and_omits_payment_id() {
+        // Discovery: unified QuoteData with mcpTools[], needsConfirm:false, and
+        // NO paymentId (null via skip-when-empty, preserving AC-2).
+        let tools = vec![McpTool {
+            name: "premium".into(),
+            description: None,
+            input_schema: None,
+        }];
+        let v = envelope(tools, None, "MCP server exposes 1 tool(s): premium");
+        assert!(
+            v.get("paymentId").is_none(),
+            "discovery must not carry paymentId (jq .data.paymentId == null): {v}"
+        );
+        assert_eq!(v["needsConfirm"], serde_json::json!(false));
+        assert_eq!(v["mcpTools"][0]["name"], serde_json::json!("premium"));
+        // The free-only `result` field is omitted in discovery.
+        assert!(v.get("result").is_none());
+    }
+
+    #[test]
+    fn free_tool_envelope_carries_result_without_payment_id() {
+        // Free tool: unified QuoteData with the tool result in `result`,
+        // needsConfirm:false, and no paymentId / no mcpTools.
+        let result = serde_json::json!({"content": [{"type": "text", "text": "ok"}]});
+        let v = envelope(
+            vec![],
+            Some(result.clone()),
+            "MCP tool 'free_tool' returned a result — no payment required",
+        );
+        assert!(v.get("paymentId").is_none());
+        assert_eq!(v["needsConfirm"], serde_json::json!(false));
+        assert_eq!(v["result"], result);
+        // The discovery-only `mcpTools` field is omitted (empty) for a free tool.
+        assert!(v.get("mcpTools").is_none());
     }
 
     #[test]

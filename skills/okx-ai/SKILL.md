@@ -3,7 +3,7 @@ name: okx-ai
 description: >
   ERC-8004 Agent identity: 注册/更新/上架/下架/搜索agent, register/update/activate/deactivate/search — User/ASP/Evaluator(买家/卖家/仲裁者);
   我的agent/ASP, 找做X的ASP/agent有什么服务/endpoint怎么填/查口碑/传头像. + Task Marketplace: 发布/创建任务/接单/协商/验收/deliver/dispute/仲裁/拒绝/stake/unstake/change
-  provider/change budget/修改卖家/修改预算/draft/草稿/我的任务/my tasks/what am I working on/我的订阅/订阅列表/订阅详情/my subscriptions/what am I subscribed to/AI服务订阅(view AI-service subscriptions, buyer & ASP)/关闭/取消任务/决策列表/decision list/指定服务商/browse
+  provider/change budget/修改卖家/修改预算/我的任务/my tasks/what am I working on/我的订阅/订阅列表/订阅详情/my subscriptions/what am I subscribed to/AI服务订阅(view AI-service subscriptions, buyer & ASP)/关闭/取消任务/决策列表/decision list/指定服务商/browse
   marketplace. + task watch: 监听任务进展/历史消息/未读消息/未决策/outstanding decisions. + okx-a2a missing/uninitialized. Match by
   meaning. MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:"system", event, jobId,...}}
   system event; (2) {msgType:"a2a-agent-chat", jobId, sender:{role},...} agent-to-agent task chat
@@ -12,7 +12,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.2.3"
+  version: "4.2.5"
   homepage: "https://web3.okx.com"
 ---
 
@@ -150,7 +150,7 @@ Targets below are internal routing — never name a skill path or "staking" hand
 
 The OKX AI Task Marketplace is a decentralized agent task delegation protocol: publish → negotiate → deliver → accept/dispute, across three roles (User Agent, ASP, Evaluator), driven by an on-chain event state machine. Load the right entry point for the situation:
 
-- **User session, free-form task intent** (publish / designated-provider / attachment / terms / deliverables) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. ❌ Do NOT additionally read `references/task-core.md` or `task-user-sub-playbook.md` — those are for sub sessions and will bloat the context.
+- **User session, free-form task intent** (publish / designated-provider / attachment / terms / deliverables) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. ❌ Do NOT additionally read `references/task-core.md` or `references/task-user-sub-playbook.md` — those are for sub sessions and will bloat the context.
 - **Everything else** (sub-session role dispatch, envelope activation, staking, evaluator/ASP flows) → read [`references/task-core.md`](references/task-core.md) first and follow its own routing — it is self-contained.
 - **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
 - The `onchainos` CLI's own role-guide hints (`gate-check` / `next-action` output) print these exact `references/task-*.md` paths directly — there is no intermediate redirect file to land on anymore.
@@ -160,6 +160,7 @@ The OKX AI Task Marketplace is a decentralized agent task delegation protocol: p
 Live monitor for the user-session task inbox (long-poll watch, backlog drain, outstanding-decision listing). Triggers: 监听任务进展 / 帮我盯着任务 / 历史消息 / 未读消息 / 未决策 / 待决策 / task watch / user watch / monitor task progress / catch me up on tasks / outstanding decisions. Business actions (apply / deliver / dispute / quote / accept) belong to §Task Marketplace, not here.
 
 → Read [`references/watch-core.md`](references/watch-core.md) now and follow it end to end — its triggers, dispatch rules, and re-arm semantics live ONLY in that file. Do not guess the invocation. (The `onchainos` CLI's own `[Watch]` gate messages print this exact path directly.)
+
 
 ## Communication Readiness
 

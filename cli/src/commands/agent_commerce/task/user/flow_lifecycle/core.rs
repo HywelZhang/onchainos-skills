@@ -1102,9 +1102,18 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
             return job_submitted_escrow(&patched_ctx);
         }
         let _ = deliverables::write_review_marker(job_id);
+        // FB1: point the LLM at the SAME directory recovery actually scans
+        // (`a2a_spool_dir()` == `env::temp_dir()`). Hardcoding `/tmp` broke macOS:
+        // launchd sets `TMPDIR` to `/var/folders/…`, so `temp_dir() != /tmp` — the
+        // file was written to `/tmp` while recovery scanned `/var/folders`, so
+        // `oldest_spool_candidate` always came up empty (Linux CI never reproduced it
+        // because unset `TMPDIR` makes `temp_dir()` == `/tmp`). Emitting the resolved
+        // spool dir keeps write-dir == scan-dir on every platform.
+        let spool_dir = a2a_spool_dir();
+        let spool_dir = spool_dir.display();
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
-             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}_<deliveryId>.json` (or `/tmp/a2a_deliver_{job_id}.json` when the delivery carries no auto-trade block), then re-trigger:\n\
+             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `{spool_dir}/a2a_deliver_{job_id}_<deliveryId>.json` (or `{spool_dir}/a2a_deliver_{job_id}.json` when the delivery carries no auto-trade block), then re-trigger:\n\
              `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
              Otherwise, end this turn and wait.\n"
         );

@@ -128,8 +128,16 @@ Read `data`:
 - `recommended:null` on every candidate ⇒ no balance anywhere; present the list and ask.
 
 ### Step A3 — Confirm (round 2)  ⚠ MANDATORY — never skip
-Use `AskUserQuestion` to confirm: currency/amount, the chosen scheme, and any
-`missingParams`. Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
+Use `AskUserQuestion` to confirm the **full** payment terms — the same set Step A4
+shows, so the buyer always sees where the money goes before signing:
+- **Network**: `chainName` (`chainId`) of the chosen candidate
+- **Token / amount**: `amountHuman` `tokenSymbol` (for the `upto` scheme this is an
+  authorization cap — render it as "up to `amountHuman`", not a fixed charge)
+- **Scheme**: the chosen candidate's `scheme`
+- **Pay to**: the challenge `recipient` (the `payTo` address)
+- any `missingParams`
+
+Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
 (NOT its position in `candidates[]`/`alternatives[]`) so the CLI signs exactly the
 entry the user approved. **You MUST stop and confirm before paying — do not auto-pay.**
 
@@ -286,7 +294,7 @@ For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v
 > This resource requires payment via the **OKX Agent Payments Protocol**:
 > - **Network**: `<chain name>` (`<option.network>`)
 > - **Token**: `<token symbol>` (`<option.asset>`)
-> - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals)
+> - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals). For the `upto` scheme this amount is an authorization **cap**, not a fixed charge — render it as "up to `<amount>`" / "最多 `<amount>`".
 > - **Pay to**: `<option.payTo>`
 > - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >

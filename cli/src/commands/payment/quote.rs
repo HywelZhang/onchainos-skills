@@ -797,9 +797,17 @@ fn build_summary(
         .find(|c| c.recommended == Some(true))
         .or_else(|| candidates.first())
     {
+        // `upto` authorizes a spend cap, not a fixed charge — say "up to" so
+        // the buyer never reads the amount as a guaranteed deduction (the
+        // WWW-Authenticate path already distinguishes this with "per request").
+        let verb = if pick.scheme.eq_ignore_ascii_case("upto") {
+            "Will pay up to"
+        } else {
+            "Will pay"
+        };
         format!(
-            "Will pay {} {} ({}, {})",
-            pick.amount_human, pick.token_symbol, pick.scheme, pick.chain_name
+            "{} {} {} ({}, {})",
+            verb, pick.amount_human, pick.token_symbol, pick.scheme, pick.chain_name
         )
     } else {
         format!("Will pay {}", challenge.amount_human)
@@ -999,6 +1007,32 @@ mod tests {
         assert!(err.to_string().starts_with(TOKEN_INVALID_INPUT));
         let err2 = parse_params(&["=v".into()]).unwrap_err();
         assert!(err2.to_string().starts_with(TOKEN_INVALID_INPUT));
+    }
+
+    #[test]
+    fn build_summary_marks_upto_as_a_cap() {
+        let cand = |scheme: &str| Candidate {
+            scheme: scheme.into(),
+            accepts_index: 0,
+            chain_id: "196".into(),
+            chain_name: "X Layer".into(),
+            is_mainnet: true,
+            token_symbol: "USDC".into(),
+            amount: "50000".into(),
+            amount_human: "0.05".into(),
+            has_balance: true,
+            recommended: Some(true),
+        };
+        // `upto` is a spend cap → "up to" wording so 0.05 isn't read as fixed.
+        assert_eq!(
+            build_summary(&[cand("upto")], &[], &free_challenge()),
+            "Will pay up to 0.05 USDC (upto, X Layer)"
+        );
+        // Fixed-charge schemes keep the plain wording.
+        assert_eq!(
+            build_summary(&[cand("exact")], &[], &free_challenge()),
+            "Will pay 0.05 USDC (exact, X Layer)"
+        );
     }
 
     #[test]

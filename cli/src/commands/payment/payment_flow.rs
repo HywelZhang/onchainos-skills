@@ -1364,9 +1364,15 @@ pub fn rank_candidates(candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Candi
     });
 
     if !multi {
-        // Single candidate card: best entry recommended, no alternatives.
+        // Single-scheme card: recommend the best entry only when it is
+        // actually payable. When the buyer has no balance for it, leave
+        // recommended:null (mirrors the multi-scheme "all zero balance → no
+        // auto-pick" guard below) so the CLI never recommends a candidate the
+        // buyer can't afford — the confirmation card would otherwise wave a
+        // buyer through to sign/settle before the shortfall surfaces. No
+        // alternatives either way.
         let mut best = ranked.remove(0);
-        best.recommended = Some(true);
+        best.recommended = if best.has_balance { Some(true) } else { None };
         return (vec![best], vec![]);
     }
 
@@ -1454,16 +1460,28 @@ fn pay_confirming(
             .or_else(|| st.candidates.first()),
     };
     let message = if let Some(c) = picked {
+        // `upto` authorizes a cap, not a fixed charge — mirror build_summary's
+        // "up to" wording at the fund-moving confirm gate too.
+        let verb = if c.scheme.eq_ignore_ascii_case("upto") {
+            "Will pay up to"
+        } else {
+            "Will pay"
+        };
         format!(
-            "Will pay {} {} ({}, {}) to {} - confirm to proceed",
-            c.amount_human, c.token_symbol, c.scheme, c.chain_name, ch.recipient
+            "{} {} {} ({}, {}) to {} - confirm to proceed",
+            verb, c.amount_human, c.token_symbol, c.scheme, c.chain_name, ch.recipient
         )
     } else if let Some(a) = selected_index.and_then(|i| st.accepts.get(i)) {
         // Fallback: no matching candidate, but the raw accepts entry (which the
         // signer will use) is authoritative. Describe it directly.
+        let verb = if a.scheme.eq_ignore_ascii_case("upto") {
+            "Will pay up to"
+        } else {
+            "Will pay"
+        };
         format!(
-            "Will pay {} {} ({}) to {} - confirm to proceed",
-            a.amount, a.asset, a.scheme, ch.recipient
+            "{} {} {} ({}) to {} - confirm to proceed",
+            verb, a.amount, a.asset, a.scheme, ch.recipient
         )
     } else {
         format!(
@@ -2087,10 +2105,22 @@ mod tests {
     }
 
     #[test]
-    fn rank_single_scheme_no_trigger() {
-        let (c, alt) = rank_candidates(vec![cand("exact", "USDC", "5000", true, false)]);
+    fn rank_single_scheme_with_balance_recommends() {
+        // Single trigger scheme AND the buyer can pay → auto-pick it.
+        let (c, alt) = rank_candidates(vec![cand("exact", "USDC", "5000", true, true)]);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].recommended, Some(true));
+        assert!(alt.is_empty());
+    }
+
+    #[test]
+    fn rank_single_scheme_zero_balance_recommends_null() {
+        // Single trigger scheme but the buyer has no balance for it → do NOT
+        // recommend a candidate they can't afford; leave recommended:null so
+        // the confirmation card surfaces the shortfall instead of auto-picking.
+        let (c, alt) = rank_candidates(vec![cand("exact", "USDC", "5000", true, false)]);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].recommended, None);
         assert!(alt.is_empty());
     }
 

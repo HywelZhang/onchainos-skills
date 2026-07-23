@@ -39,7 +39,7 @@ Do **not** apply the free-text Routing table below to any of these — envelope 
 
 ## Pre-flight (BLOCKING — the FIRST thing you do, before ANY `onchainos` command)
 
-**Before the first `onchainos` command in this conversation you MUST open and follow `../okx-agentic-wallet/_shared/preflight.md` (if that file does not exist, follow `_shared/preflight.md` instead).** Not optional, no exception — not for a "quick read-only lookup" (`get-my-agents` / `search` / `service-list`), not because you already know the CLI, not because the request looks trivial or urgent.
+**Before the first `onchainos` command in this conversation you MUST open and follow `../okx-agentic-wallet/_shared/preflight.md`.** Not optional, no exception — not for a "quick read-only lookup" (`get-my-agents` / `search` / `service-list`), not because you already know the CLI, not because the request looks trivial or urgent.
 
 - **Session-once means *per session*.** A new conversation resets it. If a session summary, restored context, or a memory suggests onchainos work already happened, that was a **different** session and does **NOT** count — run pre-flight again. Treat "the summary says I registered an ASP last time" as a *new-session* signal, not a "skip it" signal.
 - **No `onchainos` call from memory first.** Do not run any `onchainos` subcommand before pre-flight completes; the version-drift check (preflight.md step 4) is REQUIRED even when steps 1–3 are skipped.

@@ -555,39 +555,22 @@ mod tests {
         assert!(TestCli::try_parse_from(["test", "user-reject"]).is_err());
     }
 
-    // ── create-task visibility ──────────────────────────────────────
+    // ── create-task: --visibility removed (public task type deleted) ────
 
     #[test]
-    fn cli_create_visibility_defaults_to_private() {
-        let cli = TestCli::parse_from([
+    fn cli_create_rejects_visibility_flag() {
+        // `--visibility` no longer exists on create-task; supplying it is a clap parse error (AC-3).
+        // All other required flags are provided so `--visibility` is the sole cause of the error.
+        assert!(TestCli::try_parse_from([
             "test", "create",
             "--description", "a long enough description text",
             "--budget", "10", "--max-budget", "20",
             "--currency", "USDT",
-        ]);
-        match cli.cmd {
-            super::super::TaskCommand::Create { visibility, .. } => {
-                assert_eq!(visibility, 1);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn cli_create_visibility_public() {
-        let cli = TestCli::parse_from([
-            "test", "create",
-            "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+            "--payment-mode", "escrow",
             "--visibility", "0",
-        ]);
-        match cli.cmd {
-            super::super::TaskCommand::Create { visibility, .. } => {
-                assert_eq!(visibility, 0);
-            }
-            _ => panic!("expected Create"),
-        }
+        ]).is_err());
     }
 
     #[test]
@@ -599,23 +582,75 @@ mod tests {
             "--currency", "USDT",
             "--provider", "agent-1",
             "--service-id", "svc-1",
+            "--payment-mode", "escrow",
             "--service-params", "参数：x=1",
             "--service-token-address", "0xAddr",
             "--service-token-amount", "5.0",
         ]);
         match cli.cmd {
             super::super::TaskCommand::Create {
-                provider, service_id, service_params,
-                service_token_address, service_token_amount, visibility, ..
+                provider, service_id, payment_mode, service_params,
+                service_token_address, service_token_amount, ..
             } => {
-                assert_eq!(provider.as_deref(), Some("agent-1"));
-                assert_eq!(service_id.as_deref(), Some("svc-1"));
+                assert_eq!(provider, "agent-1");
+                assert_eq!(service_id, "svc-1");
+                assert_eq!(payment_mode, "escrow");
                 assert_eq!(service_params.as_deref(), Some("参数：x=1"));
                 assert_eq!(service_token_address.as_deref(), Some("0xAddr"));
                 assert_eq!(service_token_amount.as_deref(), Some("5.0"));
-                assert_eq!(visibility, 1);
             }
             _ => panic!("expected Create"),
         }
+    }
+
+    #[test]
+    fn cli_create_requires_provider_service_id_payment_mode() {
+        // --provider, --service-id, --payment-mode are all required for create-task
+        // (oli-feedback). Omitting them is a clap parse error.
+        let base = [
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+        ];
+        // Missing all three required flags.
+        assert!(TestCli::try_parse_from(base).is_err());
+        // Missing --payment-mode only.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+        ]).is_err());
+        // Missing --service-id only.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--payment-mode", "escrow",
+        ]).is_err());
+        // Missing --provider only.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--service-id", "svc-1",
+            "--payment-mode", "escrow",
+        ]).is_err());
+        // All three present -> parses OK.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+            "--payment-mode", "escrow",
+        ]).is_ok());
     }
 }

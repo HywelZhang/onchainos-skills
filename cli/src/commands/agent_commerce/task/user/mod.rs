@@ -8,7 +8,6 @@
 //! - `complete.rs`     — confirm completion (scene 5)
 //! - `reject.rs`       — reject deliverable (scene 6)
 //! - `close.rs`        — close task (scene 7) + claim arbitration reward
-//! - `changepublic.rs` — set to Public (scene 8)
 //!
 //! Shared:
 //! - `query.rs`        — read-only queries (status, list, pay)
@@ -16,7 +15,6 @@
 mod accept;
 mod asp_ops;
 pub(crate) mod attachments;
-mod changepublic;
 mod claim_auto_refund;
 mod close;
 mod complete;
@@ -31,6 +29,7 @@ pub(crate) mod negotiate;
 mod query;
 mod reject;
 mod reject_apply;
+pub(crate) mod subscription_ops;
 mod x402_flow;
 
 use anyhow::Result;
@@ -57,21 +56,21 @@ pub enum TaskCommand {
         currency: String,
         #[arg(long)]
         title: Option<String>,
-        /// Designated provider agentId (skip asp-match; negotiate or x402-accept with this provider directly).
+        /// Designated provider agentId (required; skip asp-match; negotiate or x402-accept with this provider directly).
         #[arg(long)]
-        provider: Option<String>,
+        provider: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)]
         endpoint: Option<String>,
-        /// Payment mode to set at creation time (escrow / x402). When omitted the task is created with paymentMode=0 (unset).
+        /// Payment mode to set at creation time (required; escrow / x402).
         #[arg(long = "payment-mode")]
-        payment_mode: Option<String>,
-        /// Service ID from asp/match response
+        payment_mode: String,
+        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
-        service_id: Option<String>,
+        service_id: String,
         /// Service input parameters (natural language string)
         #[arg(long = "service-params")]
         service_params: Option<String>,
@@ -81,9 +80,6 @@ pub enum TaskCommand {
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
-        /// Task visibility: 1 = private (requires --provider), 0 = public
-        #[arg(long, default_value = "1")]
-        visibility: i32,
     },
     /// Search matching ASPs (pre-publish or post-publish)
     AspMatch {
@@ -184,12 +180,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client converts private task to public listing
-    SetPublic {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// ASP generates payment invoice after provider_applied
     Payment {
         job_id: String,
@@ -262,6 +252,13 @@ pub enum TaskCommand {
     ListAttachments {
         job_id: String,
     },
+    /// List the logged-in agent's subscriptions.
+    MySubscriptions {
+        role: subscription_ops::SubscriptionRole,
+        status: Option<i32>,
+    },
+    /// Show one subscription's detail.
+    SubscribeDetail { sub_id: String },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -271,11 +268,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount, visibility } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
                 title, provider, attachments, endpoint, payment_mode,
-                service_id, service_params, service_token_address, service_token_amount, visibility,
+                service_id, service_params, service_token_address, service_token_amount,
             }).await,
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
             asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref(), &format).await,
@@ -304,8 +301,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reject::handle_reject(&mut client, &job_id, &reason).await,
         TaskCommand::Close { job_id, agent_id } =>
             close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::SetPublic { job_id, agent_id } =>
-            changepublic::handle_set_public(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::RejectApply { job_id, agent_id } =>
@@ -326,6 +321,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::MySubscriptions { role, status } => {
+            subscription_ops::handle_my_subscriptions(&mut client, role, status).await
+        }
+        TaskCommand::SubscribeDetail { sub_id } => {
+            subscription_ops::handle_subscribe_detail(&mut client, &sub_id).await
+        }
 
     }
 }

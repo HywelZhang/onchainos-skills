@@ -184,6 +184,8 @@ const REDACT_FULL: &[&str] = &[
     // Note: grant caps (--max-buy / --max-sell) and grant-check --amount are policy
     // caps, not secrets, and are deliberately NOT redacted.
     "--autotrade",
+    // File-deliverable decryption secret passed to `okx-a2a file download`.
+    "--secret",
     // Two-phase payment: the base64 402 payload and free-form
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
@@ -391,7 +393,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
         AgentCommand::Close { .. } => "close".into(),
-        AgentCommand::SetPublic { .. } => "set-public".into(),
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::RejectApply { .. } => "reject-apply".into(),
@@ -400,13 +401,13 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::CacheRating { .. } => "cache-rating".into(),
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
+        AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
+        AgentCommand::SubscribeDetail { .. } => "subscribe-detail".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
         AgentCommand::AspClaimRewards { .. } => "asp-claim-rewards".into(),
 
         // Task (provider)
-        AgentCommand::RecommendTask { .. } => "recommend-task".into(),
-        AgentCommand::FindJobs => "find-jobs".into(),
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
@@ -414,7 +415,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
-        AgentCommand::ContactUser { .. } => "contact-user".into(),
         // Sub-groups
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
         // Evaluator (flat — 见 agent_commerce/mod.rs)
@@ -448,7 +448,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
-        AgentCommand::TaskSearch { .. } => "task-search".into(),
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),

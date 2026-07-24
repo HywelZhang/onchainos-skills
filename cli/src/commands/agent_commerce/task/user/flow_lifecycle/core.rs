@@ -443,20 +443,10 @@ pub(crate) async fn run_recovered_autotrade(
 
 // --- Execution stage ----------------------------------------------------
 
-pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool, visibility: i64) -> String {
+pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-
-    // visibility: 0 = public, 1 = private. The "make public" option only makes sense
-    // when the task is currently private; otherwise drop the option and renumber close.
-    let is_private = visibility == 1;
-    let close_label = if is_private { "D" } else { "C" };
-    let option_public_line = if is_private {
-        "C. Make the task public so any qualified ASP can apply\n         "
-    } else {
-        ""
-    };
 
     let mut client = TaskApiClient::new();
 
@@ -469,27 +459,13 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
             );
         }
 
-        // R5: public task → mark-failed + auto-advance (no decision card)
-        if visibility == 0 {
-            if let Some(p) = ctx.prefetched {
-                if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                    let _ = super::super::negotiate::mark_failed(job_id, pa);
-                }
-            }
-            let _ = super::super::negotiate::clear_designated_provider(job_id);
-            let auto = super::super::flow_negotiate::provider_conversation_auto_consume(ctx).await;
-            return format!(
-                "[provider_applied/over_budget] ✅ Rejected (over budget).\n\n{auto}"
-            );
-        }
-
         let short_id = ctx.short_id;
         let user_content = format!(
             "[Job {short_id} — you are the User Agent] The ASP's quote exceeded the maximum budget for this task. The apply has been rejected automatically.\n\n\
              What would you like to do next?\n\
              A. Browse the ASP list\n\
              B. Designate a specific ASP by agentId\n\
-             {option_public_line}{close_label}. Close the task"
+             C. Close the task"
         );
         let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
             job_id, "user", agent_id, None,
@@ -516,25 +492,6 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
             "**End this turn** and wait for the `job_accepted` system notification.".to_string()
         }
         Err(e) => {
-            // R18: distinguish balance error vs other errors
-            let err_lower = e.to_string().to_lowercase();
-            let is_balance_err = err_lower.contains("insufficient") || err_lower.contains("balance");
-
-            if visibility == 0 && !is_balance_err {
-                // Public + non-balance error: mark-failed + auto-advance
-                if let Some(p) = ctx.prefetched {
-                    if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                        let _ = super::super::negotiate::mark_failed(job_id, pa);
-                    }
-                }
-                let _ = super::super::negotiate::clear_designated_provider(job_id);
-                let auto = super::super::flow_negotiate::provider_conversation_auto_consume(ctx).await;
-                return format!(
-                    "[provider_applied/confirm_accept] failed: {e}\n\n{auto}"
-                );
-            }
-
-            // Balance error or private: existing cli_failed behavior
             format!(
                 "[provider_applied/confirm_accept] confirm-accept failed in-process: {e}\n\n\
                  See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
@@ -1080,7 +1037,6 @@ pub(crate) async fn deliverable_received_cli(
                 max_budget: None,
                 provider_agent_id: if provider_id.is_empty() { None } else { Some(provider_id.to_string()) },
                 user_agent_id: None,
-                visibility: None,
                 status: Some(2),
                 deliverable: None,
                 service_id: None,
@@ -1946,7 +1902,6 @@ Part B continues
             max_budget: None,
             provider_agent_id: Some("558".to_string()),
             user_agent_id: None,
-            visibility: None,
             status: Some(2),
             deliverable: Some(PreFetchedDeliverable {
                 path: "/tmp/deliverable.txt".to_string(),

@@ -156,7 +156,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token/amount from task detail API)"),
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
-            format!("  onchainos agent set-public {job_id}     # Convert to public task"),
             format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
@@ -322,41 +321,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::JobCreated => {
             super::flow_negotiate::job_created(&ctx).await
         }
-        Event::Other(ref s) if s == "provider_conversation" => {
-            let vis = prefetched.and_then(|p| p.visibility).unwrap_or(1);
-            if vis == 0 {
-                super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
-            } else {
-                // Private task: ASPs cannot discover or contact-user for private tasks.
-                // Silently ignore unexpected provider_conversation; end turn.
-                "Private task — unexpected provider contact. No action needed. End turn.\n".to_string()
-            }
-        }
-        Event::Other(ref s) if s == "provider_conversation_reject" => {
-            let gid = message
-                .and_then(|m| m.get("groupId"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if gid.is_empty() {
-                format!("[Error] provider_conversation_reject requires `groupId` in --message. Call:\n\
-                         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId>\"}}'\n")
-            } else {
-                super::flow_negotiate::provider_conversation_reject_cli(&ctx, gid)
-            }
-        }
-        Event::Other(ref s) if s == "provider_conversation_pick" => {
-            let dp_id = message
-                .and_then(|m| m.get("provider"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if dp_id.is_empty() {
-                format!("[Error] provider_conversation_pick requires `provider` in --message. Call:\n\
-                         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
-            } else {
-                let _ = super::negotiate::save_designated_provider(job_id, dp_id);
-                super::flow_negotiate::provider_conversation_pick_cli(job_id, agent_id, &short_id, dp_id, title_display, prefetched).await
-            }
-        }
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
             let dp_id = super::negotiate::get_designated_provider(job_id).ok().flatten().unwrap_or_default();
             if dp_id.is_empty() {
@@ -370,25 +334,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 }
             }
         }
-        Event::Other(ref s) if s == "auto_advance_next" => {
-            let failed_provider = message
-                .and_then(|m| m.get("failedProvider"))
-                .and_then(|v| v.as_str());
-            if let Some(fp) = failed_provider {
-                let _ = super::negotiate::mark_failed(job_id, fp);
-            }
-            // Safety: ensure designated-provider is cleared even if mark_failed
-            // was skipped (missing failedProvider field from LLM)
-            let _ = super::negotiate::clear_designated_provider(job_id);
-            super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
-        }
-        Event::JobVisibilityChanged => {
-            let visibility = message
-                .and_then(|m| m.get("visibility"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(1);
-            super::flow_negotiate::job_visibility_changed(&ctx, visibility)
-        }
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
         Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx).await,
 
@@ -398,20 +343,10 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 .and_then(|m| m.get("overMostBudget"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let visibility = message
-                .and_then(|m| m.get("visibility"))
-                .and_then(|v| v.as_i64())
-                .or_else(|| prefetched.and_then(|p| p.visibility))
-                .unwrap_or(1);
-            super::flow_lifecycle::provider_applied(&ctx, over_most_budget, visibility).await
+            super::flow_lifecycle::provider_applied(&ctx, over_most_budget).await
         }
         Event::JobProviderReject => {
-            let visibility = message
-                .and_then(|m| m.get("visibility"))
-                .and_then(|v| v.as_i64())
-                .or_else(|| prefetched.and_then(|p| p.visibility))
-                .unwrap_or(1);
-            super::flow_negotiate::provider_reject(&ctx, visibility).await
+            super::flow_negotiate::provider_reject(&ctx).await
         }
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
         Event::DeliverableReceived => {
@@ -435,7 +370,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
         Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx).await,
-        Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx).await,
         Event::AttachmentAdded => {
             super::flow_lifecycle::attachment_added_cli(&ctx, message)
         }
@@ -538,28 +472,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20`--user-content` template (canonical English; localize per user's language):\n\
                      \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All matched ASPs have been tried; no match found. Choose next step:\n\
                      \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
-                     \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
-                     \x20\x20\x20\x20C. Close the job — cancel and refund\n\
-                     \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
-                     \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more ASPs, list the task publicly, or cancel.\"\n"
+                     \x20\x20\x20\x20B. Close the job — cancel and refund\n\
+                     \x20\x20• **Close** — typical intents: B / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, see more ASPs, or cancel.\"\n"
                     )
                 },
-                "provider_pending" => format!(
-                    "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
-                     The push was a single-ASP accept/reject card. Extract `[asp: <agentId>]` and `[groupId: <gid>]` from the `--llm-content` block above. **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Accept** — typical intents: 1 / `accept` / `接受` / `yes` / `好` / `可以`. Run:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<asp agentId from llm-content>\"}}'\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
-                     \x20\x20• **Reject** — typical intents: 2 / `reject` / `拒绝` / `no` / `不` / `换一个` / `next`. Run:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId from llm-content>\"}}'\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options if none remain).\n\n\
-                     If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"Please reply 1 (accept) or 2 (reject).\"\n"
-                ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => {
                     // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
                     // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
@@ -618,9 +535,8 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
                      \x20\x20\x20\x20If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
-                     \x20\x20• **B — Make public** — typical intents: B / 选B / `public` / `公开`. Action: `onchainos agent set-public {job_id}`.\n\
-                     \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=make public  C=close the job\".\n"
+                     \x20\x20• **B — Close** — typical intents: B / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=close the job\".\n"
                     )
                 },
                 "negotiate_over_budget" => {
@@ -633,7 +549,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                     };
                     format!(
                     "[User decision relay] source_event=`negotiate_over_budget`, user's verbatim reply: `{reply}`\n\n\
-                     The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view ASP list` not `make public`). **Semantic mapping** — decide:\n\n\
+                     The push was during negotiation when the ASP's quote exceeded max_budget — offers `view ASP list` / specify another ASP / close. **Semantic mapping** — decide:\n\n\
                      \x20\x20• **A — View ASP list** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\").\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `B 864` / `指定 864` / `换 864`). Action (switch-asp flow):\n\
                      \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
@@ -695,12 +611,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                     };
                     format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
-                     {scene_lead} Options: A=browse / B=designate / (C=make public if private) / last=close. **Semantic mapping**:\n\n\
+                     {scene_lead} Options: A=browse / B=designate / C=close. **Semantic mapping**:\n\n\
                      \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized**.\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId** (e.g. `B 864` / `指定 864`). Action (switch-asp flow):\n\
                      {switch_asp}\
-                     \x20\x20• **C — Make public** — typical intents: C / 选C / `public` / `公开`. Action: `onchainos agent set-public {job_id}`. (Harmless no-op if already public.)\n\
-                     \x20\x20• **Close** (last option, C or D) — typical intents: `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     \x20\x20• **C — Close** — typical intents: C / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized**.\n"
                 )},
                 "x402_price_mismatch" => format!(
@@ -752,8 +667,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20`--user-content` template (translate to user's language):\n\
                      \x20\x20\x20\x20The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which exceeds your max budget (<maxBudget>). Choose next step:\n\
                      \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
-                     \x20\x20\x20\x20B. Make the job public\n\
-                     \x20\x20\x20\x20C. Close the job\n\
+                     \x20\x20\x20\x20B. Close the job\n\
                      \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
                      \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. If both values > 0 AND `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
                      \x20\x20\x20\x20Push a `x402_ir_price_confirm` decision card:\n\
@@ -899,12 +813,12 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     // Skip every preamble (the IRON RULEs do not apply) and version_prefix
     // (no `okx-a2a xmtp-send` call to validate).
     let use_cli_minimal = matches!(event_str,
-            "job_created" | "provider_conversation_pick" |
+            "job_created" |
             "negotiate_reply" |
             "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "job_completed" |
             "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
-            "close" | "set_public"
+            "close"
         );
     let core = if use_cli_minimal
         || event_str == "create_task"

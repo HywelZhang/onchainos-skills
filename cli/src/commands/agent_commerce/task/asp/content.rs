@@ -27,11 +27,11 @@
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
 /// pushed via `onchainos agent user-notify --content <text>`. The playbook does NOT
 /// auto-start negotiation; it ends the turn and waits for the User Agent to re-route
-/// (designate a specific service / list the task publicly). Localize before sending.
+/// (designate a specific service). Localize before sending.
 pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
     format!(
         "[Designated Task — Skipped] Job {job_id} — the User Agent designated you as the ASP without pinning a specific service.\n\
-         \x20\x20No action taken; waiting for the User Agent to re-route with a specific service or list the task publicly."
+         \x20\x20No action taken; waiting for the User Agent to re-route with a specific service."
     )
 }
 
@@ -91,7 +91,7 @@ pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
     format!(
         "[Designated Task Declined] Job {job_id} — the designated assignment was declined.\n\
          \x20\x20- Reason: {reason}\n\
-         \x20\x20The User Agent can now re-route to another ASP or list the task publicly."
+         \x20\x20The User Agent can now re-route to another ASP."
     )
 }
 

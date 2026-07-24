@@ -81,24 +81,22 @@ pub enum AgentCommand {
         #[arg(long = "max-budget")] max_budget: f64,
         #[arg(long)] currency: String,
         #[arg(long)] title: Option<String>,
-        /// Specified provider agentId (skip asp-match, negotiate directly with this provider or x402 accept)
-        #[arg(long)] provider: Option<String>,
+        /// Specified provider agentId (required; skip asp-match, negotiate directly with this provider or x402 accept)
+        #[arg(long)] provider: String,
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)] endpoint: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")] attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (escrow / x402).
-        #[arg(long = "payment-mode")] payment_mode: Option<String>,
-        /// Service ID from asp/match response
-        #[arg(long = "service-id")] service_id: Option<String>,
+        /// Payment mode to set at creation time (required; escrow / x402).
+        #[arg(long = "payment-mode")] payment_mode: String,
+        /// Service ID from asp/match response (required)
+        #[arg(long = "service-id")] service_id: String,
         /// Service input parameters (natural language string)
         #[arg(long = "service-params")] service_params: Option<String>,
         /// Service token contract address
         #[arg(long = "service-token-address")] service_token_address: Option<String>,
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")] service_token_amount: Option<String>,
-        /// Task visibility: 1 = private (requires --provider), 0 = public
-        #[arg(long, default_value = "1")] visibility: i32,
         /// Accepted for compatibility but ignored — user identity is auto-resolved.
         #[arg(long = "agentId", alias = "agent-id", hide = true)]
         _agent_id: Option<String>,
@@ -164,13 +162,31 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// List "tasks I have" (accepted / published by me). **Do not** use this to find new jobs — use `recommend-task` / `find-jobs` for that.
+    /// List "tasks I have" (accepted / published by me).
     #[command(visible_alias = "list")]
     Tasks {
         #[arg(long)] status: Option<String>,
         #[arg(long, default_value = "1")]  page: u32,
         #[arg(long, default_value = "20")] limit: u32,
         #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// List the logged-in agent's AI-service subscriptions (buyer or provider view).
+    #[command(name = "my-subscriptions")]
+    MySubscriptions {
+        /// Subscription viewpoint: buyer (subscriber) or provider (ASP).
+        #[arg(long, value_enum, default_value_t = task::user::subscription_ops::SubscriptionRole::Buyer)]
+        role: task::user::subscription_ops::SubscriptionRole,
+        /// Optional status filter (subscription status enum), applied client-side.
+        #[arg(long)]
+        status: Option<i32>,
+    },
+
+    /// Show the full detail of one subscription by id.
+    #[command(name = "subscribe-detail")]
+    SubscribeDetail {
+        /// Subscription id (path parameter; the response primary key is jobId).
+        sub_id: String,
     },
 
     /// Aggregated non-terminal tasks across **all agents under the current
@@ -286,14 +302,6 @@ pub enum AgentCommand {
         agent_id: Option<String>,
     },
 
-    /// Convert private task to public listing
-    #[command(name = "set-public")]
-    SetPublic {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-
     /// Provider generates payment invoice after provider_applied
     Payment {
         job_id: String,
@@ -365,18 +373,6 @@ pub enum AgentCommand {
     },
 
     // ── Task system (Provider) ──────────────────────────────────────────────
-    /// Provider fetches recommended Public tasks matching their skill
-    #[command(name = "recommend-task")]
-    RecommendTask {
-        /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
-
-    /// Start accepting jobs: call `agent get-my-agents` to pull all online provider agents and loop recommend-task over each
-    #[command(name = "find-jobs")]
-    FindJobs,
-
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
         job_id: String,
@@ -451,20 +447,6 @@ pub enum AgentCommand {
         /// Optional decline reason recorded by the backend.
         #[arg(long, default_value = "")] reason: String,
     },
-
-    /// Provider cold-start: contact the User Agent in one shot.
-    /// Combines `okx-a2a session create` (group + session create) + `okx-a2a xmtp-send`
-    /// (the canonical self-intro / interest opener) so the LLM only runs ONE
-    /// command instead of chaining two CLI calls. Opener content is fixed;
-    /// no customization flag.
-    #[command(name = "contact-user")]
-    ContactUser {
-        job_id: String,
-        /// Provider agentId (required)
-        #[arg(long = "agent-id")] agent_id: String,
-    },
-
-
 
     /// Client claims auto-refund after provider timeout
     #[command(name = "claim-auto-refund")]
@@ -747,7 +729,7 @@ pub enum AgentCommand {
         /// Full system event envelope as a JSON string — the entire `message` object.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
         /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
-        /// (plus any task-detail fields like `paymentMode` / `visibility` /
+        /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
         #[arg(long)]
@@ -822,56 +804,6 @@ pub enum AgentCommand {
         agent_ids: Vec<String>,
     },
 
-    /// Search the public task marketplace (POST /priapi/v1/aieco/task/job/search).
-    ///
-    /// All filters are optional; passing none returns the whole pool paginated.
-    ///
-    /// Examples:
-    ///   onchainos agent task-search --keyword "audit smart contract" --status 0 --order-by amount_asc
-    ///   onchainos agent task-search --amount-min 10 --amount-max 500 --page 1 --page-size 20
-    #[command(name = "task-search")]
-    TaskSearch {
-        /// Caller agent ID (sent as `agenticId` header).
-        #[arg(long = "agent-id")]
-        agent_id: String,
-
-        /// Full-text keyword (matches title / description).
-        #[arg(long)]
-        keyword: Option<String>,
-
-        /// Minimum task budget (human-readable, decimal-applied).
-        #[arg(long = "amount-min")]
-        amount_min: Option<f64>,
-
-        /// Maximum task budget (human-readable, decimal-applied).
-        #[arg(long = "amount-max")]
-        amount_max: Option<f64>,
-
-        /// Task statuses to include (repeatable / comma-separated). 0=CREATED, 1=ACCEPTED, 2=SUBMITTED, ...
-        #[arg(long, value_delimiter = ',')]
-        status: Vec<i32>,
-
-        /// Sort order — one of `create_time_desc` / `create_time_asc` / `amount_desc` / `amount_asc`.
-        #[arg(long = "order-by")]
-        order_by: Option<task::common::search::TaskSearchOrderBy>,
-
-        /// Filter by create time (unix milliseconds) — lower bound.
-        #[arg(long = "create-time-start")]
-        create_time_start: Option<i64>,
-
-        /// Filter by create time (unix milliseconds) — upper bound.
-        #[arg(long = "create-time-end")]
-        create_time_end: Option<i64>,
-
-        /// Page (1-based). Defaults to 1.
-        #[arg(long, default_value_t = 1)]
-        page: u32,
-
-        /// Page size. Defaults to 20.
-        #[arg(long = "page-size", default_value_t = 20)]
-        page_size: u32,
-    },
-
     /// Terminal-state session cleanup: cancel pending decisions + output
     /// `okx-a2a session delete` instructions. Replaces the multi-step
     /// manual cleanup in terminal playbooks.
@@ -926,13 +858,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
             title, provider, endpoint, attachments, payment_mode,
-            service_id, service_params, service_token_address, service_token_amount, visibility,
+            service_id, service_params, service_token_address, service_token_amount,
             _agent_id: _,
         } => task::user::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
                 title, provider, endpoint, attachments, payment_mode,
-                service_id, service_params, service_token_address, service_token_amount, visibility,
+                service_id, service_params, service_token_address, service_token_amount,
             }, ctx,
         ).await,
 
@@ -959,6 +891,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Tasks { status, page, limit, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_USER).await
+        }
+
+        AgentCommand::MySubscriptions { role, status } => {
+            task::user::run_task(T::MySubscriptions { role, status }, ctx).await
+        }
+
+        AgentCommand::SubscribeDetail { sub_id } => {
+            task::user::run_task(T::SubscribeDetail { sub_id }, ctx).await
         }
 
         AgentCommand::ActiveTasks { role, include_terminal } => {
@@ -997,9 +937,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Close { job_id, agent_id } =>
             task::user::run_task(T::Close { job_id, agent_id }, ctx).await,
-
-        AgentCommand::SetPublic { job_id, agent_id } =>
-            task::user::run_task(T::SetPublic { job_id, agent_id }, ctx).await,
 
         AgentCommand::Payment { job_id, agent_id } =>
             task::user::run_task(T::Payment { job_id, agent_id }, ctx).await,
@@ -1094,15 +1031,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Profile { agent_id } =>
             task::common::handle_profile(&agent_id).await,
 
-        // ── Provider task commands ──────────────────────────────────
-        AgentCommand::RecommendTask { agent_id } => {
-            let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::asp::recommend_task::handle_recommend_task(&mut c, &agent_id).await
-        }
-
-        AgentCommand::FindJobs =>
-            task::asp::find_jobs::handle_find_jobs().await,
-
         AgentCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             task::asp::run_provider(
                 task::asp::ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id },
@@ -1155,12 +1083,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::asp::run_provider(
                 task::asp::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
             ).await,
-
-        AgentCommand::ContactUser { job_id, agent_id } =>
-            task::asp::run_provider(
-                task::asp::ProviderCommand::ContactUser { job_id, agent_id }, ctx,
-            ).await,
-
 
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Dispute(c) =>
@@ -1382,18 +1304,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             } else {
                 role.clone()
             };
-            // Event-level role override: some events are always user-side
-            // regardless of the agent's registered role (e.g. a provider-role
-            // agent that also publishes tasks as a user).
-            let resolved_role = match event.as_str() {
-                "provider_conversation" | "provider_conversation_pick" | "provider_conversation_reject" => {
-                    if resolved_role != "user" && DEBUG_LOG {
-                        eprintln!("[next-action] event-level override: {event} forces role user (was {resolved_role})");
-                    }
-                    "user".to_string()
-                }
-                _ => resolved_role,
-            };
 
             if DEBUG_LOG {
                 eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
@@ -1561,34 +1471,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::WakeupNotify { agent_ids } =>
             chat::run(chat::ChatCommand::WakeupNotify { agent_ids }, ctx).await,
 
-        AgentCommand::TaskSearch {
-            agent_id,
-            keyword,
-            amount_min,
-            amount_max,
-            status,
-            order_by,
-            create_time_start,
-            create_time_end,
-            page,
-            page_size,
-        } => {
-            let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::common::search::handle_task_search(
-                &mut client,
-                &agent_id,
-                keyword.as_deref(),
-                amount_min,
-                amount_max,
-                &status,
-                order_by.as_ref(),
-                create_time_start,
-                create_time_end,
-                page,
-                page_size,
-            )
-            .await
-        }
         AgentCommand::TaskInProgress { agent_ids } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::in_progress::handle_in_progress(&mut client, &agent_ids).await
@@ -1697,13 +1579,12 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         "deliverable_received",
         "job_provider_reject",
         "attachment_added",
-        "provider_conversation",
     ];
 
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
     const SKIP_ALL_EVENTS: &[&str] = &[
         "create_task",
-        "approve_review", "reject_review", "user_attachment_received", "close", "set_public", "job_user_reject",
+        "approve_review", "reject_review", "user_attachment_received", "close", "job_user_reject",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",

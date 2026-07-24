@@ -93,12 +93,15 @@ When the user names a third-party DApp/protocol as the destination of an action,
 
 **Quick tiebreaker vs `okx-defi`** on "stake" / "unstake" / "质押": both skills' descriptions contain these words for different reasons — `okx-defi`'s is DeFi-protocol yield staking (Aave/Lido/PancakeSwap/etc.), `okx-ai`'s is evaluator-role staking or a task's own stake/escrow amount. If the message names or implies a task/jobId, an Evaluator role, or "for this task" → `okx-ai`. If it's about earning yield on a token/protocol with no task context → `okx-defi`. If genuinely ambiguous, ask which one the user means.
 
+**Quick tiebreaker vs okx-agent-payments-protocol** on "订阅"/"subscription": AI-service/agent-marketplace context (ASP / Agent#N / 服务方 / 任务 / 试用期) → okx-ai (agent my-subscriptions / subscribe-detail). Resource-URL / 402 / paymentId / Permit2 context → okx-agent-payments-protocol (payment subscription …). Genuinely ambiguous → ask which one the user means.
+
 ## IMPORTANT: Always Load Skill Before Executing Commands
 
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
 - **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → read `skills/okx-ai/references/task-user-playbook.md` ONLY. ❌ Do NOT additionally read `task-core.md` or `task-user-sub-playbook.md` — those are for sub sessions and will bloat the context
+- User asks for their subscriptions (我的订阅 / 订阅列表 / 订阅详情 / my subscriptions — AI-service context, no 402/URL) → read skills/okx-ai/references/task-user-playbook.md §My Subscriptions first
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-ai/references/task-core.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → read `skills/okx-ai/references/watch-core.md` first (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
 - User mentions swap/buy/sell/trade → read `skills/okx-agentic-wallet/SKILL.md` first (swap domain — `references/swap.md`)

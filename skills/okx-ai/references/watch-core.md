@@ -202,5 +202,5 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
   - `[Deliverable Received]` / `[x402 Deliverable Received]` / `[x402 交付物已接收]` — payment settled + deliverable in hand, but the real terminal marker is `[x402 Job Completed]`.
-  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[Visibility Changed]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
+  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
   - **Rule of thumb**: if the marker is not in the literal list under §Stop condition, it is NOT a stop signal — re-enter watch unconditionally.

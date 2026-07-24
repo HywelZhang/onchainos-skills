@@ -4,7 +4,7 @@ description: "Use when an agent hits HTTP 402 / payment-required, or the user me
 license: MIT
 metadata:
   author: okx
-  version: "4.3.1"
+  version: "4.4.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -53,7 +53,9 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 
 - **EN**: `402`, payment required, `x402`, `x402Version`, `X-PAYMENT`, `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `WWW-Authenticate: Payment`, `permit2`, `upto`, metered billing, open / close / topup / settle channel, voucher, session payment, `channelId`, `channel_id`, `paymentId`, `a2a_`, create payment link, payment link, payment status
 - subscribe / subscription / recurring payment / recurring charge / "pay every month" / cancel subscription / upgrade plan / downgrade plan → `period` scheme (see `references/subscription.md`)
+  - ⚠️ **EXCEPT** when the message contains jobId / subId / ASP / provider / trial / renew / deliver / periodCount / subscription task — those are Agent Commerce subscription tasks (monthly service agreements), route to `okx-ai` instead.
 - The same trigger vocabulary applies to its equivalents in any other language (e.g. Chinese subscription / recurring-billing terms route to the `period` scheme the same way).
+- Carve-out: AI-service/ASP subscriptions from the agent marketplace (context: ASP / Agent#N / 任务 / 试用期 / 服务方; NO 402 offer / resource URL / paymentId) belong to okx-ai (onchainos agent my-subscriptions / subscribe-detail), NOT the period scheme. For a bare "my subscriptions / 我的订阅" with neither signal, ask the user once instead of assuming period.
 
 Any close / topup / settle / voucher / refund near a `channel_id` or session context = MPP mid-session op → `references/session.md`.
 

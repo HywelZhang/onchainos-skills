@@ -233,9 +233,7 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if doh.is_proxy() {
-            builder = builder.user_agent(doh.doh_user_agent());
-        }
+        builder = builder.user_agent(doh.doh_user_agent());
 
         Ok(Self {
             http: builder.build()?,
@@ -269,9 +267,7 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if doh.is_proxy() {
-            builder = builder.user_agent(doh.doh_user_agent());
-        }
+        builder = builder.user_agent(doh.doh_user_agent());
 
         Ok(Self {
             http: builder.build()?,
@@ -425,6 +421,11 @@ impl ApiClient {
     /// - `Content-Type: application/json`
     /// - `ok-client-version: <version>`
     /// - `Ok-Access-Client-type: agent-cli`
+    /// - `platform: agent-cli`
+    /// - `device-id: <id>` — best-effort; present iff a valid ASCII device id is
+    ///   available (spec §6.2). `get_cached_device_id()` is a pure memory read
+    ///   after first init (spec §9.2); an invalid value or `None` silently skips
+    ///   the header so this fn stays synchronous and infallible (spec §3.2).
     pub(crate) fn anonymous_headers() -> reqwest::header::HeaderMap {
         use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
         let mut map = HeaderMap::new();
@@ -437,6 +438,12 @@ impl ApiClient {
             "Ok-Access-Client-type",
             HeaderValue::from_static("agent-cli"),
         );
+        map.insert("platform", HeaderValue::from_static("agent-cli"));
+        if let Some(id) = crate::device_id::get_cached_device_id() {
+            if let Ok(val) = HeaderValue::from_str(id) {
+                map.insert("device-id", val);
+            }
+        }
         map
     }
 
@@ -515,9 +522,7 @@ impl ApiClient {
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if self.doh.is_proxy() {
-            builder = builder.user_agent(self.doh.doh_user_agent());
-        }
+        builder = builder.user_agent(self.doh.doh_user_agent());
         self.http = builder.build()?;
         Ok(())
     }
@@ -1268,11 +1273,9 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    continue;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                continue;
             }
             self.doh.cache_direct_if_needed();
             return self.handle_response(path, resp).await;
@@ -1326,11 +1329,9 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    continue;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                continue;
             }
             self.doh.cache_direct_if_needed();
             return self.handle_response(path, resp).await;
@@ -1379,11 +1380,9 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    continue;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                continue;
             }
             self.doh.cache_direct_if_needed();
             return self.handle_response_raw(path, resp).await;
@@ -1432,11 +1431,9 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    continue;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                continue;
             }
             self.doh.cache_direct_if_needed();
             return self.handle_response_raw(path, resp).await;
@@ -2095,6 +2092,22 @@ mod tests {
     }
 
     #[test]
+    fn platform_header_agent_cli_on_all_modes() {
+        // `platform: agent-cli` mirrors `Ok-Access-Client-type`: carried on
+        // every request regardless of auth mode (anonymous / JWT / AK).
+        for h in [
+            ApiClient::anonymous_headers(),
+            ApiClient::jwt_headers("tok"),
+            ApiClient::ak_headers("k", "p", "ts", "s"),
+        ] {
+            assert_eq!(
+                h.get("platform").expect("platform").to_str().unwrap(),
+                "agent-cli"
+            );
+        }
+    }
+
+    #[test]
     fn jwt_headers_content_type_json() {
         let h = ApiClient::jwt_headers("tok");
         assert_eq!(
@@ -2203,6 +2216,95 @@ mod tests {
         assert!(h.get("authorization").is_none());
         // AK mode shares anonymous_headers base so has Ok-Access-Client-type
         assert!(h.get("ok-access-client-type").is_some());
+    }
+
+    // ── anonymous headers / device-id (spec §6.2) ─────────────────────────────
+
+    /// §B.3 sandbox: lock `home::TEST_ENV_MUTEX`, point `ONCHAINOS_HOME` at a
+    /// fresh per-test temp dir under `target/test_tmp/`, run `f`, then clean up.
+    /// The lock survives a poisoned mutex (`into_inner`) so one failing sibling
+    /// test does not cascade-poison the rest. Mirrors `device_id.rs`'s helper.
+    fn with_temp_home<F: FnOnce()>(name: &str, f: F) {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir: std::path::PathBuf = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(format!("client_{name}"));
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        f();
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Regression: the four static headers are still present with their exact
+    /// values (spec §6.2 — existing headers must remain unchanged).
+    #[test]
+    fn anonymous_headers_static_regression() {
+        let h = ApiClient::anonymous_headers();
+        assert_eq!(
+            h.get("content-type")
+                .expect("content-type")
+                .to_str()
+                .unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            h.get("ok-client-version")
+                .expect("ok-client-version")
+                .to_str()
+                .unwrap(),
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(
+            h.get("ok-access-client-type")
+                .expect("ok-access-client-type")
+                .to_str()
+                .unwrap(),
+            "agent-cli"
+        );
+        assert_eq!(
+            h.get("platform").expect("platform").to_str().unwrap(),
+            "agent-cli"
+        );
+    }
+
+    /// Presence: in a temp home, `anonymous_headers()` carries the `device-id`
+    /// header whose value equals the memoized `get_cached_device_id()` and
+    /// passes the §A.5 validity shape (64-char sha256 hex or 36-char UUIDv4,
+    /// ASCII alphanumeric or `-`). Both reads hit the same `OnceLock`, so the
+    /// comparison is deterministic.
+    #[test]
+    fn anonymous_headers_includes_device_id() {
+        with_temp_home("anonymous_headers_includes_device_id", || {
+            let expected = crate::device_id::get_cached_device_id();
+            let h = ApiClient::anonymous_headers();
+            let actual = h.get("device-id").map(|v| v.to_str().unwrap());
+            assert_eq!(actual, expected);
+
+            // §A.5 validity shape when the header is present.
+            if let Some(id) = actual {
+                let len = id.len();
+                assert!(len == 64 || len == 36);
+                assert!(id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+            }
+        });
+    }
+
+    /// Best-effort / no-panic: `anonymous_headers()` returns a `HeaderMap` and
+    /// never panics regardless of device-id state (spec §3.2 — no `Err` path).
+    #[test]
+    fn anonymous_headers_never_panics() {
+        with_temp_home("anonymous_headers_never_panics", || {
+            let h = ApiClient::anonymous_headers();
+            // Static headers are always present; the call did not panic.
+            assert!(h.get("content-type").is_some());
+        });
     }
 
     // ── HMAC sign ─────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ description: "Use when an agent hits HTTP 402 / payment-required, or the user me
 license: MIT
 metadata:
   author: okx
-  version: "4.2.5"
+  version: "4.3.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -73,6 +73,7 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 | 402 + `WWW-Authenticate: Payment`, `intent="session"` (or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
 | paymentId / `a2a_…` link / create-or-check payment link | `payment a2a-pay create/pay/status` | `references/a2a_charge.md` |
 | A2MCP / 402 endpoint URL, "pay this endpoint", entry A/B payment node | `payment quote <url> [--param k=v ...] [--method GET \| POST \| ...]` | (inline — Path A) |
+| A2MCP **MCP-transport** endpoint (URL ends `/mcp` or `/sse`, returns `text/event-stream` / JSON-RPC, or you have a tool name) | `payment quote <url>` (discovery → `mcpTools[]`) → `payment quote <url> --tool <name> --param k=v` (trigger 402) → `payment pay --payment-id <id> --yes` | `references/a2mcp-mcp.md` |
 | User confirmed the quoted payment (currency/amount/scheme chosen) | `payment pay --payment-id <id> [--selected-index <n>] --yes` | (inline — Path A) |
 | Need to decode a `PAYMENT-RESPONSE` header or a charge receipt | `payment decode-receipt (--header <b64> \| --receipt <json>)` | (inline — read-only) |
 
@@ -109,6 +110,16 @@ candidates, and writes a `paymentId`.
 > response → `endpoint_unreachable` instead of the payment challenge. (The paid replay
 > still uses `outputSchema.method` regardless — this flag only fixes the initial probe.)
 
+> **MCP-transport A2MCP (`tools/call`-gated).** If `payment quote` returns `data.mcpTools[]`
+> (the endpoint is MCP-type: URL ends `/mcp`|`/sse`, or replied `text/event-stream` / JSON-RPC),
+> the paywall is at the tool-invocation layer, not the bare URL. **Read `references/a2mcp-mcp.md`**
+> and follow it: pick a tool from `mcpTools[]` per the user's intent (use `AskUserQuestion` if
+> ambiguous), assemble `--param key=value` from the tool's `inputSchema`, and re-run
+> `payment quote <url> --tool <name> --param …` to trigger the 402 and land a `paymentId`. Then
+> resume the normal Step A3 confirm → Step A4 `payment pay --payment-id <id> --yes`. Do NOT
+> hand-write JSON-RPC or parse SSE — the CLI does the `initialize → tools/list → tools/call`
+> handshake and SSE parsing internally.
+
 Read `data`:
 - `summary` — the human one-liner. `needsConfirm` is always true here.
 - `candidates[]` (with `recommended:true`) and `alternatives[]` — the ranked schemes. Each carries `acceptsIndex` — its position in `accepts[]` (the ranked order differs from `accepts[]`, so never treat a candidate's list position as the index).
@@ -117,8 +128,16 @@ Read `data`:
 - `recommended:null` on every candidate ⇒ no balance anywhere; present the list and ask.
 
 ### Step A3 — Confirm (round 2)  ⚠ MANDATORY — never skip
-Use `AskUserQuestion` to confirm: currency/amount, the chosen scheme, and any
-`missingParams`. Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
+Use `AskUserQuestion` to confirm the **full** payment terms — the same set Step A4
+shows, so the buyer always sees where the money goes before signing:
+- **Network**: `chainName` (`chainId`) of the chosen candidate
+- **Token / amount**: `amountHuman` `tokenSymbol` (for the `upto` scheme this is an
+  authorization cap — render it as "up to `amountHuman`", not a fixed charge)
+- **Scheme**: the chosen candidate's `scheme`
+- **Pay to**: the challenge `recipient` (the `payTo` address)
+- any `missingParams`
+
+Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
 (NOT its position in `candidates[]`/`alternatives[]`) so the CLI signs exactly the
 entry the user approved. **You MUST stop and confirm before paying — do not auto-pay.**
 
@@ -275,7 +294,7 @@ For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v
 > This resource requires payment via the **OKX Agent Payments Protocol**:
 > - **Network**: `<chain name>` (`<option.network>`)
 > - **Token**: `<token symbol>` (`<option.asset>`)
-> - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals)
+> - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals). For the `upto` scheme this amount is an authorization **cap**, not a fixed charge — render it as "up to `<amount>`" / "最多 `<amount>`".
 > - **Pay to**: `<option.payTo>`
 > - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >
@@ -307,7 +326,7 @@ onchainos wallet status
 
 - **Logged in** → Step A6.
 - **Not logged in (`accepts`-based path)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, supports `exact + EIP-3009`, `exact + Permit2`, and `upto` — `aggr_deferred` not supported, requires TEE session key). Don't read files or check env vars until the user picks.
-- **Not logged in (`WWW-Authenticate: Payment` path)** → ask the user to log in via email OTP or AK. **TEE-only — no local-key fallback for this path** (only the `accepts`-based path has one).
+- **Not logged in (`WWW-Authenticate: Payment` path)** → ask the user to log in via `onchainos wallet login`. **TEE-only — no local-key fallback for this path** (only the `accepts`-based path has one).
 
 ## Step A6: Hand off to the scheme/intent reference
 
@@ -342,7 +361,7 @@ If the user says only "I want to pay" without a paymentId — STOP and ask the u
 Both `create` and `pay` require a live wallet session. Run `onchainos wallet status`:
 
 - **Logged in** → proceed (load the reference and follow it).
-- **Not logged in** → ask the user to log in via `onchainos wallet login` or `onchainos wallet login <email>`. **Do NOT sign without a live session.**
+- **Not logged in** → ask the user to log in via `onchainos wallet login`. **Do NOT sign without a live session.**
 
 ## Step B3: Hand off to `references/a2a_charge.md`
 
@@ -379,6 +398,7 @@ After a successful payment + response, suggest conversationally:
 | Just completed | Suggest |
 |---|---|
 | `payment quote` returned `needsConfirm:true` | `AskUserQuestion` to confirm, then `payment pay --payment-id <id> --selected-index <n> --yes` |
+| `payment quote` returned `data.mcpTools[]` (MCP-transport, no `paymentId`) | pick a tool per the user's intent, then `payment quote <url> --tool <name> --param k=v …` to trigger the 402 (see `references/a2mcp-mcp.md`) |
 | `payment pay` returned `status:"success"` | Report `txHash`; if a `PAYMENT-RESPONSE` header is present, `payment decode-receipt --header <b64>` |
 | `payment pay` returned `status:"pending"` | `payment a2a-pay status --payment-id <id> --wait` (a2a) or await the facilitator callback |
 | Successful HTTP 402 replay | Check balance impact via `okx-agentic-wallet`; or make another request to the same resource |

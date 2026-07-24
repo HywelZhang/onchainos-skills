@@ -147,3 +147,12 @@ Triggers:
 🛑 Watch is itself a long-poll — the long-poll IS the wait. Do NOT wrap it in `/loop` / Cron / `sleep` / any scheduler.
 
 ⚠️ **Disambig — "decision list" vs "outstanding decisions"**: `决策列表` / `decision list` → §Decision list above (`pending-decisions-v2 list`, the full queue). `未决策` / `outstanding decisions` → this section (`outdated-list`, only un-`check`ed `decision_request` items).
+
+## Subscriptions (my subscriptions / detail)
+
+| Trigger | Action |
+|---|---|
+| `我的订阅` / `订阅列表` / `我订阅了哪些` / `my subscriptions` / `what am I subscribed to` | `onchainos agent my-subscriptions --role buyer` → render per [`task-user-playbook.md` §My Subscriptions](task-user-playbook.md). User session answers directly (do NOT 6-step forward). |
+| `订阅详情` / `这个订阅的详情` / `subscription detail` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
+
+⚠️ Disambig — `我的订阅` (subscriptions) vs `我的任务` (tasks): subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix.

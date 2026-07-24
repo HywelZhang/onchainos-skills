@@ -397,6 +397,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::CacheRating { .. } => "cache-rating".into(),
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
+        AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
+        AgentCommand::SubscribeDetail { .. } => "subscribe-detail".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
         AgentCommand::AspClaimRewards { .. } => "asp-claim-rewards".into(),

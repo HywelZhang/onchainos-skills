@@ -29,6 +29,7 @@ pub(crate) mod negotiate;
 mod query;
 mod reject;
 mod reject_apply;
+pub(crate) mod subscription_ops;
 mod x402_flow;
 
 use anyhow::Result;
@@ -251,6 +252,13 @@ pub enum TaskCommand {
     ListAttachments {
         job_id: String,
     },
+    /// List the logged-in agent's subscriptions.
+    MySubscriptions {
+        role: subscription_ops::SubscriptionRole,
+        status: Option<i32>,
+    },
+    /// Show one subscription's detail.
+    SubscribeDetail { sub_id: String },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -313,6 +321,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::MySubscriptions { role, status } => {
+            subscription_ops::handle_my_subscriptions(&mut client, role, status).await
+        }
+        TaskCommand::SubscribeDetail { sub_id } => {
+            subscription_ops::handle_subscribe_detail(&mut client, &sub_id).await
+        }
 
     }
 }

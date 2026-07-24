@@ -163,7 +163,7 @@ pub async fn generate_next_action(
     // Per-scene helper — render the pre-fetched task fields inline, or fall back to
     // the "call common context" CLI instruction when prefetched is None / a field is
     // missing. `fields` is the ordered subset of: title / tokenAmount / tokenSymbol /
-    // buyerAgentId / description / paymentMode / visibility / providerAgentId / status /
+    // buyerAgentId / description / paymentMode / providerAgentId / status /
     // serviceId / serviceTokenAddress / serviceTokenAmount / serviceParams.
     // Output goes directly into the playbook where Step 1 used to instruct the LLM
     // to run `onchainos agent common context …`.
@@ -181,7 +181,6 @@ pub async fn generate_next_action(
                     "buyerAgentId" => p.user_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
                     "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
                     "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
-                    "visibility" => p.visibility.map(|v| format!("\x20\x20- visibility: {v} ({})\n", match v { 0 => "public", 1 => "private", _ => "unknown" })),
                     "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
                     "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
                     "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
@@ -606,12 +605,12 @@ pub async fn generate_next_action(
         }
 
         // ─── Scene 1: task is on-chain (job_created) — ASP takes no proactive
-        // action on this raw event. The active discovery paths are `recommend-task` /
-        // `contact-user` (user-driven) and `JobAspSelected` (User Agent-designated). ────
+        // action on this raw event. Designated tasks arrive as a `JobAspSelected`
+        // event (User Agent-designated). ────
         Event::JobCreated => "[System notification] job_created (task is on-chain; no ASP-side action)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n\
-             To accept tasks, use `recommend-task` / `contact-user`; if the User Agent designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
+             Designated tasks arrive via a `job_asp_selected` event when the User Agent designates this ASP.\n".to_string(),
 
         // ─── Scene 1.5: User Agent designated this ASP for a private task ──────────
         Event::JobAspSelected => {
@@ -849,7 +848,6 @@ pub async fn generate_next_action(
 
         // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
-        | Event::JobVisibilityChanged
         | Event::JobPaymentModeChanged => format!(
             "[System notification] {event} (User Agent-side tx receipt; not the ASP's concern)\n\
              [Role] ASP (Agent Service ASP)\n\n\

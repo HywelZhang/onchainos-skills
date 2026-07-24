@@ -65,7 +65,7 @@ When the user asks for **their tasks list without a specific jobId**, the user s
 
 Render as numbered list. ❌ Do NOT 6-step forward. ❌ Do NOT mix with "decision list".
 
-⚠️ **Disambig — `所有任务` vs `我所有任务`**: "所有任务" = marketplace pool (→ `task-search`); "我所有任务" = own tasks (→ this section).
+⚠️ **`我所有任务` / `所有任务`**: both map to the caller's own tasks (→ this section). There is no public marketplace pool to browse.
 
 ---
 
@@ -93,14 +93,12 @@ Triggers (only when there's no active card the user might be answering):
 |-------------------------------------------------------------------------------|---|---|
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
 | Designate an ASP — `指定卖家` / `use the service of Agent X`                      | Gather params → designated-provider flow | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
-| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs`                      | [`task-asp-accept.md`](task-asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | task-asp-accept.md §2 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}`  | `onchainos agent contact-user <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | task-asp-accept.md §3 |
-| Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务`                | `onchainos agent task-search` | [`task-cli-reference.md#task-search`](task-cli-reference.md#task-search) |
+| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}`  | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
 
-⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
-🛑 **ASP constraint**: "take task X" → must run `onchainos agent contact-user <jobId>` (cold-start opener) and wait for user designation; do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
+⚠️ **`接单` / `找任务` / `start accepting jobs` with no jobId**: there is no discovery flow — the ASP is already online, and designated tasks arrive via system events. Reply "ASP is online; designated tasks targeted at it arrive via system events — provide a specific jobId to accept one" and STOP (passive readiness).
+🛑 **ASP constraint**: "take task X" → ASPs do NOT proactively contact users or discover tasks; reply with passive-readiness guidance and wait for the User Agent to designate this ASP on-chain. Do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
 
 ---
 

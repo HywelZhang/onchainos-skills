@@ -215,8 +215,6 @@ pub enum Event {
     JobExpired,
     /// TaskMarket.close on-chain / Close tx result (notifies the initiating client).
     JobClosed,
-    /// TaskMarket.setVisibility on-chain (notifies the initiating client).
-    JobVisibilityChanged,
     /// TaskMarket.setPaymentMode on-chain (notifies the initiating client).
     JobPaymentModeChanged,
 
@@ -304,7 +302,7 @@ pub enum Event {
     /// Envelope shape (per-task fan-out):
     /// `{ agentId, message: { event: "wakeup_notify", source: "system",
     ///                         jobId: <real jobId>, jobStatus: <real status string>,
-    ///                         paymentMode, visibility, ... } }`
+    ///                         paymentMode, ... } }`
     /// Upon receipt the agent **must not** call next-action with `wakeup_notify`;
     /// instead, read `message.jobStatus` to get the real status, then call next-action again with
     /// that as `--event` to resume the script for the current status. See the WakeupNotify arm
@@ -312,7 +310,7 @@ pub enum Event {
     WakeupNotify,
 
     /// An event name returned by the backend that this enum does not recognize (also used to carry
-    /// user-instruction pseudo events: dispute_raise / agree_refund / close / set_public).
+    /// user-instruction pseudo events: dispute_raise / agree_refund / close).
     Other(String),
 }
 
@@ -335,7 +333,6 @@ impl Event {
             "dispute_resolved"          => Event::DisputeResolved,
             "job_expired"               => Event::JobExpired,
             "job_closed"                => Event::JobClosed,
-            "job_visibility_changed"    => Event::JobVisibilityChanged,
             "job_payment_mode_changed"  => Event::JobPaymentModeChanged,
             // Arbitration lifecycle
             "evaluator_selected"        => Event::EvaluatorSelected,
@@ -393,7 +390,6 @@ impl Event {
             Event::DisputeResolved        => "dispute_resolved",
             Event::JobExpired             => "job_expired",
             Event::JobClosed              => "job_closed",
-            Event::JobVisibilityChanged   => "job_visibility_changed",
             Event::JobPaymentModeChanged  => "job_payment_mode_changed",
             Event::EvaluatorSelected      => "evaluator_selected",
             Event::RevealStarted          => "reveal_started",
@@ -428,7 +424,6 @@ impl Event {
         match self {
             Event::JobAutoRefunded    => "auto-refund failed",
             Event::JobClosed          => "close failed",
-            Event::JobVisibilityChanged  => "visibility toggle failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
@@ -486,8 +481,8 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
         Event::JobExpired                                                   => Status::Expired,
         Event::JobClosed                                                    => Status::Close,
-        // visibility/paymentMode are pass-through events that do not change status; not allowed outside of created, so expect Created
-        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Created,
+        // paymentMode is a pass-through event that does not change status; not allowed outside of created, so expect Created
+        Event::JobPaymentModeChanged                                        => Status::Created,
         // Staking / slashing / reward lifecycle is decoupled from task status
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
@@ -598,5 +593,23 @@ mod tests {
         assert_eq!(parse_status_or_event("job_provider_reject"), Event::JobProviderReject);
         assert_eq!(parse_status_or_event("job_user_reject"), Event::JobUserReject);
         assert_eq!(parse_status_or_event("job_asp_selected"), Event::JobAspSelected);
+    }
+
+    #[test]
+    fn job_visibility_changed_is_no_longer_a_live_event() {
+        // The public task type (and its visibility toggle) has been removed, so
+        // `job_visibility_changed` must no longer parse to a dedicated Event variant —
+        // it falls through to Event::Other (and, per parse_status_or_event, since it is
+        // not a status name either, stays Event::Other).
+        assert_eq!(Event::parse("job_visibility_changed"), Event::Other("job_visibility_changed".to_string()));
+        assert_eq!(
+            parse_status_or_event("job_visibility_changed"),
+            Event::Other("job_visibility_changed".to_string())
+        );
+        // The event-string round-trip table contains no JobVisibilityChanged: no live
+        // Event variant serialises back to "job_visibility_changed".
+        for evt in [Event::JobClosed, Event::JobPaymentModeChanged, Event::JobCreated] {
+            assert_ne!(evt.as_str(), "job_visibility_changed");
+        }
     }
 }

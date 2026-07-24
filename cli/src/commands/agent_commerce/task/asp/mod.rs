@@ -67,6 +67,10 @@ pub enum ProviderCommand {
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
+        /// Single-line JSON auto-trade signal (omitting `signalTime`); structure-validated
+        /// and `signalTime`-stamped before any send. Empty ⇒ ordinary delivery.
+        #[arg(long, default_value = "")]
+        autotrade: String,
     },
     /// ASP agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
@@ -186,8 +190,8 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
-        ProviderCommand::Deliver { job_id, file, message: _, deliverable_text, agent_id } =>
-            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await,
+        ProviderCommand::Deliver { job_id, file, message: _, deliverable_text, agent_id, autotrade } =>
+            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id, &autotrade).await,
         ProviderCommand::AgreeRefund { job_id, agent_id } =>
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::AspReject { job_id, agent_id, reason } =>

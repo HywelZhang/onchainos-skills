@@ -47,10 +47,30 @@ pub async fn handle_deliver(
     file: &str,
     deliverable_text: &str,
     agent_id: &str,
+    autotrade: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
+
+    // ── 0. FR-2: structure-validate + stamp the auto-trade signal BEFORE any
+    //         network read, upload, send, or on-chain action. An invalid signal
+    //         aborts the whole delivery here; nothing is sent.
+    use crate::commands::agent_commerce::task::common::autotrade::schema;
+    let autotrade_line: String = if autotrade.is_empty() {
+        String::new()
+    } else {
+        let mut signal: schema::AutoTradeSignal = serde_json::from_str(autotrade)
+            .map_err(|e| anyhow::anyhow!("signal rejected: invalid JSON: {e}"))?;
+        // Stamp signalTime = current ms, overriding any script-reported value.
+        signal.signal_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        // Display of AutoTradeError::Reject already prefixes "signal rejected: ".
+        schema::validate_structure(&signal).map_err(|e| anyhow::anyhow!("{e}"))?;
+        schema::canonical_json(&signal).map_err(|e| anyhow::anyhow!("{e}"))?
+    };
 
     // ── 1. Precondition checks ──────────────────────────────────────────
 
@@ -139,7 +159,10 @@ pub async fn handle_deliver(
         audit::log("cli", "ASP/deliver_file_uploaded", true, Duration::default(),
             Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key)]].concat()), None);
 
-        let msg = super::content::build_file_deliver_message(job_id, &upload);
+        let msg = super::content::with_autotrade_line(
+            super::content::build_file_deliver_message(job_id, &upload),
+            &autotrade_line,
+        );
         if !user_agent_id.is_empty() {
             match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                 Ok(()) => {
@@ -174,7 +197,10 @@ pub async fn handle_deliver(
                 audit::log("cli", "ASP/deliver_long_text_uploaded", true, Duration::default(),
                     Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key), format!("path={tmp_str}")]].concat()), None);
 
-                let msg = super::content::build_file_deliver_message(job_id, &upload);
+                let msg = super::content::with_autotrade_line(
+                    super::content::build_file_deliver_message(job_id, &upload),
+                    &autotrade_line,
+                );
                 if !user_agent_id.is_empty() {
                     match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                         Ok(()) => {
@@ -198,7 +224,10 @@ pub async fn handle_deliver(
                     audit::log("cli", "ASP/deliver_long_text_fallback", false, Duration::default(),
                         Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()), Some(&e.to_string()));
 
-                    let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
+                    let msg = super::content::with_autotrade_line(
+                        super::content::build_text_deliver_message(job_id, deliverable_text),
+                        &autotrade_line,
+                    );
                     if !user_agent_id.is_empty() {
                         match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                             Ok(()) => {
@@ -224,7 +253,10 @@ pub async fn handle_deliver(
             }
         } else {
             // ▸ Short text → inline text-format xmtp
-            let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
+            let msg = super::content::with_autotrade_line(
+                super::content::build_text_deliver_message(job_id, deliverable_text),
+                &autotrade_line,
+            );
             if !user_agent_id.is_empty() {
                 match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                     Ok(()) => {

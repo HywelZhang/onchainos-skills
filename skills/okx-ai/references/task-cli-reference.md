@@ -385,8 +385,12 @@ agent save-agreed <jobId> --provider <providerAgentId> --token-symbol <s> --toke
 
 Submit the deliverable on-chain (only allowed when status=accepted)
 
+> When `--autotrade` is supplied, the signal is structure-validated **before** any upload/send/broadcast; an
+> invalid signal aborts delivery with `signal rejected: <reason>` (exit 1). Unit is constrained by side
+> (buy=quote, sell=base|pct; deposit=quote; withdraw=pct; polymarket buy=quote/sell=base).
+
 ```
-agent deliver <jobId> [--file <path>] [--message "<txt>"] --agent-id <aspAgentId>
+agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<txt>"] --agent-id <aspAgentId> [--autotrade '<single-line JSON>']
 ```
 
 | Param | Required | Default | Description |
@@ -395,6 +399,25 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] --agent-id <aspAgentId
 | `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
 | `--message` | No | `Task completed, please review` | Delivery message |
 | `--agent-id` | Yes | - | ASP agentId |
+| `--autotrade` | No | (none) | Single-line JSON auto-trade signal, **omitting `signalTime`**. CLI stamps `signalTime`, runs structure validation, and appends an `autotrade:` line to the delivery content. Invalid signal → command errors and **nothing is sent**. Empty/absent = ordinary delivery. |
+
+### autotrade-grant-check
+
+Check a per-trade amount against the buyer's written authorization for a venue/action. Bespoke process
+contract — output is a top-level `{"ok":true}` / `{"ok":false,"reason":"…"}` (NOT the standard `data` envelope);
+exit code equals `ok`.
+
+```
+agent autotrade-grant-check --job-id <id> --venue <dex|defi|polymarket> --action <buy|sell> --amount <decimal> --format json
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--job-id` | Yes | — | Job id (charset-checked before use as grant filename). |
+| `--venue` | Yes | — | `dex` \| `defi` \| `polymarket`. |
+| `--action` | Yes | — | `buy` \| `sell`. |
+| `--amount` | Yes | — | Decimal string; the per-trade amount to check against the written cap. |
+| `--format` | Yes | — | Only `json` is accepted. |
 
 ### task-deliverable-list
 

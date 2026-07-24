@@ -17,15 +17,12 @@
 mod agreerefund;
 mod apply;
 mod asp_reject;
-mod contact_user;
 mod content;
 mod deliver;
 mod dispute_confirm;
 mod dispute_raise;
-pub mod find_jobs;
 pub mod flow;
 mod asp_claim;
-pub mod recommend_task;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -89,18 +86,6 @@ pub enum ProviderCommand {
         /// Optional decline reason surfaced to the User Agent's backend record.
         #[arg(long, default_value = "")]
         reason: String,
-    },
-    /// ASP cold-start: create the group with the User Agent + send the
-    /// self-intro/interest opener in one shot. Replaces the old two-step
-    /// (`okx-a2a session create` + `okx-a2a xmtp-send` opener) CLI playbook.
-    /// The opener content is the canonical template — no customization
-    /// flag to keep negotiations consistent and prevent LLM injection of
-    /// price / work content / fabricated `[intent:*]` literals.
-    ContactUser {
-        job_id: String,
-        /// ASP agentId (required).
-        #[arg(long = "agent-id")]
-        agent_id: String,
     },
     /// ASP claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
     ClaimAutoComplete {
@@ -207,8 +192,6 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::AspReject { job_id, agent_id, reason } =>
             asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::ContactUser { job_id, agent_id } =>
-            contact_user::handle_contact_user(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {

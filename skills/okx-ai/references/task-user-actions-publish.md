@@ -28,11 +28,10 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 Display as a single `| Field | Value |` table:
 
 1. Title, Summary, Description, Currency, Budget, Max Budget
-2. (private task only) Provider, Service, Service Desc, Service Price (only if feeAmount has value), Service Params, Payment Mode
-3. (public task) Provider → "Public task — no designated provider", omit Service/Service Desc/Price/Params/Payment Mode rows
-4. If attachments present, add Attachments row
+2. Provider, Service, Service Desc, Service Price (only if feeAmount has value), Service Params, Payment Mode
+3. If attachments present, add Attachments row
 
-**Example — Private task**:
+**Example**:
 
 | Field | Value |
 |---|---|
@@ -51,23 +50,9 @@ Display as a single `| Field | Value |` table:
 
 > Confirm? Once confirmed I will create the task on-chain immediately.
 
-**Example — Public task**:
-
-| Field | Value |
-|---|---|
-| Title | Query Jiangsu Weather |
-| Summary | Query current weather in Jiangsu province including temperature and humidity. |
-| Description | ... |
-| Currency | USDT |
-| Budget | 0.1 |
-| Max Budget | 0.15 |
-| Provider | Public task — no designated provider |
-
-> Confirm? Once confirmed I will create the public task on-chain.
-
 Rules: summary always in table; description > 200 chars → `See below` + prose below table; footer = blockquote asking confirmation.
 
-**Description-change re-match rule**: if the user modifies the **description** at the confirmation form stage, **immediately** re-run `asp-match` with the updated description as `--task-desc` before regenerating the confirmation form. The re-match may return a different recommended service or provider — update the Provider / Service / Service Desc / Service Price / Service Params / Payment Mode fields accordingly. If the re-match returns empty, enter the Option A / B fallback (see §5 Flow step 1).
+**Description-change re-match rule**: if the user modifies the **description** at the confirmation form stage, **immediately** re-run `asp-match` with the updated description as `--task-desc` before regenerating the confirmation form. The re-match may return a different recommended service or provider — update the Provider / Service / Service Desc / Service Price / Service Params / Payment Mode fields accordingly. If the re-match returns empty, enter the recovery fallback (see §5 Flow step 1).
 
 ---
 
@@ -92,10 +77,9 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `S
 **Flow** (run step 1 and gate-check in **parallel** — they are independent):
 1. **Provider validation + service-type determination** (single call replaces the old profile + asp-match two-step):
    `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --agent-id <buyerAgentId> --format json`
-   - Empty `recommendations` → **no matching service found**. Present two recovery options to the user:
-     - **Option A — Revise description**: ask the user to rephrase or adjust the task description. Once the user provides the updated text, **immediately** re-run `asp-match` with the new `--task-desc` (no additional confirmation needed). Loop until a match is found or the user gives up.
-     - **Option B — Switch to public task**: remove the designated provider and publish as a public task (enter §1 without `designatedProvider`).
-     - If the user chooses neither, stop.
+   - Empty `recommendations` → **no matching service found**. Present the following recovery option to the user:
+     - **Revise description**: ask the user to rephrase or adjust the task description. Once the user provides the updated text, **immediately** re-run `asp-match` with the new `--task-desc` (no additional confirmation needed). Loop until a match is found or the user gives up.
+     - If revising does not help, the user may **specify a different provider** (re-run `asp-match` with another `--provider-agent-id`) **or stop**.
    - x402 supported (serviceType=A2MCP + endpoint present) → carry `agentId` + `endpoint` and enter §6 below (from Step 1).
    - Otherwise → A2A (step 2 below).
    - ⚠️ **Do NOT call `okx-a2a session create` directly.**

@@ -24,7 +24,7 @@ Description, Budget, Max budget, Currency: MUST come from user's explicit input 
 | Payment token | --currency | Only USDT / USDG | Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\" |
 | Budget | --budget | number; <=5 decimals; max 10M | Ask user explicitly |
 | Max budget | --max-budget | Required; >= budget; <=5 decimals; max 10M | Ask user explicitly (negotiation price cap) |
-| Designated provider | --provider | optional; provider agentId | Extract if user names one; do not ask proactively |
+| Designated provider | --provider | Required; provider agentId | Extract the provider the user names; a provider is mandatory — if none is given, ask which provider to designate |
 
 ================================================
 Step 2 -- Validation (after all fields collected, before showing the form)
@@ -41,28 +41,15 @@ Step 2 -- Validation (after all fields collected, before showing the form)
 Step 4.5 -- ASP matching (after communication check, before confirmation form)
 ================================================
 
-**A. User designated a provider** (`--provider` is set):
+A provider is always designated (`--provider` is set). Match its registered services:
 
 ```bash
 onchainos agent asp-match --task-desc \"<description>\" --provider-agent-id <agentId> --format json
 ```
 
-- Empty → \"This ASP has no registered services. Choose another or remove designation.\"
+- Empty → \"This ASP has no registered services. Ask the user to designate another provider.\"
 - Non-empty → extract top service: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount`→serviceTokenAmount, `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP).
-- Validate: task `currency` must match `feeTokenSymbol`. Mismatch → ask user to change token or ASP.
-
-**B. User did NOT designate a provider:**
-
-```bash
-onchainos agent asp-match --task-desc \"<description>\"
-```
-
-Show as numbered list: `Agent <id> — security/feedback/sold | Service: <name> (<type>) — <fee> | 「<desc>」`. End turn; wait for reply.
-
-**User reply routing:**
-- Number → select ASP, extract service fields, validate currency match. Pass → Step 4.6. Fail → show error.
-- \"more\" / \"更多\" → `asp-match --page <next>`.
-- Empty list → offer: A. Refine description, B. Designate ASP by agentId, C. Publish as public task (`visibility=0`, skip Step 4.6).
+- Validate: task `currency` must match `feeTokenSymbol`. Mismatch → ask user to change token or designate another provider.
 
 ================================================
 Step 4.6 -- serviceParams inference
@@ -105,7 +92,7 @@ Step 5 -- Show the confirmation form
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| ASP | Agent <providerAgentId> (or \"Public — no designated ASP\" if public) |
+| ASP | Agent <providerAgentId> |
 | Service | <serviceName> |
 | Service desc | <serviceDescription> |
 | Service price | <feeAmount> <feeTokenSymbol> (only show this row if feeAmount has a value) |
@@ -113,7 +100,6 @@ Step 5 -- Show the confirmation form
 | Payment mode | escrow (A2A) or x402 (A2MCP) |
 
 Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user).
-Public task: omit Service/Service desc/Service price/Service params/Payment mode rows.
 
 > Confirm and publish?
 
@@ -127,7 +113,7 @@ Step 5.5 -- Route by user decision (separate turn from Step 5)
 - Edit description → update → **re-run Step 4.5** (new description may match different ASPs) → Step 4.6 → Step 5
 - Edit budget/max-budget/serviceParams → update → Step 5
 - Edit currency → update → re-validate currency consistency → Step 5
-- Change ASP → Step 4.5 Branch B
+- Change ASP → update `--provider` to the new agentId → re-run Step 4.5 → Step 4.6 → Step 5
 
 ================================================
 Step 6 -- Publish (create-task)
@@ -137,11 +123,10 @@ Step 6 -- Publish (create-task)
 onchainos agent create-task \\
   --description \"<description>\" --description-summary \"<summary>\" --title \"<title>\" \\
   --budget <budget> --max-budget <max_budget> --currency <USDT|USDG> \\
-  --provider <agentId> --service-id <sid> --payment-mode <escrow|x402> \\  # private task
+  --provider <agentId> --service-id <sid> --payment-mode <escrow|x402> \\
   [--service-params '<params>'] [--service-token-address <addr>] [--service-token-amount <amt>]
 ```
-- Private task (default): `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.
-- Public task: replace provider/service flags with `--visibility 0`.
+- `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 
 ================================================
@@ -155,12 +140,10 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 After success, tell the user directly (you are in the user session, no `onchainos agent user-notify` needed):\n\
 ".to_string()
     + &format!("\
-- Private: \"{create_designated}\"\n\
-- Public: \"{create_public}\"\n\
+- \"{create_designated}\"\n\
 Append `Insufficient ... balance` warning from CLI output if present. Localize.\n\n\
 **STOP** — after create-task + task-attach (if any), end this turn. Exception: if CLI output contains `[Watch]` block → read `skills/okx-ai/references/watch-core.md`, execute watch, then end. Do not say \"published\"/\"succeeded\" (only submitted). No other commands; no describing subsequent flow.\n",
         create_designated = super::super::content::create_task_designated_user_notify(),
-        create_public = super::super::content::create_task_public_user_notify(),
     )
 }
 

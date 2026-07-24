@@ -25,7 +25,6 @@ pub mod prefilled_notify;
 pub mod prefilled_rating;
 pub mod query;
 pub mod review_gate;
-pub mod search;
 pub mod session_cleanup;
 pub mod state_machine;
 pub mod util;
@@ -104,8 +103,6 @@ struct TaskDetail {
     token_amount: Option<String>,
     /// 0=unset / 1=escrow / 3=x402
     payment_mode: Option<i32>,
-    /// Backend VisibilityEnum: 0=PUBLIC / 1=PRIVATE
-    visibility: Option<i32>,
     /// 0=created / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
     sensitive_status: Option<i32>,
@@ -148,7 +145,6 @@ pub struct PreFetchedTaskContext {
     pub max_budget: Option<String>,
     pub provider_agent_id: Option<String>,
     pub user_agent_id: Option<String>,
-    pub visibility: Option<i64>,
     pub status: Option<i64>,
     pub deliverable: Option<PreFetchedDeliverable>,
     pub service_id: Option<String>,
@@ -187,7 +183,6 @@ impl PreFetchedTaskContext {
             max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
             provider_agent_id: v["providerAgentId"].as_str().map(String::from),
             user_agent_id: v["buyerAgentId"].as_str().map(String::from),
-            visibility: v["visibility"].as_i64(),
             status: v["status"].as_i64(),
             deliverable: None,
             service_id: v["serviceId"].as_str().map(String::from),
@@ -1335,12 +1330,6 @@ async fn build_context(
         pm,
         payment_mode_desc(pm)
     ));
-    let visibility = match task.visibility {
-        Some(0) => "Public",
-        Some(1) => "Private",
-        _       => "Unknown",
-    };
-    out.push_str(&format!("- Visibility: {visibility}\n"));
     if let Some(chain) = task.chain_id {
         out.push_str(&format!("- Chain: chainId={chain}\n"));
     }

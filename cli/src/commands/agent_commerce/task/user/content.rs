@@ -33,17 +33,6 @@ pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
-/// `Event::JobCreated` Step 0 — user notification (no designated provider).
-pub fn job_created_non_designated_user_notify() -> &'static str {
-    // CLI mode: drop "Waiting for ASPs to discover and apply." — passive
-    // turn-end cue suppresses LLM-driven watch re-arm. See job_accepted_escrow_user_notify.
-    if is_cli_mode() {
-        "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public)."
-    } else {
-        "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public). Waiting for ASPs to discover and apply."
-    }
-}
-
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
 /// Used both for first-time creation and re-entry (asp_match_pick / no_asp_found designate).
 pub fn job_created_designated_user_notify() -> &'static str {
@@ -56,8 +45,7 @@ fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: 
          {reason}\n\
          Please choose:\n\
          A. Designate another ASP — provide the agentId\n\
-         B. Make the job public — let more ASPs discover it\n\
-         C. Close the job"
+         B. Close the job"
     )
 }
 
@@ -230,23 +218,6 @@ pub fn job_closed_user_notify(job_id: &str, title: &str) -> String {
     format!("[Job Closed] {title} (`{job_id}`) has been closed; funds have been returned.")
 }
 
-// ── Event::JobVisibilityChanged ────────────────────────────────────
-
-/// `Event::JobVisibilityChanged` visibility=0 — public (B-7-3).
-pub fn visibility_public_user_notify(job_id: &str, title: &str) -> String {
-    // CLI mode: drop "Waiting for ASPs to reach out." — passive turn-end cue.
-    if is_cli_mode() {
-        format!("[Visibility Changed] {title} (`{job_id}`) is now public.")
-    } else {
-        format!("[Visibility Changed] {title} (`{job_id}`) is now public. Waiting for ASPs to reach out.")
-    }
-}
-
-/// `Event::JobVisibilityChanged` visibility=1 — private (B-7-4).
-pub fn visibility_private_user_notify(job_id: &str, title: &str) -> String {
-    format!("[Visibility Changed] {title} (`{job_id}`) is now private.")
-}
-
 // ── Event::JobPaymentModeChanged ───────────────────────────────────
 
 /// `Event::JobPaymentModeChanged` escrow branch — user notification (B-2-5).
@@ -262,21 +233,11 @@ pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     )
 }
 
-// ── Pseudo events (close / set_public) ─────────────────────────────
+// ── Pseudo events (close) ──────────────────────────────────────────
 
 /// User notification after closing a job (B-7-11).
 pub fn close_user_notify(job_id: &str) -> String {
     format!("[Job Closed] Job `{job_id}` has been closed.")
-}
-
-/// User notification after switching a job to public (B-7-12).
-pub fn set_public_user_notify(job_id: &str) -> String {
-    // CLI mode: drop "Waiting for ASPs to apply." — passive turn-end cue.
-    if is_cli_mode() {
-        format!("Job `{job_id}` is now public.")
-    } else {
-        format!("Job `{job_id}` is now public. Waiting for ASPs to apply.")
-    }
 }
 
 // ── Event::SubmitExpired ───────────────────────────────────────────
@@ -336,13 +297,6 @@ pub fn wakeup_resume_user_notify(job_id: &str) -> String {
     format!("[Resumed] Job `{job_id}` is back online. Please continue when ready.")
 }
 
-// ── provider_conversation — no more ASPs ───────────────────────────
-
-/// `provider_conversation` B-Step 4 — no more ASPs pending (B-7-14).
-pub fn no_more_sellers_user_notify(job_id: &str) -> String {
-    format!("[Job `{job_id}` — you are the User Agent] All pending ASPs have been contacted; none remaining. Choose next step:")
-}
-
 // ── Attachment user notifications ─────────────────────────────────
 
 /// Attachment sent successfully — notify the user.
@@ -391,51 +345,10 @@ pub fn complete_failed_user_notify(job_id: &str) -> String {
 
 // ── create_task notification ─────────────────────────────────────
 
-/// create_task success — no designated provider (public task).
-pub fn create_task_public_user_notify() -> String {
-    "Job submitted (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
-     Once confirmed, ASPs will be able to discover and apply for this task."
-        .to_string()
-}
-
 /// create_task success — with designated provider.
 pub fn create_task_designated_user_notify() -> String {
     "Job submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
      awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
-        .to_string()
-}
-
-// ── provider_conversation — single ASP accept/reject card ────────
-
-/// Canonical user-facing card for a single ASP accept/reject decision.
-/// Placeholders are pre-filled; the LLM only needs to translate.
-pub fn provider_pending_single_user_card(
-    short_job_id: &str,
-    title: &str,
-    agent_id: &str,
-    name: &str,
-) -> String {
-    let name_line = if name.is_empty() {
-        String::new()
-    } else {
-        format!("Name: {name}\n")
-    };
-    format!(
-        "[Job {short_job_id}] 「{title}」\n\
-         \n\
-         A provider wants to work on your task:\n\
-         {name_line}\
-         Agent ID: {agent_id}\n\
-         \n\
-         Accept this provider?\n\
-         1. Accept\n\
-         2. Reject"
-    )
-}
-
-/// provider_conversation — pending list is empty; no ASPs to contact.
-pub fn pending_list_empty_user_notify() -> String {
-    "There are no ASPs to contact right now. You can wait for new ASPs to reach out, or reply \"close\" to close the task."
         .to_string()
 }
 

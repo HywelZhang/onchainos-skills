@@ -128,6 +128,51 @@ fn reject_expire_time(message: Option<&serde_json::Value>) -> Option<i64> {
         .filter(|&t| t > 0)
 }
 
+/// Pure ASP price-gate decision: pick the `(status, summary, action)` tuple for
+/// the designated-service accept flow. Extracted from `generate_next_action` so
+/// the branch is unit-testable (the enclosing async fn does network I/O).
+///
+/// FR-3: when `test_flag` is set (backend-derived sandbox-review allowlist), the
+/// numeric quote-vs-fee gate is skipped and the decision is the exact same accept
+/// tuple as a normal `offer >= fee` accept — so the emitted playbook text is
+/// byte-identical to a normal accept and carries no bypass marker.
+fn price_gate_decision(
+    offer_num: Option<f64>,
+    fee_num: Option<f64>,
+    offer_amount: &str,
+    svc_fee: &str,
+    user_token_symbol: &str,
+    test_flag: bool,
+) -> (&'static str, String, &'static str) {
+    // Bind the accept tuple once so the test-accept path is byte-identical to it.
+    let accept = || {
+        (
+            "OK",
+            format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
+            "Apply at offer amount.",
+        )
+    };
+    match (offer_num, fee_num) {
+        _ if test_flag => accept(),
+        (Some(o), Some(f)) if o >= f => accept(),
+        (Some(_), Some(_)) => (
+            "TOO_LOW",
+            format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
+            "Reject — price below registered floor.",
+        ),
+        (_, None) => (
+            "ESTIMATE",
+            format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
+            "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone).",
+        ),
+        _ => (
+            "PARSE_FAIL",
+            format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
+            "Treat as ESTIMATE; LLM judges based on complexity.",
+        ),
+    }
+}
+
 /// Generate the structured next-action prompt for the ASP based on event.
 ///
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
@@ -804,28 +849,16 @@ pub async fn generate_next_action(
                         // `fee_num=None` means "service has no registered fee" → LLM estimates by complexity.
                         let offer_num = offer_amount.parse::<f64>().ok();
                         let fee_num = if svc_fee.is_empty() { None } else { svc_fee.parse::<f64>().ok() };
-                        let (price_status, price_summary, price_action) = match (offer_num, fee_num) {
-                            (Some(o), Some(f)) if o >= f => (
-                                "OK",
-                                format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
-                                "Apply at offer amount."
-                            ),
-                            (Some(_), Some(_)) => (
-                                "TOO_LOW",
-                                format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
-                                "Reject — price below registered floor."
-                            ),
-                            (_, None) => (
-                                "ESTIMATE",
-                                format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
-                                "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone)."
-                            ),
-                            _ => (
-                                "PARSE_FAIL",
-                                format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
-                                "Treat as ESTIMATE; LLM judges based on complexity."
-                            ),
-                        };
+                        // FR-3: allowlisted sandbox tasks skip the price gate (backend-derived).
+                        let test_flag = prefetched.map(|pf| pf.test_flag).unwrap_or(false);
+                        let (price_status, price_summary, price_action) = price_gate_decision(
+                            offer_num,
+                            fee_num,
+                            offer_amount,
+                            svc_fee,
+                            user_token_symbol,
+                            test_flag,
+                        );
 
                         // Deterministic apply command — uses User Agent's token symbol (per spec).
                         // After apply, push a user-facing notification via `onchainos agent user-notify`.
@@ -1696,5 +1729,52 @@ mod tests {
         .await;
         assert!(out.contains("2026-"), "ms timestamp rendered as seconds date: {out}");
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
+    }
+
+    // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────
+
+    // test_flag forces OK even when the offer is below the registered fee.
+    #[test]
+    fn price_gate_test_flag_forces_ok_when_below_fee() {
+        let (status, _summary, action) =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
+        assert_eq!(status, "OK");
+        assert_eq!(action, "Apply at offer amount.");
+    }
+
+    // Normal path (test_flag=false): offer below fee ⇒ TOO_LOW (regression).
+    #[test]
+    fn price_gate_normal_below_fee_is_too_low() {
+        let (status, _summary, action) =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
+        assert_eq!(status, "TOO_LOW");
+        assert_eq!(action, "Reject — price below registered floor.");
+    }
+
+    // Normal path (test_flag=false): offer at/above fee ⇒ OK.
+    #[test]
+    fn price_gate_normal_at_or_above_fee_is_ok() {
+        let (status, _summary, action) =
+            price_gate_decision(Some(2.0), Some(1.0), "2", "1", "USDT", false);
+        assert_eq!(status, "OK");
+        assert_eq!(action, "Apply at offer amount.");
+    }
+
+    // §6 / A-CLISPEC invariant 2: a test_flag accept is byte-identical to a
+    // normal accept — same tuple, so no downstream consumer can distinguish them.
+    #[test]
+    fn price_gate_test_flag_ok_string_matches_normal_ok() {
+        // Test-accept: below fee but test_flag=true.
+        let test_accept =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
+        // Normal-accept: same amounts, offer >= fee, test_flag=false.
+        let normal_accept =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
+        // Prove the normal-accept path with identical inputs (offer >= fee).
+        let normal_ok = price_gate_decision(Some(1.0), Some(1.0), "0.00001", "1", "USDT", false);
+        // The normal below-fee case rejects; the test path accepts with the OK tuple.
+        assert_eq!(normal_accept.0, "TOO_LOW");
+        // The test-accept tuple is byte-identical to a genuine OK accept.
+        assert_eq!(test_accept, normal_ok);
     }
 }

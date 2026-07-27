@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 pub mod claim;
 pub mod a2a_binding;
+pub mod autotrade;
 pub mod config;
 pub mod deadline;
 pub mod deliverables;
@@ -23,9 +24,9 @@ pub mod payment_mode;
 pub mod pending_v2;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
+pub mod user_lang;
 pub mod query;
 pub mod review_gate;
-pub mod search;
 pub mod session_cleanup;
 pub mod state_machine;
 pub mod util;
@@ -104,8 +105,6 @@ struct TaskDetail {
     token_amount: Option<String>,
     /// 0=unset / 1=escrow / 3=x402
     payment_mode: Option<i32>,
-    /// Backend VisibilityEnum: 0=PUBLIC / 1=PRIVATE
-    visibility: Option<i32>,
     /// 0=created / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
     sensitive_status: Option<i32>,
@@ -148,7 +147,6 @@ pub struct PreFetchedTaskContext {
     pub max_budget: Option<String>,
     pub provider_agent_id: Option<String>,
     pub user_agent_id: Option<String>,
-    pub visibility: Option<i64>,
     pub status: Option<i64>,
     pub deliverable: Option<PreFetchedDeliverable>,
     pub service_id: Option<String>,
@@ -192,7 +190,6 @@ impl PreFetchedTaskContext {
             max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
             provider_agent_id: v["providerAgentId"].as_str().map(String::from),
             user_agent_id: v["buyerAgentId"].as_str().map(String::from),
-            visibility: v["visibility"].as_i64(),
             status: v["status"].as_i64(),
             deliverable: None,
             service_id: v["serviceId"].as_str().map(String::from),
@@ -567,23 +564,23 @@ pub(crate) async fn find_service(
         return Ok(None);
     }
     let data = spawn_service_list(agent_id).await?;
-    // service-list returns the service ID under the `id` key as a JSON number
-    // (e.g. `"id": 1270`), while the user's designation envelope sends
-    // `"serviceId"` as a string. Try both keys, coerce number↔string for
-    // comparison.
+    // service-list returns two ID fields per entry: numeric `id` (e.g. 2301)
+    // and UUID `serviceId` (e.g. "06d89519-..."). The task system passes UUIDs
+    // while identity update/delete uses numeric ids. Match against BOTH fields
+    // so either format resolves correctly.
+    let to_str = |v: &serde_json::Value| -> Option<String> {
+        v.as_str().map(String::from)
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+            .or_else(|| v.as_u64().map(|n| n.to_string()))
+    };
     let matched = data
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|item| item.get("list"))
         .and_then(|list| list.as_array())
         .and_then(|list| list.iter().find(|s| {
-            let id_val = s.get("id").or_else(|| s.get("serviceId"));
-            let id_str = id_val.and_then(|v| {
-                v.as_str().map(String::from)
-                    .or_else(|| v.as_i64().map(|n| n.to_string()))
-                    .or_else(|| v.as_u64().map(|n| n.to_string()))
-            });
-            id_str.as_deref() == Some(service_id)
+            s.get("id").and_then(&to_str).as_deref() == Some(service_id)
+                || s.get("serviceId").and_then(&to_str).as_deref() == Some(service_id)
         }).cloned());
     Ok(matched)
 }
@@ -1342,12 +1339,6 @@ async fn build_context(
         pm,
         payment_mode_desc(pm)
     ));
-    let visibility = match task.visibility {
-        Some(0) => "Public",
-        Some(1) => "Private",
-        _       => "Unknown",
-    };
-    out.push_str(&format!("- Visibility: {visibility}\n"));
     if let Some(chain) = task.chain_id {
         out.push_str(&format!("- Chain: chainId={chain}\n"));
     }

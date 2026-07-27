@@ -25,6 +25,7 @@ pub async fn handle_asp_match(
     job_id: Option<&str>,
     task_desc: &str,
     provider_agent_id: Option<&str>,
+    payment_token_amount: Option<f64>,
     page: usize,
     explicit_agent_id: Option<&str>,
     format: &str,
@@ -56,6 +57,9 @@ pub async fn handle_asp_match(
     }
     if let Some(pid) = provider_agent_id {
         body["providerAgentId"] = serde_json::Value::String(pid.to_string());
+    }
+    if let Some(amt) = payment_token_amount {
+        body["paymentTokenAmount"] = serde_json::json!(amt);
     }
 
     let resp = client
@@ -113,6 +117,7 @@ pub async fn handle_asp_match(
                 let stype = svc["serviceType"].as_str().unwrap_or("");
                 let fee_amt = svc["feeAmount"].as_f64();
                 let fee_sym = svc["feeTokenSymbol"].as_str().unwrap_or("");
+                let support_trial = svc["supportTrail"].as_bool().unwrap_or(false);
 
                 print!("  Service: {sid}");
                 if !sname.is_empty() {
@@ -126,6 +131,20 @@ pub async fn handle_asp_match(
                     println!("    Fee: {amt} {fee_sym}");
                 } else {
                     println!("    Fee: (no price — negotiation required)");
+                }
+
+                if let Some(subs) = svc["subscription"].as_array() {
+                    if !subs.is_empty() {
+                        for sub in subs {
+                            let interval = sub["interval"].as_str().unwrap_or("month");
+                            let fee = sub["fee"].as_str().unwrap_or("?");
+                            print!("    Subscription: {fee} {fee_sym}/{interval}");
+                            if support_trial {
+                                print!(" (trial available)");
+                            }
+                            println!();
+                        }
+                    }
                 }
             }
         }
@@ -394,10 +413,11 @@ mod tests {
             "test", "asp-match", "--task-desc", "build a trading bot",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } => {
+            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } => {
                 assert_eq!(task_desc, "build a trading bot");
                 assert!(job_id.is_none());
                 assert!(provider_agent_id.is_none());
+                assert!(payment_token_amount.is_none());
                 assert_eq!(page, 1);
                 assert!(agent_id.is_none());
                 assert_eq!(format, "");
@@ -419,6 +439,22 @@ mod tests {
                 assert_eq!(job_id.as_deref(), Some("job-123"));
                 assert_eq!(provider_agent_id.as_deref(), Some("agent-456"));
                 assert_eq!(page, 2);
+            }
+            _ => panic!("expected AspMatch"),
+        }
+    }
+
+    #[test]
+    fn cli_asp_match_with_payment_token_amount() {
+        let cli = TestCli::parse_from([
+            "test", "asp-match",
+            "--task-desc", "audit service",
+            "--payment-token-amount", "0.7",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::AspMatch { task_desc, payment_token_amount, .. } => {
+                assert_eq!(task_desc, "audit service");
+                assert_eq!(payment_token_amount, Some(0.7));
             }
             _ => panic!("expected AspMatch"),
         }

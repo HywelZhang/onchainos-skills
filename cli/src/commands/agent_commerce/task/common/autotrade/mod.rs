@@ -16,8 +16,10 @@
 
 pub(crate) mod amount;
 pub(crate) mod card;
+pub(crate) mod consent;
 pub(crate) mod grants;
 pub(crate) mod holding;
+pub(crate) mod notify;
 pub(crate) mod pipeline;
 pub(crate) mod schema;
 pub(crate) mod subscription;
@@ -31,6 +33,8 @@ pub(crate) mod subscription;
 pub const ACTION_AUTOTRADE_DELIVER: &str = "user/autotrade_deliver";
 /// Audit action: grant-check (allow or deny; deny carries the reason).
 pub const ACTION_GRANT_CHECK: &str = "agent/autotrade_grant_check";
+/// Audit action: buyer consent record write (auto / manual / decline + cap).
+pub const ACTION_AUTOTRADE_CONSENT_SET: &str = "user/autotrade_consent_set";
 
 /// Stable machine-readable degrade reasons (buyer inbound path).
 ///
@@ -53,6 +57,9 @@ pub enum DegradeReason {
     SchemaVersionTooNew,
     /// `jobId` failed the entry charset check (path-traversal defense; FR-4).
     InvalidJobId,
+    /// The consent record is present but broken (unreadable / version-too-new /
+    /// job-mismatch); carries the specific code. Fails closed (notify only).
+    ConsentInvalid(&'static str),
     /// A grant-check denial, carrying the specific grant-deny code so the real
     /// reason (no-grant-file / expired / venue-not-authorized / no-cap / over-cap …)
     /// is surfaced instead of being collapsed onto `over_cap`.
@@ -77,6 +84,7 @@ impl DegradeReason {
             DegradeReason::LookupOff => "lookup_off",
             DegradeReason::SchemaVersionTooNew => "schema_version_too_new",
             DegradeReason::InvalidJobId => "invalid_job_id",
+            DegradeReason::ConsentInvalid(code) => code,
             DegradeReason::GrantDenied(code) => code,
         }
     }

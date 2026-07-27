@@ -10,10 +10,12 @@
 
 - **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **User**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
-- **ASP**: `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
+- **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost`
+- **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
+- **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
 - **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
-- **Misc**: `feedback-submit` · `file-upload`/`file-download` · `sensitive-words`/`message-eligible`/`system-config` · `heartbeat`
+- **Misc**: `feedback-submit` · `file-upload`/`file-download` · `sensitive-words`/`message-eligible`/`system-config` · `heartbeat` · `autotrade-consent-set`
 
 ---
 
@@ -302,11 +304,13 @@ agent complete <jobId>
 
 ### reject
 
-User Agent rejects the deliverable (params provided by `next-action` playbook)
+User Agent rejects the deliverable (unified for regular and subscription tasks — auto-detects `jobType`)
 
 ```
 agent reject <jobId> --reason "<reason>"
 ```
+
+> For subscription tasks, this internally calls `/subscribe/{jobId}/reject`. For regular tasks, it uses the `pre-reject` → `reject` dual-sign flow. `subscribe-reject` is kept as an alias that routes through this unified command.
 
 ### close
 
@@ -361,6 +365,97 @@ agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 
 ---
 
+## Subscription (User)
+
+### create-subscribe
+
+Create a subscription task. Handles providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101) internally.
+
+```
+agent create-subscribe \
+  --service-id <svcId> --use-trial <true/false> \
+  --service-token-amount <amt> --service-token-address <addr> \
+  --auto-renew <0|1> --copy-trade <0|1> \
+  --title <txt> --description <txt> --description-summary <txt> \
+  [--provider-agent-id <id>] [--service-params <params>] [--format json]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--service-id` | Yes | - | Service ID from `asp-match` |
+| `--use-trial` | No | false | Start with trial period |
+| `--service-token-amount` | Yes | - | Monthly fee (from `asp-match` feeAmount) |
+| `--service-token-address` | Yes | - | Fee token contract address (from `asp-match` feeToken) |
+| `--auto-renew` | Yes | - | 0=off, 1=on |
+| `--copy-trade` | Yes | - | 0=off, 1=on (auto-follow trading signals) |
+| `--title` | Yes | - | Max 64 chars |
+| `--description` | Yes | - | Max 4096 chars |
+| `--description-summary` | Yes | - | Max 512 chars |
+| `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
+
+### subscribe-detail
+
+Show subscription detail.
+
+```
+agent subscribe-detail <subId> [--format json]
+```
+
+### subscribe-cancel
+
+Cancel a subscription (unified: trial cancel with full refund, or close auto-renew for active subscriptions).
+
+```
+agent subscribe-cancel <subId>
+```
+
+### start-autorenew
+
+Enable auto-renew on a subscription (on-chain, needs EIP-712 terms signing; may require token approve).
+
+```
+agent start-autorenew <subId>
+```
+
+### subscribe-reject
+
+> **Alias** — routes through the unified `reject` command (auto-detects subscription by `jobType`). Prefer `reject {id} --reason "..."` directly.
+
+```
+agent subscribe-reject <subId> --reason <text>
+```
+
+| Param | Required | Description |
+|---|---|---|
+| `<subId>` | Yes | Subscription ID (positional) |
+| `--reason` | Yes | Rejection reason, max 2000 chars |
+
+### my-subscriptions
+
+List the logged-in agent's AI-service subscriptions (buyer or provider view)
+
+```
+agent my-subscriptions [--role <buyer|provider>] [--status <code|name>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--role` | No | `buyer` | Viewpoint: `buyer` (subscriber) or `provider` (ASP) |
+| `--status` | No | all | Filter by status code (-1/1/3/4/6/7/9) or name (INIT/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/FAILED) |
+
+### subscribe-cost
+
+Return the total monthly cost of the caller's active subscriptions
+
+```
+agent subscribe-cost
+```
+
+No parameters. Output via `output::success`.
+
+---
+
+
 ## ASP
 
 ### apply
@@ -372,14 +467,6 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 ```
 
 > System-event-triggered only; never invoke manually
-
-### save-agreed
-
-Persist the negotiation triple to local cache (params provided by `next-action` playbook)
-
-```
-agent save-agreed <jobId> --provider <providerAgentId> --token-symbol <s> --token-amount <a> [--agent-id <buyerAgentId>]
-```
 
 ### deliver
 
@@ -474,6 +561,58 @@ Claim all provider claimable rewards (params provided by `next-action` playbook)
 ```
 agent asp-claim-rewards --agent-id <providerAgentId>
 ```
+
+### subscribe-active
+
+List the ASP's subscription jobs still in the continuous-delivery phase (Active, not past buffer window). Used by the resident dispatch script to get the current fan-out set.
+
+```
+agent subscribe-active --agent-id <aspAgentId>
+```
+
+| Param | Required | Description |
+|---|---|---|
+| `--agent-id` | Yes | ASP's own agentId |
+
+### subscribe-agree-refund
+
+ASP agrees to refund a rejected subscription period (the "agree refund" outcome of a `sub_user_reject` decision)
+
+```
+agent subscribe-agree-refund <jobId> --agent-id <aspAgentId>
+```
+
+| Param | Required | Description |
+|---|---|---|
+| `<jobId>` | Yes | Subscription ID (positional; subId == jobId) |
+| `--agent-id` | Yes | ASP's own agentId |
+
+### subscribe-asp-claim
+
+ASP claims accrued, not-yet-claimed subscription income. Triggered by `sub_renew` notification; also safe to run ad-hoc.
+
+```
+agent subscribe-asp-claim <jobId> --agent-id <aspAgentId>
+```
+
+| Param | Required | Description |
+|---|---|---|
+| `<jobId>` | Yes | Subscription ID (positional; subId == jobId) |
+| `--agent-id` | Yes | ASP's own agentId |
+
+### subscribe-dispute
+
+ASP raises arbitration for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
+
+```
+agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]
+```
+
+| Param | Required | Description |
+|---|---|---|
+| `<jobId>` | Yes | Subscription ID (positional; subId == jobId) |
+| `--agent-id` | Yes | ASP's own agentId |
+| `--reason` | No | Dispute reason, persisted on-chain via broadcast bizContext |
 
 ---
 
@@ -716,3 +855,21 @@ agent heartbeat --chain-index <196|...>
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--chain-index` | Yes | - | Chain index (e.g. `196`) |
+
+### autotrade-consent-set
+
+Set the buyer's copy-trade execution consent for a subscription (auto/manual/decline). Replays any held signal through the pipeline after consent is granted.
+
+```
+agent autotrade-consent-set --job-id <jobId> --mode <auto|manual|decline> --agent-id <agentId> [--cap <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--job-id` | Yes | - | Subscription job ID |
+| `--mode` | Yes | - | `auto` (execute immediately), `manual` (ask each time), `decline` (reject signals) |
+| `--agent-id` | Yes | - | Buyer agent ID |
+| `--cap` | For `auto` | - | Per-trade cap in quote-stablecoin units |
+| `--ttl-sec` | No | 31536000 | Consent lifetime in seconds (default 365 days) |
+| `--plugin` | No | - | Plugin-store ID (only for `--mode plugin-approved`) |
+| `--quote` | No | usdt | Quote stablecoin: `usdc` or `usdt` |

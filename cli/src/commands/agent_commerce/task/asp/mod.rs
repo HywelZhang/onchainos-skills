@@ -23,6 +23,7 @@ mod dispute_confirm;
 mod dispute_raise;
 pub mod flow;
 mod asp_claim;
+pub mod subscription;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -179,6 +180,11 @@ pub enum DisputeCommand {
         /// are appended in addition to the auto-attached deliverables from the manifest.
         #[arg(long = "file")]
         files: Vec<String>,
+        /// Cap the number of auto-attached manifest files (most recent N kept).
+        /// Subscription tasks may accumulate many deliverables; this prevents
+        /// oversized uploads. Explicit `--file` entries are not counted.
+        #[arg(long)]
+        max_files: Option<usize>,
     },
 }
 
@@ -268,9 +274,9 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Confirm { job_id, reason, agent_id } =>
             dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Upload { job_id, agent_id, role, text, files } =>
+        DisputeCommand::Upload { job_id, agent_id, role, text, files, max_files } =>
             dispute_upload::handle_upload_evidence(
-                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files,
+                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files, max_files,
             ).await,
     }
 }

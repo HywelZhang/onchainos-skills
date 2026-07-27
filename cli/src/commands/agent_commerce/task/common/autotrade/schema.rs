@@ -53,11 +53,11 @@ pub struct AutoTradeSignal {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SignalType {
-    // v1 enabled
+    // v1 enabled (executed)
     DexTrade,
-    DefiRebalance,
     Polymarket,
-    // reserved (frozen; buyer degrades to notify-only)
+    // reserved (frozen; buyer degrades to notify-only, not executed)
+    DefiRebalance, // temporarily demoted for v1 (untested); params/command kept for re-enable
     HyperliquidPerp,
     MemeLaunch,
     LimitOrder,
@@ -66,10 +66,10 @@ pub enum SignalType {
 
 impl SignalType {
     pub fn is_enabled(&self) -> bool {
-        matches!(
-            self,
-            SignalType::DexTrade | SignalType::DefiRebalance | SignalType::Polymarket
-        )
+        // v1 executes only dex_trade + polymarket. defi_rebalance is temporarily
+        // demoted to reserved (notify-only, not executed) — untested for this release;
+        // its params/command code is kept for a later re-enable.
+        matches!(self, SignalType::DexTrade | SignalType::Polymarket)
     }
 
     /// The stable wire string (matches serde snake_case), used for `data.signalType`.
@@ -376,6 +376,13 @@ pub fn parse_and_validate(signal: &AutoTradeSignal) -> Result<TypedParams, AutoT
 /// failure here.
 pub fn validate_structure(signal: &AutoTradeSignal) -> Result<(), AutoTradeError> {
     check_delivery_id(&signal.delivery_id)?;
+    // SEC-02: reject a signal from a newer schema — v2 may reinterpret existing fields,
+    // and `deny_unknown_fields` only guards NEW fields. Degrade to notify-only, never execute.
+    if signal.schema_version > SCHEMA_VERSION {
+        return Err(AutoTradeError::Degrade(
+            super::DegradeReason::SchemaVersionTooNew,
+        ));
+    }
     if signal.signal_time == 0 {
         return Err(AutoTradeError::Reject(
             "signalTime must not be 0".to_string(),
@@ -527,12 +534,30 @@ mod tests {
     #[test]
     fn enabled_and_reserved_types() {
         assert!(SignalType::DexTrade.is_enabled());
-        assert!(SignalType::DefiRebalance.is_enabled());
+        assert!(!SignalType::DefiRebalance.is_enabled()); // demoted to reserved for v1
         assert!(SignalType::Polymarket.is_enabled());
         assert!(!SignalType::HyperliquidPerp.is_enabled());
         assert!(!SignalType::MemeLaunch.is_enabled());
         assert!(!SignalType::LimitOrder.is_enabled());
         assert!(!SignalType::GmxPerp.is_enabled());
+    }
+
+    #[test]
+    fn schema_version_newer_than_supported_is_rejected() {
+        let mut sig = dex_signal(serde_json::json!({
+            "chainIndex": "8453", "tokenAddress": "0xabc",
+            "side": "buy", "amount": "10", "amountUnit": "quote"
+        }));
+        sig.schema_version = SCHEMA_VERSION + 1;
+        assert!(matches!(
+            validate_structure(&sig),
+            Err(AutoTradeError::Degrade(
+                super::super::DegradeReason::SchemaVersionTooNew
+            ))
+        ));
+        // current version still passes structure validation
+        sig.schema_version = SCHEMA_VERSION;
+        assert!(validate_structure(&sig).is_ok());
     }
 
     #[test]
@@ -578,7 +603,8 @@ mod tests {
 
     #[test]
     fn defi_and_polymarket_unit_rules() {
-        // defi deposit + pct rejected
+        // defi_rebalance is demoted to reserved for v1: its envelope passes structure but
+        // parse_and_validate degrades (notify-only), so per-type unit rules no longer apply.
         let sig = AutoTradeSignal {
             schema_version: 1,
             delivery_id: "d1".into(),
@@ -587,18 +613,14 @@ mod tests {
             ttl_sec: 60,
             params: serde_json::json!({"protocolProductId":"p1","action":"deposit","amount":"5","amountUnit":"pct","tokenAddress":"0xabc","chainIndex":"8453"}),
         };
-        assert!(validate_structure(&sig).is_err());
-        // defi withdraw + pct ok
-        let sig = AutoTradeSignal {
-            schema_version: 1,
-            delivery_id: "d1".into(),
-            signal_type: SignalType::DefiRebalance,
-            signal_time: 1,
-            ttl_sec: 60,
-            params: serde_json::json!({"protocolProductId":"p1","action":"withdraw","amount":"12.5","amountUnit":"pct"}),
-        };
-        assert!(validate_structure(&sig).is_ok());
-        // polymarket sell + quote rejected
+        assert!(validate_structure(&sig).is_ok()); // reserved → envelope-valid, degrades inbound
+        assert!(matches!(
+            parse_and_validate(&sig),
+            Err(AutoTradeError::Degrade(
+                super::super::DegradeReason::TypeDegrade
+            ))
+        ));
+        // polymarket sell + quote rejected (still an enabled type)
         let sig = AutoTradeSignal {
             schema_version: 1,
             delivery_id: "d1".into(),

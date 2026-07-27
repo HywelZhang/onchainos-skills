@@ -10,16 +10,8 @@ use serde_json::Value;
 use super::super::network::task_api_client::TaskApiClient;
 use super::{AutoTradeError, DegradeReason};
 
-/// Confirmed "Active" subscription status code.
-///
-/// The authoritative Subscribe interface doc §1.1 (subscription-status enum,
-/// aligned with the contract SubStatus) defines `100 = Active` (legal values
-/// `-1` / `100..=105`; there is no `1`). The `status:1` in its §3.1 response
-/// example is a stale placeholder and is not authoritative. `100` is therefore the
-/// correct value (WBW-13715 Q1 resolved). The exact-equality check is kept as the
-/// fail-safe: any unexpected value *degrades* (safe, non-executing) rather than
-/// fail-opening.
-const AUTOTRADE_ACTIVE_STATUS: i64 = 100;
+/// Confirmed "Active" subscription status code (Subscribe API doc §1.1: `1 = Active`).
+const AUTOTRADE_ACTIVE_STATUS: i64 = 1;
 
 /// The `copyTrade` flag value that means "copy-trade enabled".
 const COPY_TRADE_ENABLED: i64 = 1;
@@ -92,21 +84,20 @@ mod tests {
 
     #[test]
     fn active_copy_trade_number_form() {
-        let data = json!({"copyTrade": 1, "status": 100, "providerAgentId": 1506});
+        let data = json!({"copyTrade": 1, "status": 1, "providerAgentId": 1506});
         let got = decide(&data).unwrap();
         assert_eq!(got.provider_agent_id, "1506");
     }
 
     #[test]
     fn active_copy_trade_string_form() {
-        let data = json!({"copyTrade": "1", "status": "100", "providerAgentId": "1506"});
+        let data = json!({"copyTrade": "1", "status": "1", "providerAgentId": "1506"});
         assert!(decide(&data).is_ok());
     }
 
     #[test]
     fn non_active_status_degrades() {
-        // 101 = Rejected, not Active.
-        let data = json!({"copyTrade": 1, "status": 101, "providerAgentId": "1"});
+        let data = json!({"copyTrade": 1, "status": 3, "providerAgentId": "1"});
         assert!(matches!(
             decide(&data),
             Err(AutoTradeError::Degrade(
@@ -117,7 +108,7 @@ mod tests {
 
     #[test]
     fn copy_trade_not_one_degrades() {
-        let data = json!({"copyTrade": 0, "status": 100, "providerAgentId": "1"});
+        let data = json!({"copyTrade": 0, "status": 1, "providerAgentId": "1"});
         assert!(matches!(
             decide(&data),
             Err(AutoTradeError::Degrade(
@@ -127,9 +118,8 @@ mod tests {
     }
 
     #[test]
-    fn never_truthy_status_1_is_not_active() {
-        // Anti-fail-open: status==1 must NOT be treated as Active (Active==100).
-        let data = json!({"copyTrade": 1, "status": 1, "providerAgentId": "1"});
+    fn never_truthy_status_100_is_not_active() {
+        let data = json!({"copyTrade": 1, "status": 100, "providerAgentId": "1"});
         assert!(matches!(
             decide(&data),
             Err(AutoTradeError::Degrade(

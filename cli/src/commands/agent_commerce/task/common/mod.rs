@@ -24,6 +24,7 @@ pub mod payment_mode;
 pub mod pending_v2;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
+pub mod user_lang;
 pub mod query;
 pub mod review_gate;
 pub mod session_cleanup;
@@ -556,23 +557,23 @@ pub(crate) async fn find_service(
         return Ok(None);
     }
     let data = spawn_service_list(agent_id).await?;
-    // service-list returns the service ID under the `id` key as a JSON number
-    // (e.g. `"id": 1270`), while the user's designation envelope sends
-    // `"serviceId"` as a string. Try both keys, coerce number↔string for
-    // comparison.
+    // service-list returns two ID fields per entry: numeric `id` (e.g. 2301)
+    // and UUID `serviceId` (e.g. "06d89519-..."). The task system passes UUIDs
+    // while identity update/delete uses numeric ids. Match against BOTH fields
+    // so either format resolves correctly.
+    let to_str = |v: &serde_json::Value| -> Option<String> {
+        v.as_str().map(String::from)
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+            .or_else(|| v.as_u64().map(|n| n.to_string()))
+    };
     let matched = data
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|item| item.get("list"))
         .and_then(|list| list.as_array())
         .and_then(|list| list.iter().find(|s| {
-            let id_val = s.get("id").or_else(|| s.get("serviceId"));
-            let id_str = id_val.and_then(|v| {
-                v.as_str().map(String::from)
-                    .or_else(|| v.as_i64().map(|n| n.to_string()))
-                    .or_else(|| v.as_u64().map(|n| n.to_string()))
-            });
-            id_str.as_deref() == Some(service_id)
+            s.get("id").and_then(&to_str).as_deref() == Some(service_id)
+                || s.get("serviceId").and_then(&to_str).as_deref() == Some(service_id)
         }).cloned());
     Ok(matched)
 }

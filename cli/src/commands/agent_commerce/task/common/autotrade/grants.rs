@@ -139,20 +139,17 @@ pub fn check_grant(job_id: &str, venue: &str, action: &str, amount: &str) -> Res
     }
     // 4. amount parseable (overflow / non-decimal ⇒ deny).
     let amount = Decimal::parse(amount).map_err(|_| GrantDeny(DENY_INVALID_AMOUNT))?;
-    // 5. grant file. PERMISSIVE-BY-DEFAULT (v1, WBW-13715): a MISSING grant file ⇒
-    // ALLOW (no per-trade cap configured). Turning copyTrade on is informed consent to
-    // an uncapped single-trade amount: the residual risk is only "over-buys within its
-    // own balance", never a transfer out (every autotrade recipe resolves the payee to
-    // the buyer's own locally-loaded wallet, and honeypot/rug is stopped at the swap
-    // layer — autotrade never passes --force). Re-arm the cap by dropping a grant file
-    // at <home>/autotrade/grants/<jobId>.json; this same gate then enforces it, and a
-    // file that is PRESENT-but-invalid (version/jobId/expiry/venue/no-cap/over-cap/
-    // parse) still denies below. The grant-check subcommand audits this allow
-    // (ACTION_GRANT_CHECK, success=true), so "no cap configured, allowed" is observable
-    // rather than silent — do not mistake the absent-file allow for active protection.
+    // 5. grant file. DENY-BY-DEFAULT (consent flow, product 2026-07-17): a MISSING grant
+    // file ⇒ DENY. The client-side per-trade cap now lives in the consent record and is
+    // mirrored to the grant file by `autotrade-consent-set` ONLY for `Auto` mode. A
+    // missing file therefore means "not consented to auto-execute" (first-time / manual /
+    // declined), which must not silently pass this out-of-process (plugin) check. In the
+    // in-process pipeline the consent gate already decided this before we reach here; this
+    // is defense-in-depth + the plugin's only enforcement point. (Was permissive-by-
+    // default under WBW-13715, when there was no consent record.)
     let path = grant_path(job_id)?;
     if !path.exists() {
-        return Ok(());
+        return Err(GrantDeny(DENY_NO_GRANT_FILE));
     }
     // 6. JSON parseable.
     let raw = std::fs::read_to_string(&path).map_err(|_| GrantDeny(DENY_GRANT_UNREADABLE))?;
@@ -239,12 +236,60 @@ pub fn write_grant(
     };
 
     let path = grant_path(job_id).map_err(|d| anyhow::anyhow!("{}", d.0))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let body = serde_json::to_string_pretty(&grant)?;
-    std::fs::write(&path, body)?;
+    crate::home::write_secure(&path, body.as_bytes())?;
     Ok(())
+}
+
+/// Sells are not cap-gated under the consent model (a sell is naturally bounded by the
+/// position held — L1, WBW-13715). But the out-of-process plugin grant-check denies a
+/// sell whose venue has no `maxSell` (`no cap for action`), so the grant must mirror an
+/// effectively-unlimited sell allowance, NOT leave it unset — otherwise auto-mode
+/// polymarket sells get blocked by the plugin.
+const CONSENT_SELL_UNLIMITED: &str = "1000000000000000000"; // 1e18, far above any real sell
+
+/// Mirror the consent per-trade cap into the grant file so the out-of-process
+/// `autotrade-grant-check` (polymarket plugin) enforces the same buy-side cap the
+/// in-process pipeline does: `maxBuy = cap_u`, and `maxSell` = unlimited sentinel so
+/// auto-mode sells pass (sells are not cap-gated). Written by `autotrade-consent-set`
+/// for `Auto` mode.
+pub fn write_cap_grant(job_id: &str, cap_u: &str, ttl_sec: u64) -> anyhow::Result<()> {
+    if !job_id_is_safe(job_id) {
+        anyhow::bail!("invalid job id");
+    }
+    if ttl_sec == 0 {
+        anyhow::bail!("ttl must be > 0");
+    }
+    Decimal::parse(cap_u).map_err(|_| anyhow::anyhow!("cap is not a valid decimal"))?;
+
+    let created_at = now_secs();
+    let mut grants = BTreeMap::new();
+    for venue in VENUES {
+        grants.insert(
+            (*venue).to_string(),
+            VenueGrant {
+                max_buy: Some(cap_u.to_string()),
+                max_sell: Some(CONSENT_SELL_UNLIMITED.to_string()),
+            },
+        );
+    }
+    let grant = GrantFile {
+        version: GRANT_VERSION,
+        job_id: job_id.to_string(),
+        grants,
+        created_at,
+        expires_at: created_at + ttl_sec,
+    };
+    let path = grant_path(job_id).map_err(|d| anyhow::anyhow!("{}", d.0))?;
+    crate::home::write_secure(&path, serde_json::to_string_pretty(&grant)?.as_bytes())?;
+    Ok(())
+}
+
+/// Remove the grant file (Manual / Decline — there is no auto-execute cap to enforce).
+pub fn clear_grant(job_id: &str) {
+    if let Ok(path) = grant_path(job_id) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 #[cfg(test)]
@@ -261,13 +306,42 @@ mod tests {
     }
 
     #[test]
-    fn ac9_no_file_allows_permissive_by_default() {
+    fn no_file_denies_by_default() {
         with_home(|| {
-            // v1 permissive-by-default (WBW-13715): no grant file ⇒ allow (no cap).
-            assert!(check_grant("nogrant", "dex", "buy", "1").is_ok());
-            // charset guard still runs BEFORE the filesystem, so traversal is denied
-            // (covered by ac9_path_traversal_job_id_denied); a present-but-invalid file
-            // still denies (covered by the expired/version/venue/no-cap tests).
+            // Deny-by-default (consent flow, 2026-07-17): no grant file ⇒ deny. The cap
+            // lives in the consent record and is mirrored to the grant file only for Auto
+            // mode, so a missing file means "not consented to auto-execute".
+            assert_eq!(
+                check_grant("nogrant", "dex", "buy", "1").unwrap_err().0,
+                DENY_NO_GRANT_FILE
+            );
+        });
+    }
+
+    #[test]
+    fn write_cap_grant_mirrors_cap_for_all_venues() {
+        with_home(|| {
+            write_cap_grant("job1", "100", 3600).unwrap();
+            // within cap on every venue's buy
+            assert!(check_grant("job1", "dex", "buy", "100").is_ok());
+            assert!(check_grant("job1", "defi", "buy", "50").is_ok());
+            assert!(check_grant("job1", "polymarket", "buy", "99.99").is_ok());
+            // over cap denies
+            assert_eq!(
+                check_grant("job1", "dex", "buy", "100.01").unwrap_err().0,
+                DENY_OVER_CAP
+            );
+            // sells are NOT cap-gated under consent — any sell passes (regression fix:
+            // maxSell was unset → DENY_NO_CAP blocked auto-mode polymarket sells).
+            assert!(check_grant("job1", "polymarket", "sell", "5").is_ok());
+            assert!(check_grant("job1", "polymarket", "sell", "999999999").is_ok());
+            assert!(check_grant("job1", "dex", "sell", "12345").is_ok());
+            // clear ⇒ back to deny-by-default
+            clear_grant("job1");
+            assert_eq!(
+                check_grant("job1", "dex", "buy", "1").unwrap_err().0,
+                DENY_NO_GRANT_FILE
+            );
         });
     }
 

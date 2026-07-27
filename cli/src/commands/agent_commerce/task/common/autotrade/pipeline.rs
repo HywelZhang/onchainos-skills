@@ -10,9 +10,9 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use super::amount::Decimal;
-use super::card::{self, ExecutionCard, NotifyOnly};
+use super::card::{self, DecisionRequest, ExecutionCard, NotifyOnly};
 use super::schema::{self, AmountUnit, AutoTradeSignal, DefiAction, Side, TypedParams};
-use super::{holding, subscription};
+use super::{consent, holding, subscription};
 use super::{AutoTradeError, DegradeReason};
 
 /// Runtime inputs for the buyer inbound pipeline.
@@ -25,12 +25,21 @@ pub struct PipelineInput<'a> {
     pub received_at_ms: u64,
     /// Locally-saved deliverable path — surfaced only on the notify-only path.
     pub saved_path: &'a str,
+    /// When true, the caller (`autotrade-consent-set` replaying a signal the user just
+    /// approved via option B — "execute this one, ask me each time after") holds the
+    /// user's explicit consent for THIS delivery: skip the consent gate + cap and
+    /// execute it once. Structure / freshness / subscription / wallet still apply.
+    /// Normal inbound signals set this `false`.
+    pub consent_override: bool,
 }
 
-/// The pipeline result: exactly one of card / notify-only.
+/// The pipeline result: exactly one of card / notify / decision.
 pub enum PipelineOutcome {
     Card(Box<ExecutionCard>),
     Notify(NotifyOnly),
+    /// First-time / manual (ask-every-time) / over-cap — push a decision to the user; execute
+    /// nothing yet. The caller stashes the signal so a follow-up consent-set can replay it.
+    Decision(Box<DecisionRequest>),
 }
 
 /// Current wall-clock in milliseconds since the Unix epoch.
@@ -211,11 +220,18 @@ async fn resolve_grant_target(
     }
 }
 
-/// Run the full fixed-order chain. Returns `Ok(outcome)`; the caller maps a
-/// [`PipelineOutcome::Card`] / `Notify` onto `output::success`.
+/// The success shapes `run_inner` can produce (before degrade/reject → Notify).
+enum RunOk {
+    Card(ExecutionCard),
+    Decision(DecisionRequest),
+}
+
+/// Run the full fixed-order chain. Returns `Ok(outcome)`; the caller maps the
+/// [`PipelineOutcome`] onto `output::success`.
 pub async fn run(input: PipelineInput<'_>) -> PipelineOutcome {
     match run_inner(&input).await {
-        Ok(card) => PipelineOutcome::Card(Box::new(card)),
+        Ok(RunOk::Card(card)) => PipelineOutcome::Card(Box::new(card)),
+        Ok(RunOk::Decision(d)) => PipelineOutcome::Decision(Box::new(d)),
         Err(AutoTradeError::Degrade(reason)) => {
             PipelineOutcome::Notify(card::make_notify_only(input.saved_path, reason.as_str()))
         }
@@ -243,7 +259,7 @@ fn check_job_id(job_id: &str) -> Result<(), AutoTradeError> {
     }
 }
 
-async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTradeError> {
+async fn run_inner(input: &PipelineInput<'_>) -> Result<RunOk, AutoTradeError> {
     // 0. jobId charset (defense-in-depth; before any filesystem/path use).
     check_job_id(input.job_id)?;
 
@@ -280,32 +296,142 @@ async fn run_inner(input: &PipelineInput<'_>) -> Result<ExecutionCard, AutoTrade
             .ok_or(AutoTradeError::Degrade(DegradeReason::NoActiveWallet))?,
     };
 
-    // 6 + 7. grant cap (+ holding resolution for dex sell+pct). Dex sell / defi
-    // withdraw+claim are not grant-gated (resolution.grant == None), so no cap check
-    // fires for them; the sell+pct absolute amount is still resolved for the command.
+    // 6. resolve the command target (buy-side venue/action/amount + dex sell+pct
+    // holding). Dex sell / defi withdraw+claim spend nothing (grant == None).
     let resolution = resolve_grant_target(&typed, &wallet).await?;
-    if let Some(gt) = &resolution.grant {
-        // Preserve the specific grant-deny reason (expired / venue-not-authorized /
-        // no-cap / over-cap …) rather than collapsing every denial onto `over_cap`.
-        // Security is unchanged (all fail-closed); this only makes NotifyOnly.reason +
-        // audit truthful about *why* it degraded.
-        super::grants::check_grant(input.job_id, gt.venue, gt.action, &gt.amount)
-            .map_err(|d| AutoTradeError::Degrade(DegradeReason::GrantDenied(d.code())))?;
+    let sig_type = signal.signal_type.as_str();
+    // A buy's quote spend (U), for the success-notification amount. `None` for sells / no-spend
+    // actions (they carry no cap-relevant amount).
+    let buy_amt_str = resolution
+        .grant
+        .as_ref()
+        .filter(|g| g.action == "buy")
+        .map(|g| g.amount.clone());
+
+    // Consent override: `autotrade-consent-set` is replaying a signal the user JUST
+    // explicitly approved via the three-way decision — option B ("execute this one, ask
+    // me each time after"). The user consented to THIS delivery, so skip the consent gate
+    // + cap and execute it once (the stored `Manual` mode governs FUTURE signals).
+    // `assemble_command_manual` keeps polymarket off the auto grant-check so this one-off
+    // runs without a standing grant. Structure / freshness / subscription / wallet were
+    // enforced above, so a stale signal / ended subscription still degrades safely.
+    if input.consent_override {
+        let resolved = resolution.resolved_dex_amount.as_deref();
+        let command = card::assemble_command_manual(&typed, &wallet, input.job_id, resolved)?;
+        // Plugin-install gate: a command needing an un-approved plugin defers to a
+        // user-visible install decision instead of a silent (invisible) sub-side install.
+        if let Some(plugin) = card::plugin_dependency(&command) {
+            if !consent::plugin_approved(input.job_id, &plugin) {
+                return Ok(RunOk::Decision(card::make_plugin_install_decision(
+                    &signal.delivery_id,
+                    sig_type,
+                    input.job_id,
+                    input.agent_id,
+                    &plugin,
+                )));
+            }
+        }
+        write_latch(input.job_id, &signal.delivery_id)?;
+        return Ok(RunOk::Card(card::make_execution_card(
+            &signal.delivery_id,
+            sig_type,
+            &sub.provider_agent_id,
+            command,
+            buy_amt_str.clone(),
+            None, // manual one-shot (B): no standing cap, so no "within limit" / pause line
+        )));
     }
 
-    // Assemble the command before latching (so a build failure doesn't burn the latch).
-    let resolved = resolution.resolved_dex_amount.as_deref();
-    let command = card::assemble_command(&typed, &wallet, input.job_id, resolved)?;
-
-    // 8. idempotency latch — write marker first, THEN return the card.
-    write_latch(input.job_id, &signal.delivery_id)?;
-
-    Ok(card::make_execution_card(
-        &signal.delivery_id,
-        signal.signal_type.as_str(),
-        &sub.provider_agent_id,
-        command,
-    ))
+    // 7. CLIENT CONSENT gate (product 2026-07-17). The per-trade cap now lives in the
+    // consent record (not a per-venue grant file). Cap-relevant amount = a buy's
+    // quote/U spend; sells and no-spend actions are never cap-gated (they pass `None`).
+    let buy_amount = match resolution.grant.as_ref().filter(|g| g.action == "buy") {
+        Some(g) => Some(
+            Decimal::parse(&g.amount)
+                .map_err(|_| AutoTradeError::Degrade(DegradeReason::StructureReject))?,
+        ),
+        None => None,
+    };
+    match consent::evaluate_consent(input.job_id, buy_amount.as_ref())
+        .map_err(|e| AutoTradeError::Degrade(DegradeReason::ConsentInvalid(e.0)))?
+    {
+        // First-time / manual (B) / declined (C) ⇒ push the three-way decision; the caller
+        // stashes the signal so a follow-up consent-set can replay it (B executes this one,
+        // C does not). PRD ③: while auto-execute is NOT enabled, EVERY signal re-prompts the
+        // three-way card. B ("execute once, then ask every time") and C ("don't execute THIS
+        // one") both leave auto off, so each subsequent signal re-asks — neither is a persistent
+        // manual/decline mode. Only A (auto+cap) persists and auto-executes.
+        consent::ConsentDecision::FirstTime
+        | consent::ConsentDecision::Manual
+        | consent::ConsentDecision::Declined => Ok(RunOk::Decision(card::make_first_time_decision(
+            &signal.delivery_id,
+            sig_type,
+            input.job_id,
+            input.agent_id,
+        ))),
+        // Auto but this buy exceeds the cap ⇒ re-ask (raise cap / skip this one).
+        consent::ConsentDecision::AutoOverCap => {
+            let cap = consent::load_consent(input.job_id)
+                .ok()
+                .flatten()
+                .and_then(|c| c.cap_u)
+                .unwrap_or_default();
+            let amount = buy_amount
+                .as_ref()
+                .map(|d| d.to_plain_string())
+                .unwrap_or_default();
+            Ok(RunOk::Decision(card::make_over_cap_decision(
+                &signal.delivery_id,
+                sig_type,
+                input.job_id,
+                input.agent_id,
+                &amount,
+                &cap,
+            )))
+        }
+        // Auto within cap ⇒ auto-execute.
+        consent::ConsentDecision::AutoAllow => {
+            // Defense-in-depth: consent already enforced the cap, but re-check the grant
+            // file (written by `autotrade-consent-set`) so the in-process cap and the
+            // out-of-process plugin `autotrade-grant-check` agree. Fail-closed; the
+            // specific grant-deny reason is preserved for the notify + audit.
+            if let Some(gt) = resolution.grant.as_ref().filter(|g| g.action == "buy") {
+                super::grants::check_grant(input.job_id, gt.venue, gt.action, &gt.amount)
+                    .map_err(|d| AutoTradeError::Degrade(DegradeReason::GrantDenied(d.code())))?;
+            }
+            // Assemble before latching (a build failure must not burn the latch).
+            let resolved = resolution.resolved_dex_amount.as_deref();
+            let command = card::assemble_command(&typed, &wallet, input.job_id, resolved)?;
+            // Plugin-install gate: an un-approved plugin defers to a user-visible install
+            // decision (the sub must not silently install; compliance + invisibility).
+            if let Some(plugin) = card::plugin_dependency(&command) {
+                if !consent::plugin_approved(input.job_id, &plugin) {
+                    return Ok(RunOk::Decision(card::make_plugin_install_decision(
+                        &signal.delivery_id,
+                        sig_type,
+                        input.job_id,
+                        input.agent_id,
+                        &plugin,
+                    )));
+                }
+            }
+            // The auto per-trade cap in effect (U) — feeds the success-notification "within
+            // limit" clause + the pause line. Same load pattern as the AutoOverCap branch.
+            let cap = consent::load_consent(input.job_id)
+                .ok()
+                .flatten()
+                .and_then(|c| c.cap_u);
+            write_latch(input.job_id, &signal.delivery_id)?;
+            Ok(RunOk::Card(card::make_execution_card(
+                &signal.delivery_id,
+                sig_type,
+                &sub.provider_agent_id,
+                command,
+                buy_amt_str.clone(),
+                cap,
+            )))
+        }
+    }
 }
 
 /// The chain index that governs the executed command's chain flag, if any.

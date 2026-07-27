@@ -376,6 +376,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::ServiceList(_) => "service-list".into(),
         AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
         AgentCommand::FeedbackList(_) => "feedback-list".into(),
+        AgentCommand::TaskFeedback(_) => "task-feedback".into(),
         AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
         AgentCommand::ValidateListing(_) => "validate-listing".into(),
 
@@ -413,8 +414,13 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
+        AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
+        AgentCommand::SubscribeActive { .. } => "subscribe-active".into(),
+        AgentCommand::SubscribeAgreeRefund { .. } => "subscribe-agree-refund".into(),
+        AgentCommand::SubscribeAspClaim { .. } => "subscribe-asp-claim".into(),
+        AgentCommand::SubscribeDispute { .. } => "subscribe-dispute".into(),
         // Sub-groups
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
         // Evaluator (flat — 见 agent_commerce/mod.rs)
@@ -450,6 +456,11 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
+        AgentCommand::CreateSubscribe { .. } => "create-subscribe".into(),
+        AgentCommand::SubscribeCancel { .. } => "subscribe-cancel".into(),
+        AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
+        AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
+        AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),

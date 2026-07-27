@@ -166,6 +166,67 @@ fn a2a_spool_dir() -> std::path::PathBuf {
     std::env::temp_dir()
 }
 
+/// Persist a raw inbound A2A deliver message piped on stdin (`next-action
+/// --a2a-stdin`) to the recovery spool — exactly where the sub-session LLM used
+/// to hand-write it (one whole model turn saved). Per-delivery unique name
+/// (timestamp suffix) so two messages in one round can't overwrite each other;
+/// the recovery dual-scan picks up the `a2a_deliver_<jobId>_` prefix. Returns
+/// the written path for injection as `a2aFile`.
+pub(crate) fn persist_a2a_spool(job_id: &str, raw: &str) -> anyhow::Result<String> {
+    persist_a2a_spool_in(&a2a_spool_dir(), job_id, raw)
+}
+
+/// Dir-injected core of [`persist_a2a_spool`] — unit-testable without touching
+/// `TMPDIR` (the recover_* tests mutate that env concurrently).
+///
+/// Filename = `a2a_deliver_<jobId>_<millis>_<pid>[ _n ].json`: pid + `create_new`
+/// (+ a bounded uniquifier retry) make same-millisecond collisions impossible —
+/// the old hand-written scheme was collision-free by deliveryId, and a silent
+/// overwrite here would lose a copy-trade signal. Written 0600 on unix: the raw
+/// deliver payload can carry a file-deliverable decryption secret, and the OS
+/// temp dir is shared (same rationale as `home::write_secure` for authz records;
+/// the recovery scan runs as the same uid, so tighter perms are free).
+fn persist_a2a_spool_in(dir: &std::path::Path, job_id: &str, raw: &str) -> anyhow::Result<String> {
+    use std::io::Write;
+    // Path-traversal defense: jobId lands in a filename.
+    if job_id.is_empty()
+        || !job_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!("--a2a-stdin: invalid jobId for the spool filename");
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    for n in 0..5u32 {
+        let name = if n == 0 {
+            format!("a2a_deliver_{job_id}_{ts}_{pid}.json")
+        } else {
+            format!("a2a_deliver_{job_id}_{ts}_{pid}_{n}.json")
+        };
+        let path = dir.join(name);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        match opts.open(&path) {
+            Ok(mut f) => {
+                f.write_all(raw.as_bytes())?;
+                return Ok(path.to_string_lossy().into_owned());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    anyhow::bail!("--a2a-stdin: could not allocate a unique spool filename");
+}
+
 /// Collect the A2A spool candidates for `job_id` and return the OLDEST by mtime.
 ///
 /// Candidates (FR-10): the fixed-name file `a2a_deliver_<jobId>.json` (old / no
@@ -386,12 +447,14 @@ pub(crate) async fn run_recovered_autotrade(
         Some([base_tags.clone(), vec!["phase=detected".to_string()]].concat()),
         None,
     );
+    let received_at_ms = now_ms();
     let outcome = pipeline::run(pipeline::PipelineInput {
         signal_json,
         job_id,
         agent_id,
-        received_at_ms: now_ms(),
+        received_at_ms,
         saved_path,
+        consent_override: false,
     })
     .await;
     // Result audit: the money-moving decision (card vs. degrade reason) must be
@@ -434,10 +497,84 @@ pub(crate) async fn run_recovered_autotrade(
             ),
             Some(&notify.reason),
         ),
+        pipeline::PipelineOutcome::Decision(d) => audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        "phase=result".to_string(),
+                        "outcome=decision".to_string(),
+                        format!("deliveryId={}", d.delivery_id),
+                    ],
+                ]
+                .concat(),
+            ),
+            None,
+        ),
     }
     match outcome {
         pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
-        pipeline::PipelineOutcome::Notify(notify) => success_envelope(&notify),
+        pipeline::PipelineOutcome::Notify(mut notify) => {
+            // Deterministic degrade notice: the CLI tells the user itself — this
+            // often runs in a headless session whose reply text never reaches
+            // them, and the follow-up user-notify step used to be skippable.
+            crate::commands::agent_commerce::task::common::autotrade::notify::push_degrade_notice(
+                &mut notify,
+                job_id,
+            );
+            success_envelope(&notify)
+        }
+        pipeline::PipelineOutcome::Decision(d) => {
+            // Stash the held signal (+ its receive time) so `autotrade-consent-set` can
+            // replay it after the user answers (the "execute this one" options).
+            let _ =
+                crate::commands::agent_commerce::task::common::autotrade::consent::stash_pending_signal(
+                    job_id,
+                    signal_json,
+                    received_at_ms,
+                );
+            decision_envelope(&d, agent_id)
+        }
+    }
+}
+
+/// Push a pipeline decision card to the user in-process and return the envelope
+/// for the consuming agent. Deterministic — the first three-way / over-cap /
+/// plugin card must not depend on a (possibly headless) session copying
+/// `d.command` (same cure as the consent-replay path in `agent_commerce/mod.rs`).
+/// On push failure, falls back to handing the agent the full payload whose
+/// `command` it can run.
+fn decision_envelope(
+    d: &crate::commands::agent_commerce::task::common::autotrade::card::DecisionRequest,
+    agent_id: &str,
+) -> String {
+    use crate::commands::agent_commerce::task::common::{autotrade::card, pending_v2};
+    match pending_v2::push_decision_direct(
+        &d.job_id,
+        "user",
+        agent_id,
+        &d.user_content,
+        &card::decision_list_label(d),
+        &d.source_event,
+    ) {
+        Ok(()) => success_envelope(&serde_json::json!({
+            "decision": true,
+            "decisionPushed": true,
+            "sourceEvent": d.source_event,
+            "requiresPlugin": d.requires_plugin,
+            "guidance": "Decision card already pushed to the user by the CLI. Do NOT run \
+                         the card command or any okx-a2a user command — just end the turn.",
+        })),
+        Err(e) => {
+            eprintln!(
+                "[autotrade] decision direct-push failed, falling back to command hand-off: {e}"
+            );
+            success_envelope(d)
+        }
     }
 }
 
@@ -893,12 +1030,14 @@ pub(crate) async fn deliverable_received_cli(
             Some([base_tags.clone(), vec!["phase=detected".to_string()]].concat()),
             None,
         );
+        let received_at_ms = now_ms();
         let outcome = pipeline::run(pipeline::PipelineInput {
             signal_json,
             job_id,
             agent_id,
-            received_at_ms: now_ms(),
+            received_at_ms,
             saved_path: &saved_path,
+            consent_override: false,
         })
         .await;
         // Result audit: record whether the pipeline emitted an execution card or
@@ -943,10 +1082,47 @@ pub(crate) async fn deliverable_received_cli(
                 ),
                 Some(&notify.reason),
             ),
+            pipeline::PipelineOutcome::Decision(d) => audit::log(
+                "cli",
+                ACTION_AUTOTRADE_DELIVER,
+                true,
+                Duration::default(),
+                Some(
+                    [
+                        base_tags.clone(),
+                        vec![
+                            "phase=result".to_string(),
+                            "outcome=decision".to_string(),
+                            format!("deliveryId={}", d.delivery_id),
+                        ],
+                    ]
+                    .concat(),
+                ),
+                None,
+            ),
         }
         return match outcome {
             pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
-            pipeline::PipelineOutcome::Notify(notify) => success_envelope(&notify),
+            pipeline::PipelineOutcome::Notify(mut notify) => {
+                // Deterministic degrade notice — recovery runs headless; see the
+                // live-path consumer above.
+                crate::commands::agent_commerce::task::common::autotrade::notify::push_degrade_notice(
+                    &mut notify,
+                    job_id,
+                );
+                success_envelope(&notify)
+            }
+            pipeline::PipelineOutcome::Decision(d) => {
+                // Stash the held signal (+ receive time) so `autotrade-consent-set` can
+                // replay it after the user answers (the "execute this one" options).
+                let _ =
+                    crate::commands::agent_commerce::task::common::autotrade::consent::stash_pending_signal(
+                        job_id,
+                        signal_json,
+                        received_at_ms,
+                    );
+                decision_envelope(&d, agent_id)
+            }
         };
     }
 
@@ -1217,8 +1393,10 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         let spool_dir = spool_dir.display();
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
-             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `{spool_dir}/a2a_deliver_{job_id}_<deliveryId>.json` (or `{spool_dir}/a2a_deliver_{job_id}.json` when the delivery carries no auto-trade block), then re-trigger:\n\
-             `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
+             If your conversation context contains an `[intent:deliver]` message, process it FIRST with the one-command stdin intake — pipe its full raw JSON via a quoted heredoc whose delimiter you invent fresh (A2A_EOF_ + 6 random characters):\n\
+             `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"deliverable_received\",\"jobId\":\"{job_id}\"}}' --a2a-stdin <<'A2A_EOF_<random>'`\n\
+             (Runtimes without heredoc support may instead write the raw JSON to `{spool_dir}/a2a_deliver_{job_id}_<deliveryId>.json` and pass it as \"a2aFile\" in --message.)\n\
+             Then re-trigger: `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
              Otherwise, end this turn and wait.\n"
         );
     }
@@ -1588,6 +1766,48 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── persist_a2a_spool (next-action --a2a-stdin) ──────────────────
+
+    #[test]
+    fn persist_a2a_spool_writes_prefix_named_file_and_rejects_bad_job_ids() {
+        // Dir-injected variant: no TMPDIR mutation, so this never races the
+        // recover_* tests that toggle that env concurrently.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("a2a_spool");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let raw = r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"x"}"#;
+        let path = persist_a2a_spool_in(&dir, "0xabc123", raw).unwrap();
+        assert!(
+            std::path::Path::new(&path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .is_some_and(|f| f.starts_with("a2a_deliver_0xabc123_") && f.ends_with(".json")),
+            "got: {path}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+        // 0600: the payload can carry a file-deliverable decryption secret.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        // A second write in the same millisecond must NOT overwrite the first.
+        let path2 = persist_a2a_spool_in(&dir, "0xabc123", "second").unwrap();
+        assert_ne!(path, path2);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+
+        // Path-traversal defense.
+        assert!(persist_a2a_spool_in(&dir, "../evil", raw).is_err());
+        assert!(persist_a2a_spool_in(&dir, "", raw).is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     // ── parse_deliver_content ────────────────────────────────────────
 

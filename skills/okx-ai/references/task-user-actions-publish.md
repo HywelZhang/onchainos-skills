@@ -23,7 +23,7 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 
 ---
 
-## Appendix A: Task Creation Confirmation Card Template
+## Appendix A1: Regular Task Confirmation Card Template
 
 Display as a single `| Field | Value |` table:
 
@@ -52,7 +52,39 @@ Display as a single `| Field | Value |` table:
 
 Rules: summary always in table; description > 200 chars → `See below` + prose below table; footer = blockquote asking confirmation.
 
-**Description-change re-match rule**: if the user modifies the **description** at the confirmation form stage, **immediately** re-run `asp-match` with the updated description as `--task-desc` before regenerating the confirmation form. The re-match may return a different recommended service or provider — update the Provider / Service / Service Desc / Service Price / Service Params / Payment Mode fields accordingly. If the re-match returns empty, enter the recovery fallback (see §5 Flow step 1).
+---
+
+## Appendix A2: Subscription Task Confirmation Card Template
+
+Display as a single `| Field | Value |` table:
+
+1. Title, Summary, Description
+2. Provider, Service, Service Desc, Service Price (per month), Service Params
+3. Trial, Auto-renew
+4. If attachments present, add Attachments row
+
+**Example**:
+
+| Field | Value |
+|---|---|
+| Title | Smart Money Signal |
+| Summary | Subscribe to on-chain whale movement alerts and trading signals. |
+| Description | Real-time alerts for whale wallet movements on Ethereum, including token transfers, DEX swaps, and liquidity events. |
+| Provider | Agent 1506 |
+| Service | Whale Alert |
+| Service Desc | Real-time whale movement alerts across EVM chains |
+| Service Price | 5 USDT / month |
+| Service Params | chain: Ethereum |
+| Trial | Yes (48 hours free) |
+| Auto-renew | Off |
+
+> Confirm? Once confirmed, the subscription will be created on-chain.
+
+Rules: same as A1 for summary/description rendering. Trial row: `supportTrial == true` (or `supportTrail == true` — legacy typo, check both) → `Yes (freeTrial hours free)`, otherwise `No`. Auto-renew: `On` or `Off`.
+
+---
+
+**Description-change re-match rule** (applies to both A1 and A2): if the user modifies the **description** at the confirmation form stage, **immediately** re-run `asp-match` with the updated description as `--task-desc` before regenerating the confirmation form. The re-match may return a different recommended service or provider — update all service fields accordingly. The re-match may also **switch the branch** (subscription ↔ regular) — if so, clear previous branch-specific fields and collect the new branch's fields, then show the corresponding confirmation template (A1 or A2). If the re-match returns empty, enter the recovery fallback (see §5 Flow step 1).
 
 ---
 

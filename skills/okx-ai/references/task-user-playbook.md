@@ -129,7 +129,7 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 - **状态**: 直接展示 CLI 返回的 `statusName`（ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式由独立「试用」列（`trialType`）区分。
 - **费用**: `serviceTokenAmount` 字符串原样展示（绝不转 float）；CLI 不提供 token 符号，仅 `serviceTokenAddress`。
 - **期数**: `第{periodIndex}期`（已订阅期数）。
-- **下次扣款** (no CLI field — derive): `trialType==1` → `subStartTime`(试用转正扣款日); else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
+- **下次扣款** (no CLI field — derive): `status != "ACTIVE"` → "—"; else `trialType==1` → `subStartTime`(试用转正扣款日); else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
 - All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.
 - To open one row's full detail, pass that row's **`jobId`** to `subscribe-detail` (§订阅详情).

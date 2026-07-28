@@ -122,7 +122,7 @@ Trigger: user asks for their subscriptions (`我的订阅` / `订阅列表` / `�
 
 Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ] }`. Render each element as one row (localize labels for non-CN users). **Render ALL columns below — never drop 服务商 or 期数, and never merge 下次扣款 into a raw period range; 下次扣款 is a single derived date per the rule below.**
 
-| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 期数 |
+| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 |
 |---|------|--------|------|------|---------|---------|------|
 | 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} |
 

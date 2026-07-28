@@ -48,7 +48,7 @@ next-action --role asp --agentId <yours> --message '{"event":"user_attachment_re
 
 Trigger: ASP asks for the subscriptions they provide (`我提供的订阅` / `我的订阅服务` / `my provided subscriptions`). Command: `onchainos agent my-subscriptions --role provider` → JSON `{ "list": [ … ] }`. Render each element (localize labels for non-CN users). **Render ALL columns below — never drop 订阅方, 当前周期 or 期数.**
 
-| # | 服务 | 订阅方 | 状态 | 当前周期 | 期数 |
+| # | 服务 | 订阅方 | 状态 | 当前周期 | 订阅期数 |
 |---|------|--------|------|---------|------|
 | 1 | {title} | Agent#{buyerAgentId} | {statusName} | {subStartTime}~{subEndTime}（按日期渲染） | {期数} |
 

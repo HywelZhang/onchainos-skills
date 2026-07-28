@@ -193,16 +193,11 @@ pub(crate) fn sub_asp_dispute(
     {
         Some(s) => s,
         None => {
-            // No prefetched provider id, so the CLI cannot auto-collect chat-history
-            // evidence for this arbitration. Per the subscription invariant, still
-            // render a display notification to the user (never a decision): tell them
-            // the dispute has opened. Evidence auto-upload is skipped in this case.
-            return notify_and_end(&super::super::content::sub_asp_dispute_user_notify(
-                svc,
-                job_id,
-                extract_i64(message, "subStartTime"),
-                extract_i64(message, "subEndTime"),
-            ));
+            return format!(
+                "[sub_asp_dispute] prefetched.provider_agent_id missing for job {job_id}; \
+             cannot fetch chat history for dispute evidence.\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+            )
         }
     };
     let chat_block = match okx_a2a::session_history(job_id, provider_id) {

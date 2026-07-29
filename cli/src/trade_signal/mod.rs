@@ -1,0 +1,239 @@
+//! V2 text trading-signal parser core (FR-1 / FR-2 / FR-3).
+//!
+//! Pure-local, deterministic, bilingual (中/英), fail-closed. Zero I/O, zero
+//! network, no `SystemTime`/locale/randomness (NFR-1..NFR-3). Three independent
+//! public entry points:
+//! - [`detect_format`] — classify a raw string (FR-1).
+//! - [`parse_signal_text`] — parse one V1.1 `signalText` → [`ParsedSignal`] (FR-2).
+//! - [`parse_envelope`] — validate a V2 wire envelope then delegate (FR-3).
+//!
+//! ## Input grammar (Implementation-defined — see notes.md / changes_summary.md)
+//! The authoritative wire grammar lives in Lark spec v1.1, not quoted in the
+//! stage inputs; this module defines a coherent bilingual labeled-field grammar
+//! satisfying every FR/AC. The *output* `ParsedSignal` JSON and the `errorCode`
+//! set are the spec's frozen stability contract (NFR-4).
+//!
+//! Grammar: `【HEADER】label:value|label:value|...` — see [`header`] and [`fields`].
+
+use serde::Serialize;
+
+use crate::asset_class::AssetClass;
+
+pub mod envelope;
+pub mod error;
+pub mod fields;
+pub mod format;
+pub mod header;
+pub mod params;
+
+#[cfg(test)]
+mod tests;
+
+pub use error::ParseError;
+pub use format::{detect_format, InputFormat};
+
+/// Signal language, derived from the header (never guessed). Wire: `"zh" | "en"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    Zh,
+    En,
+}
+
+/// An absolute price interval; both bounds are plain decimal strings, `lo < hi`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriceRange {
+    pub lo: String,
+    pub hi: String,
+}
+
+/// Trade side. Wire: `"BUY" | "SELL"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+/// Perp direction. Wire: `"LONG" | "SHORT"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Direction {
+    Long,
+    Short,
+}
+
+/// Spot order type. Wire: `"market" | "limit"` (defaults to `market`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrderType {
+    Market,
+    Limit,
+}
+
+/// Perp margin mode. Wire: `"cross" | "isolated"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarginMode {
+    Cross,
+    Isolated,
+}
+
+/// Prediction outcome. Wire: `"YES" | "NO" | "UP" | "DOWN"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Outcome {
+    Yes,
+    No,
+    Up,
+    Down,
+}
+
+/// Option type. Wire: `"Call" | "Put"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum OptionType {
+    Call,
+    Put,
+}
+
+/// DeFi execution semantics — fixed to `deposit` for this text format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionSemantics {
+    Deposit,
+}
+
+/// Spot params (FR-2.2). `tokenAddr`/`slippage` present only for the on-chain form.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotParams {
+    pub market: String,
+    pub symbol: String,
+    pub side: Side,
+    pub price_range: PriceRange,
+    pub order_type: OrderType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slippage: Option<String>,
+}
+
+/// Perp params (FR-2.3).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerpParams {
+    pub pair: String,
+    pub direction: Direction,
+    pub leverage: u32,
+    pub entry_range: PriceRange,
+    pub stop_loss: String,
+    pub take_profit: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_mode: Option<MarginMode>,
+}
+
+/// Prediction params (FR-2.4). `event` is free text — NEVER echoed in errors (SR-3).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PredictionParams {
+    pub event: String,
+    pub outcome: Outcome,
+    pub odds: String,
+    pub settle_date: String,
+}
+
+/// Option params (FR-2.5). `strike`/`expiry`/`optionType` cross-check `contractCode`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionParams {
+    pub contract_code: String,
+    pub side: Side,
+    pub option_type: OptionType,
+    pub strike: String,
+    pub expiry: String,
+    pub premium_cap: String,
+}
+
+/// DeFi params (FR-2.6). `chain`/`protocolPool` are unresolved strings (D-1).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefiParams {
+    pub chain: String,
+    pub protocol_pool: String,
+    pub apy: String,
+    pub tvl: String,
+    pub token: String,
+    pub redeem_terms: String,
+    pub execution_semantics: ExecutionSemantics,
+}
+
+/// Closed 1:1 variant set keyed by asset class (internally tagged as `kind`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SignalParams {
+    Spot(SpotParams),
+    Perp(PerpParams),
+    Prediction(PredictionParams),
+    Option(OptionParams),
+    Defi(DefiParams),
+}
+
+/// The public parse result — the stability contract (NFR-4). `assetClass` (top)
+/// and `params.kind` are always equal.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedSignal {
+    pub asset_class: AssetClass,
+    pub language: Language,
+    pub position_percent: String,
+    pub ttl_seconds: u64,
+    pub params: SignalParams,
+}
+
+/// Parse one V1.1-spec `signalText` into a typed [`ParsedSignal`] (FR-2). Fixed,
+/// fail-closed order; errors NEVER echo the raw input (SR-3).
+pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
+    // 1. length / single-line guards (NFR-5).
+    if input.is_empty() {
+        return Err(ParseError::EmptyInput);
+    }
+    if input.contains('\n') || input.contains('\r') {
+        return Err(ParseError::MultiLine);
+    }
+    if input.chars().count() > 200 {
+        return Err(ParseError::TooLong);
+    }
+    // SR-2: no injected content (emoji / link / @mention) anywhere in the input.
+    if fields::contains_forbidden(input) {
+        return Err(ParseError::ForbiddenContent);
+    }
+
+    // 2-3. exact header → (asset class, language) + remainder.
+    let (asset_class, language, remainder) = header::parse_header(input)?;
+
+    // 4. split on '|', trim, reject empties → ordered (label, value) pairs.
+    let raw_fields = fields::split_fields(remainder)?;
+
+    // 5-6. translate labels → canonical ids with a same-language check.
+    let mut field_map = fields::FieldMap::build(asset_class, language, &raw_fields)?;
+
+    // 7-8. common (position/ttl) + per-class field parse & range/date/constraints.
+    let position_percent = fields::parse_position(&field_map.require(fields::ID_POSITION)?)?;
+    let ttl_seconds = fields::parse_ttl(&field_map.require(fields::ID_TTL)?)?;
+    let params = params::dispatch(asset_class, &mut field_map)?;
+
+    // Any label valid for the class but unconsumed by its form is an extra field.
+    field_map.ensure_consumed()?;
+
+    // 9. build the typed result.
+    Ok(ParsedSignal {
+        asset_class,
+        language,
+        position_percent,
+        ttl_seconds,
+        params,
+    })
+}
+
+pub use envelope::parse_envelope;

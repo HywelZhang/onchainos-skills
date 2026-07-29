@@ -4,7 +4,22 @@ use serde_json::{json, Value};
 
 use super::Context;
 use crate::client::ApiClient;
+use crate::commands::sink::CodedError;
 use crate::output;
+use crate::trade_signal::{self, InputFormat, ParseError};
+
+/// Parse mode for the hidden `signal parse` diagnostic.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ParseMode {
+    /// Detect the input format, then parse accordingly.
+    Auto,
+    /// Force `parse_signal_text` (bare V1.1 signal text).
+    Text,
+    /// Force `parse_envelope` (V2 wire envelope JSON).
+    Envelope,
+    /// Only run `detect_format` and return the classification.
+    Detect,
+}
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
@@ -53,11 +68,24 @@ pub enum SignalCommand {
         #[arg(long)]
         cursor: Option<String>,
     },
+    /// Diagnostic: parse a V1.1 trade-signal text or V2 envelope into typed JSON.
+    /// Internal/eval use only — the trade-signal parser diagnostic, distinct from
+    /// the market-signal `Chains`/`List` verbs above.
+    #[command(hide = true)]
+    Parse {
+        /// Raw input: a bare signalText (【…】…) or a V2 envelope JSON ({…}).
+        #[arg(long)]
+        text: String,
+        /// Parse mode: auto (detect+parse) | text | envelope | detect (classify only).
+        #[arg(long, value_enum, default_value_t = ParseMode::Auto)]
+        mode: ParseMode,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: SignalCommand) -> Result<()> {
     match cmd {
         SignalCommand::Chains => signal_chains(ctx).await,
+        SignalCommand::Parse { text, mode } => signal_parse(&text, mode),
         SignalCommand::List {
             chain,
             wallet_type,
@@ -179,6 +207,34 @@ async fn signal_chains(ctx: &Context) -> Result<()> {
     Ok(())
 }
 
+/// Hidden diagnostic: run the trade-signal parser core and emit the standard
+/// envelope. Pure-local (no `ctx`, no network); `async`-compatible only to match
+/// the `execute` signature. On `ParseError` it returns a `CodedError` so `main.rs`
+/// renders `{ok:false,error,errorCode,errorField?}` and exits 1 (SR-3: never
+/// echoes the raw input). `--mode detect` returns the format classification.
+fn signal_parse(text: &str, mode: ParseMode) -> Result<()> {
+    let parsed = match mode {
+        ParseMode::Detect => {
+            output::success(json!({ "format": trade_signal::detect_format(text) }));
+            return Ok(());
+        }
+        ParseMode::Text => trade_signal::parse_signal_text(text),
+        ParseMode::Envelope => trade_signal::parse_envelope(text),
+        ParseMode::Auto => match trade_signal::detect_format(text) {
+            InputFormat::V2Text => trade_signal::parse_signal_text(text),
+            InputFormat::V1JsonSchema => trade_signal::parse_envelope(text),
+            InputFormat::Unsupported => Err(ParseError::UnsupportedFormat),
+        },
+    };
+    match parsed {
+        Ok(signal) => {
+            output::success(signal);
+            Ok(())
+        }
+        Err(e) => Err(CodedError::new(e.code(), e.field(), e.message()).into()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn signal_list(
     ctx: &Context,
@@ -218,4 +274,98 @@ async fn signal_list(
         .await?,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A minimal valid V1.1 signal text and its V2 envelope wrapper (mirrors the
+    // parser corpus in `trade_signal/tests.rs`).
+    const VALID_TEXT: &str =
+        "【SPOT】market:BTC/USDT|symbol:BTC|side:BUY|price:60000-65000|position:5%|ttl:1h";
+    const VALID_ENVELOPE: &str = "{\"schemaVersion\":2,\"deliveryId\":\"abc123\",\"signalTime\":1,\"signalText\":\"【SPOT】market:BTC/USDT|symbol:BTC|side:BUY|price:60000-65000|position:5%|ttl:1h\"}";
+
+    /// Extract the `(errorCode, errorField)` the handler surfaces on the exit-1
+    /// path — i.e. the `ParseError → CodedError` mapping that `main.rs` renders
+    /// via `output::error_coded` and exits 1 (Decision #2 / SR-3).
+    fn err_code(res: Result<()>) -> (String, Option<String>) {
+        let e = res.expect_err("handler should return Err on a bad parse");
+        let c = e
+            .downcast_ref::<CodedError>()
+            .expect("error must downcast to CodedError (exit-1 coded path)");
+        (c.code.clone(), c.field.clone())
+    }
+
+    // ── Success (exit 0) — every mode routes to the right entry point ──────────
+
+    #[test]
+    fn auto_mode_parses_valid_text() {
+        assert!(signal_parse(VALID_TEXT, ParseMode::Auto).is_ok());
+    }
+
+    #[test]
+    fn auto_mode_parses_valid_envelope() {
+        assert!(signal_parse(VALID_ENVELOPE, ParseMode::Auto).is_ok());
+    }
+
+    #[test]
+    fn text_mode_forces_signal_text_parse() {
+        assert!(signal_parse(VALID_TEXT, ParseMode::Text).is_ok());
+    }
+
+    #[test]
+    fn envelope_mode_forces_envelope_parse() {
+        assert!(signal_parse(VALID_ENVELOPE, ParseMode::Envelope).is_ok());
+    }
+
+    #[test]
+    fn detect_mode_never_errors() {
+        // `detect` only classifies — it returns Ok (exit 0) for every shape,
+        // including inputs that would fail a real parse.
+        assert!(signal_parse(VALID_TEXT, ParseMode::Detect).is_ok());
+        assert!(signal_parse(VALID_ENVELOPE, ParseMode::Detect).is_ok());
+        assert!(signal_parse("", ParseMode::Detect).is_ok());
+        assert!(signal_parse("garbage", ParseMode::Detect).is_ok());
+    }
+
+    // ── Failure (exit 1) — coded-error contract ────────────────────────────────
+
+    #[test]
+    fn auto_mode_empty_input_is_unsupported_format() {
+        // Empty input under Auto is classified `Unsupported` first, so the
+        // handler emits `UnsupportedFormat` (not `EmptyInput`).
+        let (code, field) = err_code(signal_parse("", ParseMode::Auto));
+        assert_eq!(code, "UnsupportedFormat");
+        assert_eq!(field, None);
+    }
+
+    #[test]
+    fn known_bad_input_maps_to_expected_code_and_field() {
+        // position 0% → OutOfRange with the stable `range` field name.
+        let bad =
+            "【SPOT】market:BTC/USDT|symbol:BTC|side:BUY|price:60000-65000|position:0%|ttl:1h";
+        let (code, field) = err_code(signal_parse(bad, ParseMode::Text));
+        assert_eq!(code, "OutOfRange");
+        assert_eq!(field.as_deref(), Some("range"));
+    }
+
+    #[test]
+    fn option_mismatch_maps_to_contract_code_field() {
+        // A second point on the ParseError → CodedError mapping: the C/P vs
+        // optionType mismatch surfaces `OptionFieldMismatch` + `contractCode`.
+        let bad = "【OPTION】contractCode:BTC-251231-60000-C|side:Buy|optionType:Put|strike:60000|expiry:2025-12-31|premiumCap:1500|position:5%|ttl:5d";
+        let (code, field) = err_code(signal_parse(bad, ParseMode::Text));
+        assert_eq!(code, "OptionFieldMismatch");
+        assert_eq!(field.as_deref(), Some("contractCode"));
+    }
+
+    #[test]
+    fn envelope_mode_invalid_schema_is_invalid_envelope() {
+        let bad =
+            "{\"schemaVersion\":1,\"deliveryId\":\"abc123\",\"signalTime\":1,\"signalText\":\"x\"}";
+        let (code, field) = err_code(signal_parse(bad, ParseMode::Envelope));
+        assert_eq!(code, "InvalidEnvelope");
+        assert_eq!(field.as_deref(), Some("envelope"));
+    }
 }

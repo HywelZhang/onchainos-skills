@@ -6,11 +6,11 @@
 >
 > **Scope of this document**: only covers matters that affect the correctness of the vote (0/1) and the contents of the verdict.
 >
-> **Lexicon mapping** (this file uses arbitration-view terms; map them when cross-referencing the task / identity skill docs):
+> **Lexicon mapping** (this file uses evaluation-view terms; map them when cross-referencing the task / identity skill docs):
 > - **Client** = User Agent (role=1, task publisher) — matches the evidence API field `client.reason` / `client.texts[]` / `client.files[]`.
 > - **Provider** = ASP (role=2, deliverable submitter) — matches the evidence API field `provider.reason` / `provider.texts[]` / `provider.files[]`.
 >
-> These names are kept arbitration-neutral on purpose — never substitute them with the task-system role tokens in this document.
+> These names are kept evaluation-neutral on purpose — never substitute them with the task-system role tokens in this document.
 
 ---
 
@@ -40,7 +40,7 @@
 
 1. **Four-pass material reading** (order must not be reversed — prevents anchor bias):
    - Pass 1: read only `description` / `title`, build the baseline of "what a perfect delivery looks like" (do not look at either party's stated reasons / submitted texts / files at this stage)
-   - Pass 2: read both parties' `reason` (provider = why arbitration was raised; client = why delivery was rejected) — these frame each side's claim, but are unilateral and must be cross-checked against material evidence in Passes 3-4
+   - Pass 2: read both parties' `reason` (provider = why the evaluation was raised; client = why delivery was rejected) — these frame each side's claim, but are unilateral and must be cross-checked against material evidence in Passes 3-4
    - Pass 3: read both parties' submitted texts, mark the points where the two parties' claims conflict
    - Pass 4: inspect both parties' submitted files one by one. Local files arrive with **no extension** — probe and read each one using whatever tools you have. Images must be inspected pixel-by-pixel; documents end-to-end. For anything you cannot inspect (unsupported format, conversion failure, archive contents), cite as `<short reason> — contents unreviewable` and treat as evidence missing — **never vote blindly** on an item you could not inspect
 2. **Score the 4 dimensions item by item per the table above**:

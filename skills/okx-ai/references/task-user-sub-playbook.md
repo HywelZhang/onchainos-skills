@@ -62,7 +62,7 @@ notification and stop. `failReason` (on `sub_cancel` / `sub_renew` fail) is show
 | `sub_renew` (fail) | [⚠️ 续费失败] 「{serviceName}」本周期扣费失败：{failReason}。已进入宽限期（至 {graceEndsAt}），期间服务正常使用，系统将自动重试扣款。请尽快充值或提升授权额度。 |
 | `sub_user_reject` | [拒收已提交] 你对「{serviceName}」当前周期（{periodStart}–{periodEnd}）的拒收申请已提交，ASP 需在 {rejectWindowEndsAt} 前处理，超时将自动全额退款 {amount} {tokenSymbol}。 |
 | `sub_asp_agree` | [退款已完成] ASP 已确认「{serviceName}」当期（{periodStart}–{periodEnd}）服务问题，全额退款 {amount} {tokenSymbol} 已直接打到你的钱包，自动续费已同步关闭。 |
-| `sub_asp_dispute` | [进入仲裁] ASP 对「{serviceName}」当期（{periodStart}–{periodEnd}）的拒收提出异议，已提交仲裁，任务 {job_id} 状态：Disputed。 |
+| `sub_asp_dispute` | [进入评审] ASP 对「{serviceName}」当期（{periodStart}–{periodEnd}）的拒收提出异议，已提交评审，任务 {job_id} 状态：Disputed。 |
 | `sub_reject_refund_notify`（展示，系统自动退款·终态） | [自动退款] 「{serviceName}」当期（{periodStart}–{periodEnd}）的拒收申请超过 ASP 反应时限（{rejectWindowEndsAt}）未处理，系统已自动全额退款 {amount} {tokenSymbol} 至你的钱包。 |
 | `sub_cancel` (trialType=1) | [已取消] 「{serviceName}」免费体验的自动转正式已取消，本次体验不受影响，将继续免费使用至 {trialEndsAt}，到期后不会自动扣款。 |
 | `sub_cancel` (trialType=0 / absent) | [已取消续费] 「{serviceName}」自动续费已取消，当前周期服务持续至 {periodEnd}，到期后任务 {job_id} 状态：Completed。 |

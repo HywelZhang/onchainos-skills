@@ -82,7 +82,7 @@ Verdict
 
 Job ID: <jobId>
 Rubric scoring: <Spec X/40 + Acceptance Y/30 + Functional Z/20 + Professional W/10 = Total N/100>
-vote: <0 | 1>  // 0=Approve (Client wins) / 1=Reject (Provider wins)
+vote: <0 | 1>  // 0=Dispute upheld (Client wins) / 1=Dispute not upheld (Provider wins)
 Findings of fact: 1. ...  2. ...
 Evidence citations: Fact N ← <{provider|client}.reason, {provider|client}.texts[i], or {provider|client}.files[i].localPath>; whether there is an admission/rebuttal cross-check from the opposing party / whether it is pure text without corroboration
 Reasoning (cite decision principle number): per principle #<N>, <reasoning process>

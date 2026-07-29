@@ -37,7 +37,7 @@ fn notify_block(content: &str) -> String {
     format!(
         "Run `onchainos agent user-notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content:\n\
          \x20\x20\x20\x20{content}\n"
@@ -53,7 +53,7 @@ fn notify_block_lines(lines: &[String]) -> String {
     format!(
         "Run `onchainos agent user-notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content:\n\
          {body}\n"
@@ -565,7 +565,7 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
          \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `onchainos agent user-notify` (🌐 localize first), then end the turn:\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content (substitute placeholders first):\n\
          \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\

@@ -64,7 +64,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
      \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\n\
@@ -150,7 +150,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
      **Localize first** — translate the composed content into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Arbitration outcome (always included):\n\

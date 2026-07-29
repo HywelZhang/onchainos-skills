@@ -1394,7 +1394,7 @@ fn user_attachment_received_cli(
              The caller must include all 6 fields (fileKey/digest/salt/nonce/secret/filename) in --message JSON.\n\n\
              [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
              ```bash\n\
-             onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>'\n\
+             onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>\"\n\
              ```\n\n\
              ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
              **End this turn.**\n"
@@ -1411,7 +1411,7 @@ fn user_attachment_received_cli(
                 "[user_attachment_received_cli] ERROR: file download failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
                  ```bash\n\
-                 onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>'\n\
+                 onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>\"\n\
                  ```\n\n\
                  ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
                  **End this turn.**\n"
@@ -1450,7 +1450,7 @@ fn user_attachment_received_cli(
          Canonical content:\n\
          \x20\x20{att_notify}\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content \"<your translated content>\"\n\
          ```\n\n\
          ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
          **End this turn.**\n"

@@ -60,7 +60,7 @@
      --provider-agent-id <providerAgentId> \
      --service-id <serviceId> \
      --service-type <serviceType> \
-     --service-params '<serviceParams>' \
+     --service-params "<serviceParams>" \
      --service-token-address <feeToken> \
      --service-token-amount <feeAmount> \
      --payment-token-symbol <feeTokenSymbol> \

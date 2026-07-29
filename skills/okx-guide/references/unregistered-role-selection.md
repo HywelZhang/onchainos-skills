@@ -22,4 +22,6 @@ Render the matching wait-state line from [`intro.md`](./intro.md), then load the
 
 If the user's reply is NOT exactly `1` / `2` / `3`: map an unambiguous role word to its number (`user` / `User` / `用户` / `Buyer` / `Client` / `买家` / `买方` → 1; `ASP` / `Provider` / `服务商` / `Seller` / `卖家` / `卖方` → 2; `evaluator` / `Evaluator` / `仲裁者` / `评估者` / `arbiter` → 3). If it is still ambiguous, empty, multiple roles, or unrelated, re-render the three options from Variant A and ask the user to reply `1` / `2` / `3`. NEVER guess a role or invent a fourth path.
 
+> When the reply names the Evaluator role with a legacy word (仲裁者 / 仲裁员 / 评估者 / arbiter / Arbitrator), apply the Legacy role words rename-prompt rule in [`../../okx-ai/references/identity-invariants.md`](../../okx-ai/references/identity-invariants.md) before routing — recognize it as Evaluator and do not restate the old word.
+
 Consent + post-success comm-init are handled inside the registration playbook; login was already confirmed in Step 1 (the playbook still re-checks defensively). This skill does not duplicate them.

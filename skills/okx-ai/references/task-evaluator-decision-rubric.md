@@ -64,12 +64,12 @@ Required before submitting the vote. Swap the labels on both parties' `reason` /
 
 ## 2. Reduction to vote ∈ {0, 1}
 
-Only binary votes are accepted. **Vote semantics**: `0 = Approve (Client wins)`, `1 = Reject (Provider wins)`.
+Only binary votes are accepted. **Vote semantics**: `0 = Dispute upheld (Client wins)`, `1 = Dispute not upheld (Provider wins)`.
 
 | Total score | `vote` | Semantics |
 |---|---|---|
-| ≥ 80 | 1 | Reject arbitration; Provider wins; funds released in full to the Provider |
-| < 80 | 0 | Approve arbitration; Client wins; funds refunded to the Client |
+| ≥ 80 | 1 | Dispute not upheld; Provider wins; funds released in full to the Provider |
+| < 80 | 0 | Dispute upheld; Client wins; funds refunded to the Client |
 
 The reduction rule is a hard constraint; do not reverse-reduce for "balance" or "to avoid controversy".
 

@@ -27,6 +27,8 @@ pub struct CreateSubscribeParams {
     pub provider_agent_id: Option<String>,
     pub service_interval: String,
     pub format: String,
+    /// Device ids to omit from the default all-devices routing set (repeatable).
+    pub exclude_device: Option<Vec<String>>,
 }
 
 const MAX_TITLE_CHARS: usize = 64;
@@ -146,6 +148,24 @@ pub async fn handle_create_subscribe(
         );
     }
 
+    // Resolve the receive-device routing set: default = all logged-in devices
+    // (device-list paged to completion) minus any --exclude-device. If that query
+    // fails or returns empty, degrade to this device only and mark the result —
+    // never abort the create (§4.4). deviceList is ALWAYS sent explicitly so the
+    // created record never depends on server-default semantics.
+    let excluded = params.exclude_device.clone().unwrap_or_default();
+    let fetched = super::device_routing::fetch_all_device_ids(client, &user_agent_id)
+        .await
+        .ok();
+    let this_device_id = crate::device::id::get_cached_device_id();
+    let (device_list, device_routing_degraded) =
+        super::device_routing::resolve_create_device_set(fetched, &excluded, this_device_id);
+    if DEBUG_LOG {
+        eprintln!(
+            "[create-subscribe] deviceList={device_list:?} degraded={device_routing_degraded}"
+        );
+    }
+
     let mut create_body = serde_json::json!({
         "serviceId": params.service_id,
         "useTrial": effective_use_trial,
@@ -160,6 +180,7 @@ pub async fn handle_create_subscribe(
         "serviceInterval": params.service_interval,
         "terms": terms_for_create,
         "termsSig": terms_sig,
+        "deviceList": device_list,
     });
     if let Some(ref pid) = params.provider_agent_id {
         create_body["providerAgentId"] = serde_json::json!(pid);
@@ -221,6 +242,7 @@ pub async fn handle_create_subscribe(
         crate::output::success(serde_json::json!({
             "subId": sub_id,
             "txHash": tx_hash,
+            "deviceRoutingDegraded": device_routing_degraded,
         }));
         if super::content::is_cli_mode() {
             println!();
@@ -238,6 +260,11 @@ pub async fn handle_create_subscribe(
     println!("✓ Subscription submitted (transaction broadcast, awaiting on-chain confirmation)");
     println!("  jobId:  {sub_id}");
     println!("  txHash: {tx_hash}");
+    if device_routing_degraded {
+        println!(
+            "  ⚠ Device list unavailable — this subscription was set to receive on THIS device only; other devices can be added later."
+        );
+    }
     if let Some(ref pid) = params.provider_agent_id {
         println!("  Designated provider: {pid}");
     }
@@ -286,7 +313,7 @@ mod tests {
             super::super::TaskCommand::CreateSubscribe {
                 service_id, use_trial, service_token_amount, service_token_address,
                 auto_renew, copy_trade, title, description, description_summary,
-                provider_agent_id, service_params, service_interval, format,
+                provider_agent_id, service_params, service_interval, format, exclude_device,
             } => {
                 assert_eq!(service_id, "svc_001");
                 assert!(use_trial);
@@ -301,6 +328,7 @@ mod tests {
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
                 assert_eq!(format, "");
+                assert!(exclude_device.is_none());
             }
             _ => panic!("expected CreateSubscribe"),
         }

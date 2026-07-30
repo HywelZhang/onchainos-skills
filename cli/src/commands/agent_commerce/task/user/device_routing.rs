@@ -148,6 +148,48 @@ async fn fetch_all_devices(
     Ok(DevicePage { list: acc, total })
 }
 
+/// Fetch every logged-in device id (paginated to completion). Reuse convenience
+/// for `create-subscribe`'s default all-devices routing set — NOT an MCP `fetch_*`
+/// delegate. The caller decides how to handle an error / empty result (degrade).
+pub(crate) async fn fetch_all_device_ids(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+) -> Result<Vec<String>> {
+    let aggregated = fetch_all_devices(client, agent_id, 1, DEFAULT_PAGE_SIZE).await?;
+    Ok(aggregated
+        .list
+        .into_iter()
+        .map(|r| r.device_id)
+        .filter(|id| !id.is_empty())
+        .collect())
+}
+
+/// Resolve `create-subscribe`'s `deviceList` + `deviceRoutingDegraded` flag:
+/// - fetch succeeded with ≥ 1 device ⇒ all fetched ids minus `excluded`, not degraded;
+/// - fetch failed (`None`) or returned no devices ⇒ **this device only**, degraded.
+///
+/// An unresolved this-device id in the degrade branch yields an empty list (still
+/// degraded) — the create flow must not abort (§4.4).
+pub(crate) fn resolve_create_device_set(
+    fetched: Option<Vec<String>>,
+    excluded: &[String],
+    this_device_id: Option<&str>,
+) -> (Vec<String>, bool) {
+    match fetched {
+        Some(ids) if !ids.is_empty() => {
+            let kept = ids
+                .into_iter()
+                .filter(|id| !excluded.iter().any(|e| e == id))
+                .collect();
+            (kept, false)
+        }
+        _ => (
+            this_device_id.map(|id| vec![id.to_string()]).unwrap_or_default(),
+            true,
+        ),
+    }
+}
+
 /// `device-list` handler — full emit. Empty page / no devices ⇒ `success` with
 /// `list: []`, `total: 0` (NOT an error). Transport / endpoint-unavailable
 /// (endpoint not live in production yet) propagates as `output::error` (exit 1)
@@ -445,5 +487,46 @@ mod tests {
         // `--items '[]'` resolves to an empty array → 0-item boundary.
         let items = normalize_items(None, None, Some("[]")).unwrap();
         assert!(validate_items_len(items.len()).is_err());
+    }
+
+    // ── create-subscribe device set resolution (AC-02) ───────────────────
+    #[test]
+    fn create_device_set_default_all_devices() {
+        let fetched = Some(vec!["d1".to_string(), "d2".to_string(), "d3".to_string()]);
+        let (list, degraded) = resolve_create_device_set(fetched, &[], Some("d2"));
+        assert_eq!(list, vec!["d1", "d2", "d3"]);
+        assert!(!degraded);
+    }
+
+    #[test]
+    fn create_device_set_excludes_named_devices() {
+        let fetched = Some(vec!["d1".to_string(), "d2".to_string(), "d3".to_string()]);
+        let excluded = vec!["d2".to_string()];
+        let (list, degraded) = resolve_create_device_set(fetched, &excluded, Some("d1"));
+        assert_eq!(list, vec!["d1", "d3"]);
+        assert!(!degraded); // exclusion is a user choice, not a degrade
+    }
+
+    #[test]
+    fn create_device_set_degrades_to_this_device_on_fetch_failure() {
+        // Fetch failed (None) → this-device only, degraded.
+        let (list, degraded) = resolve_create_device_set(None, &[], Some("dME"));
+        assert_eq!(list, vec!["dME"]);
+        assert!(degraded);
+    }
+
+    #[test]
+    fn create_device_set_degrades_on_empty_fetch() {
+        // Fetch succeeded but returned no devices → degrade too.
+        let (list, degraded) = resolve_create_device_set(Some(vec![]), &[], Some("dME"));
+        assert_eq!(list, vec!["dME"]);
+        assert!(degraded);
+    }
+
+    #[test]
+    fn create_device_set_degrade_with_unresolved_this_device_is_empty() {
+        let (list, degraded) = resolve_create_device_set(None, &[], None);
+        assert!(list.is_empty());
+        assert!(degraded); // still degraded; create must not abort
     }
 }

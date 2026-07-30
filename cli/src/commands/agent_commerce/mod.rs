@@ -122,6 +122,8 @@ pub enum AgentCommand {
         #[arg(long = "provider-agent-id")] provider_agent_id: Option<String>,
         #[arg(long = "service-interval", default_value = "month")] service_interval: String,
         #[arg(long, default_value = "")] format: String,
+        /// Device ids to omit from the default all-devices routing set (repeatable).
+        #[arg(long = "exclude-device")] exclude_device: Option<Vec<String>>,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -1005,8 +1007,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } =>
-            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format }, ctx).await,
+        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device } =>
+            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device }, ctx).await,
 
         AgentCommand::SubscribeCancel { sub_id } =>
             task::user::run_task(T::SubscribeCancel { sub_id }, ctx).await,

@@ -123,6 +123,9 @@ pub enum TaskCommand {
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
+        /// Device ids to omit from the default all-devices routing set (repeatable).
+        #[arg(long = "exclude-device")]
+        exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs (pre-publish or post-publish)
     AspMatch {
@@ -366,12 +369,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             let copy_trade = parse_bool_or_int(&copy_trade, "copy-trade")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format,
+                auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>

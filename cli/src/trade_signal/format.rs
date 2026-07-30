@@ -6,7 +6,15 @@ use serde::Serialize;
 /// Classification of a raw input string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum InputFormat {
-    /// First char `{` — a V1 structured-JSON signal (classified only, never parsed here).
+    /// First char `{` — a JSON signal (classified only, never parsed here).
+    ///
+    /// NOTE (MR !196): this is a FIRST-CHARACTER classification, so it CANNOT
+    /// distinguish a legacy V1 structured-JSON signal from a V2 JSON envelope — both
+    /// begin with `{` and both classify as `V1JsonSchema`. Envelope-vs-legacy
+    /// discrimination is a CONTENT decision (the `schemaVersion` field checked by
+    /// `super::parse_envelope` / `parse_envelope_full`), not a `detect_format`
+    /// concern. Callers must route `V1JsonSchema` by inspecting `schemaVersion`, not
+    /// by assuming it is the legacy schema.
     V1JsonSchema,
     /// First char `【` (U+3010) — a V2 text signal.
     V2Text,
@@ -33,6 +41,19 @@ mod tests {
             detect_format("{\"schemaVersion\":2}"),
             InputFormat::V1JsonSchema
         );
+    }
+
+    /// MR !196: `detect_format` cannot tell a V1 legacy JSON signal from a V2 JSON
+    /// envelope — both start with `{`, so both classify as `V1JsonSchema`. The
+    /// version distinction lives in the `schemaVersion` field, not the first char.
+    #[test]
+    fn v1_and_v2_json_share_first_char_classification() {
+        let v1_legacy = "{\"schemaVersion\":1,\"signalType\":\"dex_trade\"}";
+        let v2_envelope =
+            "{\"schemaVersion\":2,\"deliveryId\":\"abc\",\"signalTime\":1,\"signalText\":\"x\"}";
+        assert_eq!(detect_format(v1_legacy), InputFormat::V1JsonSchema);
+        assert_eq!(detect_format(v2_envelope), InputFormat::V1JsonSchema);
+        assert_eq!(detect_format(v1_legacy), detect_format(v2_envelope));
     }
 
     #[test]

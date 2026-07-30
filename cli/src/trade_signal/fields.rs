@@ -38,36 +38,36 @@ use super::{Direction, Language, MarginMode, OptionType, OrderType, Outcome, Pri
 // keywords (SL / TP / APY / TVL) are Latin in both languages, so zh == en.
 
 /// Position: zh `position(zh)` / en `Position`.
-const KW_POSITION_ZH: &str = "\u{4ed3}\u{4f4d}";
-const KW_POSITION_EN: &str = "Position";
+pub const KW_POSITION_ZH: &str = "\u{4ed3}\u{4f4d}";
+pub const KW_POSITION_EN: &str = "Position";
 /// TTL wrapper: zh suffix `<ttl-suffix zh>` (`<ttl> <ttl-suffix zh>`) / en prefix `valid for` (`valid for <ttl>`).
 const KW_TTL_SUFFIX_ZH: &str = "\u{5185}\u{6709}\u{6548}";
 const KW_TTL_PREFIX_EN: &str = "valid for";
 /// Slippage: zh `slippage(zh)` / en `Slippage`.
-const KW_SLIPPAGE_ZH: &str = "\u{6ed1}\u{70b9}";
-const KW_SLIPPAGE_EN: &str = "Slippage";
+pub const KW_SLIPPAGE_ZH: &str = "\u{6ed1}\u{70b9}";
+pub const KW_SLIPPAGE_EN: &str = "Slippage";
 /// Perp entry range: zh `entry(zh)` / en `Entry`.
-const KW_ENTRY_ZH: &str = "\u{5165}\u{573a}";
-const KW_ENTRY_EN: &str = "Entry";
+pub const KW_ENTRY_ZH: &str = "\u{5165}\u{573a}";
+pub const KW_ENTRY_EN: &str = "Entry";
 /// Perp stop-loss (neutral): `SL`.
-const KW_SL: &str = "SL";
+pub const KW_SL: &str = "SL";
 /// Perp take-profit tag prefix (neutral): `TP` + a 1-based index.
 const KW_TP: &str = "TP";
 /// Prediction settle date: zh `settle(zh)` / en `Settle`.
-const KW_SETTLE_ZH: &str = "\u{7ed3}\u{7b97}";
-const KW_SETTLE_EN: &str = "Settle";
+pub const KW_SETTLE_ZH: &str = "\u{7ed3}\u{7b97}";
+pub const KW_SETTLE_EN: &str = "Settle";
 /// Option strike: zh `strike(zh)` / en `Strike`.
-const KW_STRIKE_ZH: &str = "\u{884c}\u{6743}\u{4ef7}";
-const KW_STRIKE_EN: &str = "Strike";
+pub const KW_STRIKE_ZH: &str = "\u{884c}\u{6743}\u{4ef7}";
+pub const KW_STRIKE_EN: &str = "Strike";
 /// Option expiry: zh `expiry(zh)` / en `Expiry`.
-const KW_EXPIRY_ZH: &str = "\u{5230}\u{671f}";
-const KW_EXPIRY_EN: &str = "Expiry";
+pub const KW_EXPIRY_ZH: &str = "\u{5230}\u{671f}";
+pub const KW_EXPIRY_EN: &str = "Expiry";
 /// Option premium cap: zh `premium(zh)` / en `Premium`.
-const KW_PREMIUM_ZH: &str = "\u{6743}\u{5229}\u{91d1}";
-const KW_PREMIUM_EN: &str = "Premium";
+pub const KW_PREMIUM_ZH: &str = "\u{6743}\u{5229}\u{91d1}";
+pub const KW_PREMIUM_EN: &str = "Premium";
 /// DeFi APY / TVL (neutral, Latin in both languages).
-const KW_APY: &str = "APY";
-const KW_TVL: &str = "TVL";
+pub const KW_APY: &str = "APY";
+pub const KW_TVL: &str = "TVL";
 /// Perp margin-mode values: zh `isolated(zh)`(isolated) / `cross(zh)`(cross); en `isolated` / `cross`.
 const MM_ISO_ZH: &str = "\u{9010}\u{4ed3}";
 const MM_CROSS_ZH: &str = "\u{5168}\u{4ed3}";
@@ -140,6 +140,83 @@ pub fn strip_kw(field: &str, zh: &str, en: &str, lang: Language) -> Result<Strin
         return Err(ParseError::LanguageMix);
     }
     Err(ParseError::FieldCountError)
+}
+
+// ── Reorder-fallback helpers (FR-2 mixed-language + safe reorder, MR !196) ─────
+//
+// These support the deterministic canonicalizer in `super::canonical`. They accept
+// a field keyword in EITHER language and re-emit it in the header language so the
+// existing per-class validators (which are strictly header-language) run unchanged.
+// They only touch the leading keyword; the value is preserved verbatim.
+
+/// True if `field` begins with the zh OR the en keyword (kw-only or kw + space).
+/// Language-agnostic keyword probe used to classify a field into a canonical slot.
+pub fn has_keyword_either(field: &str, zh: &str, en: &str) -> bool {
+    strip_leading(field, zh).is_some() || strip_leading(field, en).is_some()
+}
+
+/// Rewrite a keyword-prefixed field so its leading keyword is in `lang`, keeping the
+/// value verbatim. Returns `None` if the field carries neither language's keyword.
+pub fn normalize_keyword(field: &str, zh: &str, en: &str, lang: Language) -> Option<String> {
+    let value = strip_leading(field, zh).or_else(|| strip_leading(field, en))?;
+    let want = match lang {
+        Language::Zh => zh,
+        Language::En => en,
+    };
+    Some(if value.is_empty() {
+        want.to_string()
+    } else {
+        format!("{want} {value}")
+    })
+}
+
+/// True if `field` is a TTL field in either language (zh `<n> <suffix>` / en
+/// `valid for <n>`).
+pub fn is_ttl_field(field: &str) -> bool {
+    field.ends_with(KW_TTL_SUFFIX_ZH) || field.starts_with(KW_TTL_PREFIX_EN)
+}
+
+/// Rewrite a TTL field to `lang`, keeping the numeric core verbatim. Returns `None`
+/// if the field is not a TTL field in either language.
+pub fn normalize_ttl(field: &str, lang: Language) -> Option<String> {
+    let core = if let Some(n) = field.strip_suffix(KW_TTL_SUFFIX_ZH) {
+        n.trim()
+    } else if let Some(n) = field.strip_prefix(KW_TTL_PREFIX_EN) {
+        n.trim()
+    } else {
+        return None;
+    };
+    Some(match lang {
+        Language::Zh => format!("{core} {KW_TTL_SUFFIX_ZH}"),
+        Language::En => format!("{KW_TTL_PREFIX_EN} {core}"),
+    })
+}
+
+/// Shape-only probe for a bare `<decimal>-<decimal>` price range (spot). Range
+/// ordering (`lo < hi`) is validated later by [`parse_range`]; this only locates
+/// the field so it can be routed to its canonical slot.
+pub fn looks_like_range(field: &str) -> bool {
+    let mut parts = field.split('-');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(a), Some(b), None) => Decimal::parse(a).is_ok() && Decimal::parse(b).is_ok(),
+        _ => false,
+    }
+}
+
+/// Shape-only probe for the option `contractCode` `UNDERLYING-YYMMDD-STRIKE-(C|P)`
+/// (4 dash-separated parts, last is `C` or `P`). Full consistency is checked later.
+pub fn looks_like_contract_code(field: &str) -> bool {
+    let parts: Vec<&str> = field.split('-').collect();
+    parts.len() == 4 && matches!(parts[3], "C" | "P")
+}
+
+/// Shape-only probe for the perp take-profit field: `TP` immediately followed by a
+/// digit (`TP1 …`). Validation of the tag sequence is done by [`parse_take_profits`].
+pub fn looks_like_take_profit(field: &str) -> bool {
+    field
+        .strip_prefix(KW_TP)
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| c.is_ascii_digit())
 }
 
 // ── Common trailing fields (position / ttl) ───────────────────────────────────

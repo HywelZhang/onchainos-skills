@@ -27,6 +27,7 @@ use serde::Serialize;
 
 use crate::asset_class::AssetClass;
 
+pub mod canonical;
 pub mod envelope;
 pub mod error;
 pub mod fields;
@@ -202,6 +203,13 @@ pub struct ParsedSignal {
 
 /// Parse one V1.1-spec `signalText` into a typed [`ParsedSignal`] (FR-2). Fixed,
 /// fail-closed order; errors NEVER echo the raw input (SR-3).
+///
+/// The canonical fixed-order parse is the fast path. When it fails, a deterministic
+/// fallback ([`canonical::canonicalize`]) accepts bilingual field-keyword mixing and
+/// safe field reordering — but only when every required field maps exactly once and
+/// unambiguously (MR !196). If the fallback cannot canonicalize, or its re-validated
+/// parse fails, the ORIGINAL fast-path error is returned so the error contract for a
+/// genuinely-invalid signal is unchanged.
 pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     // 1. length / single-line guards (NFR-5).
     if input.is_empty() {
@@ -224,17 +232,38 @@ pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     // 4. split on '|', trim, reject empties → ordered positional fields.
     let raw_fields = fields::split_pipe_fields(remainder)?;
 
-    // SR-2: '@' is legal ONLY inside the Prediction outcome field (index 1, the
-    // `<OUTCOME> @<odds>` odds separator). Anywhere else it is injected content.
-    for (i, f) in raw_fields.iter().enumerate() {
+    // 5. fast path: canonical positional order, header-language keywords.
+    match assemble(asset_class, language, &raw_fields) {
+        Ok(signal) => Ok(signal),
+        Err(fast_err) => match canonical::canonicalize(asset_class, language, &raw_fields) {
+            // 6. deterministic mixed-language + safe-reorder fallback.
+            Ok(canonical_fields) => {
+                assemble(asset_class, language, &canonical_fields).map_err(|_| fast_err)
+            }
+            Err(_) => Err(fast_err),
+        },
+    }
+}
+
+/// Assemble a [`ParsedSignal`] from `fields` already in canonical positional order.
+/// Shared by the fast path (raw fields) and the reorder fallback (canonicalized
+/// fields), so the SR-2 `@` guard and the per-class validators apply identically to
+/// both. `@` is legal ONLY in the Prediction outcome field (canonical index 1, the
+/// `<OUTCOME> @<odds>` separator); anywhere else it is injected content.
+fn assemble(
+    asset_class: AssetClass,
+    language: Language,
+    fields: &[String],
+) -> Result<ParsedSignal, ParseError> {
+    for (i, f) in fields.iter().enumerate() {
         let at_ok = asset_class == AssetClass::Prediction && i == 1;
         if !at_ok && f.contains('@') {
             return Err(ParseError::ForbiddenContent);
         }
     }
 
-    // 5-9. per-class positional parse (incl. the class-placed position/ttl).
-    let (params, position_pct, ttl_sec) = params::dispatch(asset_class, language, &raw_fields)?;
+    // per-class positional parse (incl. the class-placed position/ttl).
+    let (params, position_pct, ttl_sec) = params::dispatch(asset_class, language, fields)?;
 
     Ok(ParsedSignal {
         asset_class,
@@ -245,4 +274,4 @@ pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     })
 }
 
-pub use envelope::parse_envelope;
+pub use envelope::{parse_envelope, parse_envelope_full, ParsedEnvelope};

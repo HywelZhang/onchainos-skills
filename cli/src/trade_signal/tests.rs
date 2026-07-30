@@ -191,15 +191,22 @@ fn header_faults() {
     assert_eq!(code("[Spot Signal]x"), "unknown_header");
 }
 
-/// AC-11: a zh header with an en keyword (position) is a language mix.
+/// AC-11 (updated for MR !196): a VALUE-level language mix still fails closed. The
+/// mixed-language expansion relaxes only field KEYWORDS (position keyword in zh or
+/// en, etc.), never the closed value vocabulary. A zh-header signal whose order-type
+/// VALUE is the en token `limit` (a value, not a field keyword) is therefore still
+/// `language_mix` — canonicalization reorders it but the per-class validator
+/// re-rejects the value.
 #[test]
 fn language_mix() {
-    // zh spot CEX header + zh ttl suffix, but en `Position` keyword → language_mix.
+    // zh spot CEX header, zh position keyword + zh ttl suffix, but an en order-type
+    // VALUE (`limit`) → language_mix.
     let zh_spot = "\u{3010}\u{73b0}\u{8d27}\u{4fe1}\u{53f7}\u{3011}";
     let ttl_zh = "24h \u{5185}\u{6709}\u{6548}";
+    let pos_zh = "\u{4ed3}\u{4f4d} 10%";
     assert_eq!(
         code(&format!(
-            "{zh_spot}BTC/USDT | BUY | 96500-97200 | Position 10% | {ttl_zh}"
+            "{zh_spot}BTC/USDT | BUY limit | 96500-97200 | {pos_zh} | {ttl_zh}"
         )),
         "language_mix"
     );
@@ -207,7 +214,8 @@ fn language_mix() {
 
 /// AC-12: multi-line / too-long / emoji / link / misplaced `@` / wrong count / empty field.
 #[test]
-fn forbidden_and_shape() {    assert_eq!(
+fn forbidden_and_shape() {
+    assert_eq!(
         code(&format!("{H_SPOT}BTC/USDT | BUY\n| Position 5%")),
         "multi_line"
     );
@@ -526,4 +534,141 @@ fn errors_carry_canonical_field() {
 fn single_asset_class_type() {
     let c: crate::asset_class::AssetClass = crate::asset_class::AssetClass::Spot;
     assert_eq!(c.as_str(), "spot");
+}
+
+// ── FR-2 usability expansion: mixed language + safe reorder (MR !196) ──────────
+//
+// The fallback accepts bilingual field-keyword mixing and field reordering ONLY
+// when every required field maps exactly once and unambiguously; a mixed/reordered
+// form must produce a ParsedSignal byte-identical to its canonical form, and any
+// ambiguous/missing/duplicate/unknown field must fail closed.
+
+// zh headers.
+const ZH_SPOT: &str = "\u{3010}\u{73b0}\u{8d27}\u{4fe1}\u{53f7}\u{3011}";
+const ZH_PERP: &str = "\u{3010}\u{5408}\u{7ea6}\u{4fe1}\u{53f7}\u{3011}";
+const ZH_PRED: &str = "\u{3010}\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}\u{3011}";
+const ZH_OPT: &str = "\u{3010}\u{671f}\u{6743}\u{4fe1}\u{53f7}\u{3011}";
+const ZH_DEFI: &str = "\u{3010}DeFi \u{4fe1}\u{53f7}\u{3011}";
+// zh field keywords / values (\u-escaped; byte-identical to the glyphs).
+const ZH_POS: &str = "\u{4ed3}\u{4f4d}"; // position
+const ZH_TTL: &str = "\u{5185}\u{6709}\u{6548}"; // ttl suffix
+const ZH_SLIP: &str = "\u{6ed1}\u{70b9}"; // slippage
+const ZH_ENTRY: &str = "\u{5165}\u{573a}"; // entry
+const ZH_SETTLE: &str = "\u{7ed3}\u{7b97}"; // settle
+const ZH_STRIKE: &str = "\u{884c}\u{6743}\u{4ef7}"; // strike
+const ZH_EXPIRY: &str = "\u{5230}\u{671f}"; // expiry
+const ZH_PREMIUM: &str = "\u{6743}\u{5229}\u{91d1}"; // premium
+const ZH_LIMIT: &str = "\u{9650}\u{4ef7}"; // order-type value: limit
+const LE: &str = "\u{2264}";
+const ELLIPSIS: &str = "\u{2026}";
+
+fn parse_ok(text: &str) -> super::ParsedSignal {
+    parse_signal_text(text)
+        .unwrap_or_else(|e| panic!("expected parse ok, got {} for {text:?}", e.code()))
+}
+
+/// A canonical form and a mixed-language + reordered form must yield an identical
+/// ParsedSignal — across all five asset classes, both zh-header/en-fields and
+/// en-header/zh-fields.
+#[test]
+fn mixed_language_and_reorder_equals_canonical() {
+    // Spot CEX — en header, zh `Position` keyword, position moved before range.
+    let spot_canon =
+        format!("{H_SPOT}BTC/USDT | BUY limit | 96500-97200 | Position 10% | valid for 12h");
+    let spot_mixed =
+        format!("{H_SPOT}BTC/USDT | BUY limit | {ZH_POS} 10% | 96500-97200 | valid for 12h");
+    assert_eq!(parse_ok(&spot_canon), parse_ok(&spot_mixed));
+
+    // Spot on-chain — zh header, en `Position`/`Slippage` keywords, reordered; the
+    // free-text chain stays a single leftover slot.
+    let onchain_canon = format!(
+        "{ZH_SPOT}X Layer | $TOKEN (0x12a3{ELLIPSIS}9fab) | BUY | 0.042-0.045 | {ZH_SLIP} {LE}1% | {ZH_POS} 5% | 24h {ZH_TTL}"
+    );
+    let onchain_mixed = format!(
+        "{ZH_SPOT}BUY | X Layer | $TOKEN (0x12a3{ELLIPSIS}9fab) | Position 5% | 0.042-0.045 | Slippage {LE}1% | 24h {ZH_TTL}"
+    );
+    assert_eq!(parse_ok(&onchain_canon), parse_ok(&onchain_mixed));
+
+    // Perp — en header, zh `Entry`/`Position` keywords, reordered.
+    let perp_canon = format!(
+        "{H_PERP}ETH-PERP | LONG 3x | Entry 3420-3450 | SL 3300 | TP1 3720 | Position 10% | valid for 4h"
+    );
+    let perp_mixed = format!(
+        "{H_PERP}LONG 3x | ETH-PERP | {ZH_POS} 10% | SL 3300 | {ZH_ENTRY} 3420-3450 | TP1 3720 | valid for 4h"
+    );
+    assert_eq!(parse_ok(&perp_canon), parse_ok(&perp_mixed));
+
+    // Prediction — en header, zh `Settle`/`Position`, reordered; event is the single
+    // remaining free-text slot, assigned last.
+    let pred_canon = format!(
+        "{H_PRED}\"Fed cuts rates in Sept?\" | YES @0.62 | Position 5% | Settle 2026-09-18 | valid for 24h"
+    );
+    let pred_mixed = format!(
+        "{H_PRED}YES @0.62 | {ZH_SETTLE} 2026-09-18 | \"Fed cuts rates in Sept?\" | {ZH_POS} 5% | valid for 24h"
+    );
+    assert_eq!(parse_ok(&pred_canon), parse_ok(&pred_mixed));
+
+    // Option — zh header, en keywords throughout, fully reordered (no free-text).
+    let opt_canon = format!(
+        "{ZH_OPT}BTC-260327-100000-C | Buy Call | {ZH_STRIKE} 100000 | {ZH_EXPIRY} 2026-03-27 | {ZH_PREMIUM} {LE}320 USDT | {ZH_POS} 3% | 24h {ZH_TTL}"
+    );
+    let opt_mixed = format!(
+        "{ZH_OPT}Strike 100000 | Buy Call | BTC-260327-100000-C | Premium {LE}320 USDT | Expiry 2026-03-27 | Position 3% | 24h {ZH_TTL}"
+    );
+    assert_eq!(parse_ok(&opt_canon), parse_ok(&opt_mixed));
+
+    // DeFi — en header, zh `Position`, identifiable fields reordered; the four
+    // free-text fields (chain|pool|token|redeemTerms) keep their relative order.
+    let defi_canon = format!(
+        "{H_DEFI}X Layer | ProtocolX USDT-USDG LP | APY 18.6% | TVL $2.4M | USDT | withdraw anytime | Position 5% | valid for 48h"
+    );
+    let defi_mixed = format!(
+        "{H_DEFI}APY 18.6% | X Layer | ProtocolX USDT-USDG LP | {ZH_POS} 5% | TVL $2.4M | USDT | withdraw anytime | valid for 48h"
+    );
+    assert_eq!(parse_ok(&defi_canon), parse_ok(&defi_mixed));
+}
+
+/// zh-header + en order-type VALUE combined with a reordered/mixed field set still
+/// canonicalizes, and the value-level order-type (en `limit` / zh `limit(zh)`)
+/// distinction is preserved.
+#[test]
+fn zh_header_reorder_with_zh_value_keeps_value_semantics() {
+    let canon =
+        format!("{ZH_SPOT}BTC/USDT | BUY {ZH_LIMIT} | 96500-97200 | {ZH_POS} 10% | 24h {ZH_TTL}");
+    // reorder: range before side, en Position keyword.
+    let mixed =
+        format!("{ZH_SPOT}96500-97200 | BTC/USDT | BUY {ZH_LIMIT} | Position 10% | 24h {ZH_TTL}");
+    let a = parse_ok(&canon);
+    let b = parse_ok(&mixed);
+    assert_eq!(a, b);
+    match b.params {
+        SignalParams::Spot(s) => assert_eq!(s.order_type, super::OrderType::Limit),
+        _ => panic!("expected spot"),
+    }
+}
+
+/// Fail-closed: a missing, duplicate/ambiguous (multi-match), or unknown field must
+/// reject — the fallback never guesses or silently drops a field.
+#[test]
+fn reorder_fallback_rejects_ambiguous_and_incomplete() {
+    // Missing required field (spot CEX with only 4 fields — no ttl).
+    assert!(parse_signal_text(&format!(
+        "{H_SPOT}BTC/USDT | BUY | 96500-97200 | Position 10%"
+    ))
+    .is_err());
+    // Ambiguous / multi-match: two range-shaped fields, no position field.
+    assert!(parse_signal_text(&format!(
+        "{H_SPOT}BTC/USDT | BUY | 96500-97200 | 60000-65000 | valid for 12h"
+    ))
+    .is_err());
+    // Duplicate keyword field: two `Position` fields, no ttl.
+    assert!(parse_signal_text(&format!(
+        "{H_SPOT}BTC/USDT | BUY | 96500-97200 | Position 10% | Position 5%"
+    ))
+    .is_err());
+    // Unknown field where a required perp `Entry` field should be.
+    assert!(parse_signal_text(&format!(
+        "{H_PERP}ETH-PERP | LONG 3x | GARBAGE 1-2 | SL 3300 | TP1 3720 | Position 10% | valid for 4h"
+    ))
+    .is_err());
 }

@@ -147,6 +147,30 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.
 - To open one row's full detail, pass that row's **`jobId`** to `subscribe-detail` (§订阅详情).
 
+## Post-login subscription display (S1 — login-flow-triggered)
+
+**Trigger (entry layer):** the wallet login flow itself, NOT a user utterance. The single entry is the routing line in [`wallet.md`](../../okx-agentic-wallet/references/wallet.md) → Authentication step 3 ("After login"). Do **NOT** add any trigger words to `SKILL.md` for this display — the login flow is the only entry. Command: `onchainos agent my-subscriptions --role buyer`.
+
+**Zero-disturb (mandatory).** If the command errors (no OKX.AI identity, transport/auth failure) OR the subscription list is empty, output **nothing** OKX.AI-related — no table, no opening line, no 💡 hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
+
+**Non-empty render.** Reuse §My Subscriptions **as-is**: same per-device expansion (a subscription on N devices occupies N rows; the `#` and all leading subscription columns repeat unchanged), same `deviceList` × `device-list` name join, same pagination-to-completion, same `thisDeviceReceives` / `thisDeviceId` / `（本机）` handling, and the same **mandatory degraded render** when `device-list` fails/empty (fall back to one row per subscription and explicitly state 「其他设备的接收状态暂不可用」 — never present this device as the full picture). Only the two deltas below differ.
+
+- **Delta (a) — column header:** the device-name column header is **「已登陆设备名称」** (the second device column keeps **「设备是否接收任务消息」**, identical to §My Subscriptions / §Subscription Detail). All other columns and their derivation rules are exactly those of §My Subscriptions:
+
+| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | 已登陆设备名称 | 设备是否接收任务消息 |
+|---|------|--------|------|------|---------|---------|------|------|------|
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本机）if this device} | {是/否} |
+
+- **Delta (b) — surrounding copy.** Precede the table with this VERBATIM opening line (English users: verbatim; non-English: translate faithfully, preserving meaning, per the §Localization banner):
+
+  > 这是你订阅的服务和每台设备的消息推送状态。想让某台设备开始或停止接收，随时告诉我就行。
+
+  Follow the table with exactly **one** 💡 hint line telling Codex / Claude Code users that messages do not auto-appear — they must say 「监听 + 任务名」 in the conversation to see a task's messages there. The example task name MUST be one of the user's **real** subscribed task titles from this very render — never a hard-coded sample:
+
+  > 💡 在 Codex / Claude Code 里，某个任务的消息不会自动出现——想在对话里看到它，对我说「监听 + 任务名」即可（例如「监听 {填入本次渲染里用户真实订阅的某个 title}」）。
+
+**No follow-up question.** Display only. Do **NOT** ask whether to turn on receipt or start listening (product retracted that prompt) — enabling happens only when the user explicitly asks later.
+
 ## Subscription Detail (订阅详情)
 
 Trigger: user selects a row / asks about one subscription (`订阅详情` / `这个订阅的情况` / `subscription detail`). Command: `onchainos agent subscribe-detail <jobId>` — the positional id is the **`jobId`** from the list (the response primary key; there is no separate `subId`). → single `SubscriptionInfo`. Render:

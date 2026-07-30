@@ -17,6 +17,7 @@ Commands that need auth (balance, send, contract-call, history, sign-message) re
       > Fetching the login result will block your other operations for up to 5 minutes.
    c. **Auto-poll.** Immediately run `wallet login --phase poll --session-id <authSessionId>` (the id from step a) — don't wait for the user. On timeout / no result, tell the user you couldn't get it yet: finish login on the already-open page and tell you to re-check (same id), or start over from `--phase init` (new id); don't guess whether a previous session is still valid.
 3. **After login.** Render the Account Info template (below) from the `poll` response. If the response has `"isNew": true`, output the Policy Settings template then the Wallet Export template ([portal-actions.md](wallet-portal-actions.md)); if `false`, skip.
+   Then run `onchainos agent my-subscriptions --role buyer` and follow the §Post-login subscription display section in [task-user-playbook.md](../../okx-ai/references/task-user-playbook.md).
 
 Login creates the first account automatically — never call `wallet add` for it. Use `wallet add` only when already logged in and the user explicitly wants another account (then output the Policy Settings template, see [portal-actions.md](wallet-portal-actions.md)).
 

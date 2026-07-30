@@ -301,6 +301,23 @@ pub async fn handle_subscribe_detail(
         if let Some(obj) = enriched.as_object_mut() {
             let code = obj.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
             obj.insert("statusName".to_string(), serde_json::Value::String(status_name(code)));
+            // Device-routing enrichment (WBW-14118): tolerant deviceList/categoryCodes
+            // normalized to [], plus the this-device receipt derivation. Subscribe time
+            // fields stay Unix seconds — never run through the ms formatter.
+            let device_list = normalize_str_array(obj.get("deviceList"));
+            let category_codes = normalize_str_array(obj.get("categoryCodes"));
+            let this_device_id = crate::device::id::get_cached_device_id();
+            let receives = device_receives(this_device_id, &device_list);
+            obj.insert("deviceList".to_string(), serde_json::json!(device_list));
+            obj.insert("categoryCodes".to_string(), serde_json::json!(category_codes));
+            obj.insert("thisDeviceReceives".to_string(), serde_json::Value::Bool(receives));
+            obj.insert(
+                "thisDeviceId".to_string(),
+                match this_device_id {
+                    Some(id) => serde_json::Value::String(id.to_string()),
+                    None => serde_json::Value::Null,
+                },
+            );
         }
         crate::output::success(enriched);
         return Ok(());
@@ -433,6 +450,19 @@ pub struct SubscriptionInfo {
     pub payment_token_address: String,
     pub payment_token_amount: String,
     pub payment_currency_amount: String,
+    // ── Device routing (additive, WBW-14118) ──────────────────────────────
+    // Receive-device list for this subscription. Tri-state on the wire:
+    // missing | null | array — all tolerated (Option so an explicit `null` on
+    // historical rows does not fail deserialization); normalized to [] on emit.
+    #[serde(default)]
+    pub device_list: Option<Vec<String>>,
+    // Sibling additive field from the same backend change; tolerate null the same way.
+    #[serde(default)]
+    pub category_codes: Option<Vec<String>>,
+    // Derived on the client after parse (device id lives only on the client).
+    // Serialized out, never read from the wire (mirrors `status_name`).
+    #[serde(skip_deserializing)]
+    pub this_device_receives: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -481,6 +511,24 @@ fn my_subscriptions_path() -> String {
     format!("{SUBSCRIBE_API_PREFIX}/my")
 }
 
+/// Tolerant read of a wire `deviceList` / `categoryCodes` value: an array of
+/// strings is collected; null / missing / any non-array shape normalizes to `[]`.
+fn normalize_str_array(v: Option<&serde_json::Value>) -> Vec<String> {
+    match v.and_then(|v| v.as_array()) {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// This device receives the subscription iff its (client-resolved) device id is
+/// in the list. An unresolved this-device id ⇒ `false` (never errors, never guesses).
+fn device_receives(this_device_id: Option<&str>, device_list: &[String]) -> bool {
+    this_device_id.is_some_and(|id| device_list.iter().any(|d| d == id))
+}
+
 fn filter_subscriptions(
     list: Vec<SubscriptionInfo>,
     role: SubscriptionRole,
@@ -510,8 +558,13 @@ pub async fn handle_my_subscriptions(
     let wrapper: SubscriptionList = serde_json::from_value(data)
         .map_err(|e| anyhow!("failed to parse subscription list: {e}"))?;
     let mut list = filter_subscriptions(wrapper.list, role, &header_agent, status);
+    let this_device_id = crate::device::id::get_cached_device_id();
     for item in &mut list {
         item.status_name = status_name(item.status);
+        // Normalize both additive arrays to [] on emit; derive this-device receipt.
+        let devices = item.device_list.get_or_insert_with(Vec::new);
+        item.this_device_receives = device_receives(this_device_id, devices);
+        item.category_codes.get_or_insert_with(Vec::new);
     }
     // Buyer listing their subscriptions on any device establishes the copy-trade provider
     // session for each active copy-trade sub (drains held signals cross-device).
@@ -527,7 +580,7 @@ pub async fn handle_my_subscriptions(
             }
         }
     }
-    crate::output::success(serde_json::json!({ "list": list }));
+    crate::output::success(serde_json::json!({ "list": list, "thisDeviceId": this_device_id }));
     Ok(())
 }
 
@@ -836,5 +889,63 @@ mod tests {
         assert_eq!(trial_window(&legacy), (1_700_000_000, 1_700_600_000));
         // Neither present → zeros, never an error.
         assert_eq!(trial_window(&json!({})), (0, 0));
+    }
+
+    // ── Device routing enrichment (WBW-14118, AC-03 / AC-04) ─────────────
+
+    #[test]
+    fn device_list_tri_state_deserializes_without_error() {
+        // missing → None (default)
+        let info: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
+        assert!(info.device_list.is_none());
+        assert!(info.category_codes.is_none());
+        // null → None (Option tolerates explicit null on historical rows)
+        let mut w = detail_fixture();
+        w["deviceList"] = serde_json::Value::Null;
+        w["categoryCodes"] = serde_json::Value::Null;
+        let info: SubscriptionInfo = serde_json::from_value(w).unwrap();
+        assert!(info.device_list.is_none());
+        assert!(info.category_codes.is_none());
+        // array → Some
+        let mut w = detail_fixture();
+        w["deviceList"] = json!(["d1", "d2"]);
+        w["categoryCodes"] = json!(["c1"]);
+        let info: SubscriptionInfo = serde_json::from_value(w).unwrap();
+        assert_eq!(info.device_list.unwrap(), vec!["d1", "d2"]);
+        assert_eq!(info.category_codes.unwrap(), vec!["c1"]);
+        // populated inside the list wrapper deserializes too
+        let mut w = detail_fixture();
+        w["deviceList"] = json!(["dX"]);
+        let wrapper: SubscriptionList = serde_json::from_value(json!({ "list": [w] })).unwrap();
+        assert_eq!(wrapper.list[0].device_list.as_deref(), Some(&["dX".to_string()][..]));
+    }
+
+    #[test]
+    fn device_receives_membership_in_not_in_unresolved() {
+        let list = vec!["d1".to_string(), "d2".to_string()];
+        assert!(device_receives(Some("d1"), &list)); // in
+        assert!(!device_receives(Some("d3"), &list)); // not in
+        assert!(!device_receives(None, &list)); // this-device id unresolved → false
+        assert!(!device_receives(Some("d1"), &[])); // empty list → false
+    }
+
+    #[test]
+    fn normalize_str_array_tolerant_of_null_missing_and_non_array() {
+        assert_eq!(normalize_str_array(Some(&json!(["a", "b"]))), vec!["a", "b"]);
+        assert_eq!(normalize_str_array(Some(&serde_json::Value::Null)), Vec::<String>::new());
+        assert_eq!(normalize_str_array(None), Vec::<String>::new());
+        assert_eq!(normalize_str_array(Some(&json!("notarray"))), Vec::<String>::new());
+        // non-string array elements are dropped, not errored.
+        assert_eq!(normalize_str_array(Some(&json!(["a", 1, null, "b"]))), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn this_device_receives_serializes_and_defaults_false() {
+        let info: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
+        let out = serde_json::to_value(&info).unwrap();
+        assert_eq!(out["thisDeviceReceives"], json!(false));
+        // deviceList serializes to null when the wire value was absent (normalized
+        // to [] only on the my-subscriptions emit path, verified via the handler).
+        assert!(out.get("deviceList").is_some());
     }
 }

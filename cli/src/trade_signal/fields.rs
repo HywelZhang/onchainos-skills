@@ -80,60 +80,85 @@ const fn f(id: &'static str, zh: &'static str, en: &'static str, required: bool)
 }
 
 const SPOT_SPEC: &[FieldSpec] = &[
-    f(ID_MARKET, "市场", "market", true),
-    f(ID_SYMBOL, "币种", "symbol", true),
-    f(ID_SIDE, "方向", "side", true),
-    f(ID_PRICE, "价格", "price", true),
-    f(ID_ORDER_TYPE, "类型", "orderType", false),
-    f(ID_TOKEN_ADDR, "合约地址", "tokenAddr", false),
-    f(ID_SLIPPAGE, "滑点", "slippage", false),
-    f(ID_POSITION, "仓位", "position", true),
-    f(ID_TTL, "有效期", "ttl", true),
+    f(ID_MARKET, "\u{5e02}\u{573a}", "market", true),
+    f(ID_SYMBOL, "\u{5e01}\u{79cd}", "symbol", true),
+    f(ID_SIDE, "\u{65b9}\u{5411}", "side", true),
+    f(ID_PRICE, "\u{4ef7}\u{683c}", "price", true),
+    f(ID_ORDER_TYPE, "\u{7c7b}\u{578b}", "orderType", false),
+    f(
+        ID_TOKEN_ADDR,
+        "\u{5408}\u{7ea6}\u{5730}\u{5740}",
+        "tokenAddr",
+        false,
+    ),
+    f(ID_SLIPPAGE, "\u{6ed1}\u{70b9}", "slippage", false),
+    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
+    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
 ];
 
 const PERP_SPEC: &[FieldSpec] = &[
-    f(ID_PAIR, "交易对", "pair", true),
-    f(ID_DIRECTION, "方向", "direction", true),
-    f(ID_LEVERAGE, "杠杆", "leverage", true),
-    f(ID_ENTRY, "入场", "entry", true),
-    f(ID_STOP_LOSS, "止损", "stopLoss", true),
-    f(ID_TP, "止盈", "takeProfit", false),
-    f(ID_TP1, "止盈1", "tp1", false),
-    f(ID_TP2, "止盈2", "tp2", false),
-    f(ID_TP3, "止盈3", "tp3", false),
-    f(ID_MARGIN_MODE, "保证金", "marginMode", false),
-    f(ID_POSITION, "仓位", "position", true),
-    f(ID_TTL, "有效期", "ttl", true),
+    f(ID_PAIR, "\u{4ea4}\u{6613}\u{5bf9}", "pair", true),
+    f(ID_DIRECTION, "\u{65b9}\u{5411}", "direction", true),
+    f(ID_LEVERAGE, "\u{6760}\u{6746}", "leverage", true),
+    f(ID_ENTRY, "\u{5165}\u{573a}", "entry", true),
+    f(ID_STOP_LOSS, "\u{6b62}\u{635f}", "stopLoss", true),
+    f(ID_TP, "\u{6b62}\u{76c8}", "takeProfit", false),
+    f(ID_TP1, "\u{6b62}\u{76c8}1", "tp1", false),
+    f(ID_TP2, "\u{6b62}\u{76c8}2", "tp2", false),
+    f(ID_TP3, "\u{6b62}\u{76c8}3", "tp3", false),
+    f(
+        ID_MARGIN_MODE,
+        "\u{4fdd}\u{8bc1}\u{91d1}",
+        "marginMode",
+        false,
+    ),
+    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
+    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
 ];
 
 const PREDICTION_SPEC: &[FieldSpec] = &[
-    f(ID_EVENT, "事件", "event", true),
-    f(ID_OUTCOME, "结果", "outcome", true),
-    f(ID_SETTLE_DATE, "结算日", "settleDate", true),
-    f(ID_POSITION, "仓位", "position", true),
-    f(ID_TTL, "有效期", "ttl", true),
+    f(ID_EVENT, "\u{4e8b}\u{4ef6}", "event", true),
+    f(ID_OUTCOME, "\u{7ed3}\u{679c}", "outcome", true),
+    f(
+        ID_SETTLE_DATE,
+        "\u{7ed3}\u{7b97}\u{65e5}",
+        "settleDate",
+        true,
+    ),
+    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
+    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
 ];
 
 const OPTION_SPEC: &[FieldSpec] = &[
-    f(ID_CONTRACT_CODE, "合约代码", "contractCode", true),
-    f(ID_SIDE, "方向", "side", true),
-    f(ID_OPTION_TYPE, "类型", "optionType", true),
-    f(ID_STRIKE, "行权价", "strike", true),
-    f(ID_EXPIRY, "到期日", "expiry", true),
-    f(ID_PREMIUM_CAP, "权利金上限", "premiumCap", true),
-    f(ID_POSITION, "仓位", "position", true),
-    f(ID_TTL, "有效期", "ttl", true),
+    f(
+        ID_CONTRACT_CODE,
+        "\u{5408}\u{7ea6}\u{4ee3}\u{7801}",
+        "contractCode",
+        true,
+    ),
+    f(ID_SIDE, "\u{65b9}\u{5411}", "side", true),
+    f(ID_OPTION_TYPE, "\u{7c7b}\u{578b}", "optionType", true),
+    f(ID_STRIKE, "\u{884c}\u{6743}\u{4ef7}", "strike", true),
+    f(ID_EXPIRY, "\u{5230}\u{671f}\u{65e5}", "expiry", true),
+    f(
+        ID_PREMIUM_CAP,
+        "\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}",
+        "premiumCap",
+        true,
+    ),
+    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
+    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
 ];
 
 const DEFI_SPEC: &[FieldSpec] = &[
-    f(ID_CHAIN, "链", "chain", true),
-    f(ID_PROTOCOL_POOL, "协议", "protocolPool", true),
-    f(ID_APY, "年化", "apy", true),
-    f(ID_TVL, "锁仓", "tvl", true),
-    f(ID_TOKEN, "币种", "token", true),
-    f(ID_REDEEM_TERMS, "赎回", "redeemTerms", true),
-    f(ID_POSITION, "仓位", "position", true),
-    f(ID_TTL, "有效期", "ttl", true),
+    f(ID_CHAIN, "\u{94fe}", "chain", true),
+    f(ID_PROTOCOL_POOL, "\u{534f}\u{8bae}", "protocolPool", true),
+    f(ID_APY, "\u{5e74}\u{5316}", "apy", true),
+    f(ID_TVL, "\u{9501}\u{4ed3}", "tvl", true),
+    f(ID_TOKEN, "\u{5e01}\u{79cd}", "token", true),
+    f(ID_REDEEM_TERMS, "\u{8d4e}\u{56de}", "redeemTerms", true),
+    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
+    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
 ];
 
 fn class_spec(class: AssetClass) -> &'static [FieldSpec] {
@@ -505,8 +530,8 @@ pub fn parse_side(value: &str) -> Result<Side, ParseError> {
 /// Option side accepts the canonical + bilingual variants (FR-2.5).
 pub fn parse_option_side(value: &str) -> Result<Side, ParseError> {
     match value {
-        "BUY" | "Buy" | "买入" => Ok(Side::Buy),
-        "SELL" | "Sell" | "卖出" => Ok(Side::Sell),
+        "BUY" | "Buy" | "\u{4e70}\u{5165}" => Ok(Side::Buy),
+        "SELL" | "Sell" | "\u{5356}\u{51fa}" => Ok(Side::Sell),
         _ => Err(ParseError::IllegalKeyword),
     }
 }
@@ -606,10 +631,16 @@ mod tests {
     #[test]
     fn keyword_whitelists() {
         assert_eq!(parse_direction("LONG").unwrap(), Direction::Long);
-        assert_eq!(parse_direction("做多"), Err(ParseError::IllegalKeyword));
+        assert_eq!(
+            parse_direction("\u{505a}\u{591a}"),
+            Err(ParseError::IllegalKeyword)
+        );
         assert_eq!(parse_direction("L"), Err(ParseError::IllegalKeyword));
-        assert_eq!(parse_option_side("买入").unwrap(), Side::Buy);
-        assert_eq!(parse_side("买入"), Err(ParseError::IllegalKeyword)); // spot side is canonical-only
+        assert_eq!(parse_option_side("\u{4e70}\u{5165}").unwrap(), Side::Buy);
+        assert_eq!(
+            parse_side("\u{4e70}\u{5165}"),
+            Err(ParseError::IllegalKeyword)
+        ); // spot side is canonical-only
     }
 
     /// FR-2.4: the Prediction outcome+odds field `<OUTCOME> @<odds>` (feedback !21bc5915).
@@ -641,11 +672,15 @@ mod tests {
 
     #[test]
     fn forbidden_scan() {
-        assert!(contains_forbidden("【现货信号】市场:BTC https://x.io"));
+        assert!(contains_forbidden(
+            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC https://x.io"
+        ));
         assert!(contains_forbidden("gm 🚀"));
         // `@` is no longer globally forbidden — it is field-scoped (Prediction odds).
         assert!(!contains_forbidden("@alpha"));
-        assert!(!contains_forbidden("【现货信号】市场:BTC/USDT|方向:BUY"));
+        assert!(!contains_forbidden(
+            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{65b9}\u{5411}:BUY"
+        ));
     }
 
     /// SR-2 regression: the previously-missed symbol blocks are still flagged as
@@ -659,7 +694,7 @@ mod tests {
         // The canonical field grammar (CJK labels, full-width brackets, ASCII,
         // '/', '-', '%', ':') is still clean — no false positives.
         assert!(!contains_forbidden(
-            "【期权信号】合约代码:BTC-251231-60000-C|方向:买入|类型:Call"
+            "【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call"
         ));
     }
 

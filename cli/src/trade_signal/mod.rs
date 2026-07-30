@@ -1,6 +1,6 @@
 //! V2 text trading-signal parser core (FR-1 / FR-2 / FR-3).
 //!
-//! Pure-local, deterministic, bilingual (中/英), fail-closed. Zero I/O, zero
+//! Pure-local, deterministic, bilingual (zh/en), fail-closed. Zero I/O, zero
 //! network, no `SystemTime`/locale/randomness (NFR-1..NFR-3). Three independent
 //! public entry points:
 //! - [`detect_format`] — classify a raw string (FR-1).
@@ -10,7 +10,7 @@
 //! ## Input grammar
 //! The authoritative wire grammar is Lark spec v1.1. Each asset class is a
 //! FIXED-ORDER sequence of `|`-separated `label:value` fields behind a full-title
-//! header (`【现货信号】…` / `【Spot Signal】…`); see [`header`] and [`fields`].
+//! header (a full-title header); see [`header`] and [`fields`].
 //!
 //! The [`ParsedSignal`] result is an **internal** parser model, NOT a second
 //! frozen public trading-signal contract. Its field naming follows the runtime

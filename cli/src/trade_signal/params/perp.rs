@@ -3,8 +3,8 @@
 //! `leverage` is a positive integer; exactly one `stopLoss`; 1..=3 take-profits.
 //! Per V1.1/TD review alignment (feedback !1a4cebc6) TPs may be given as either
 //! form:
-//! - separate fields `止盈1|止盈2|止盈3` (`tp1|tp2|tp3`) with contiguous numbering, or
-//! - one combined `止盈`/`takeProfit` field carrying `v1/v2/v3` slash-separated prices.
+//! - separate fields `tp1|tp2|tp3` with contiguous numbering, or
+//! - one combined `takeProfit` field carrying `v1/v2/v3` slash-separated prices.
 //!
 //! Direction rules (the ONLY ordering constraint the protocol defines):
 //! - LONG:  stopLoss < entryLo; every TP > entryLo.

@@ -38,9 +38,9 @@ pub enum ParseError {
     FieldCountError,
     /// Any field empty after trim.
     EmptyField,
-    /// Mixed 中/英 labels in one signal.
+    /// Mixed zh/en labels in one signal.
     LanguageMix,
-    /// Non-whitelist token variant (e.g. `S`/`L`, `做多`, `买进`).
+    /// Non-whitelist token variant (e.g. `S`/`L`, or an unlisted direction/side word).
     IllegalKeyword,
     /// Sci-notation, thousands separator, %-price, or otherwise non-decimal number.
     InvalidNumber,

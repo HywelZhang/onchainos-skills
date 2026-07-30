@@ -37,15 +37,24 @@ mod tests {
 
     #[test]
     fn first_char_cjk_bracket_is_v2() {
-        assert_eq!(detect_format("【现货】市场:BTC/USDT"), InputFormat::V2Text);
+        assert_eq!(
+            detect_format("【\u{73b0}\u{8d27}】\u{5e02}\u{573a}:BTC/USDT"),
+            InputFormat::V2Text
+        );
     }
 
     #[test]
     fn empty_or_ws_or_other_is_unsupported() {
         assert_eq!(detect_format(""), InputFormat::Unsupported);
-        assert_eq!(detect_format(" 【现货】"), InputFormat::Unsupported); // leading space
+        assert_eq!(
+            detect_format(" 【\u{73b0}\u{8d27}】"),
+            InputFormat::Unsupported
+        ); // leading space
         assert_eq!(detect_format("\t{"), InputFormat::Unsupported);
-        assert_eq!(detect_format("[现货]"), InputFormat::Unsupported); // half-width '['
+        assert_eq!(
+            detect_format("[\u{73b0}\u{8d27}]"),
+            InputFormat::Unsupported
+        ); // half-width '['
         assert_eq!(detect_format("hello"), InputFormat::Unsupported);
     }
 }

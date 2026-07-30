@@ -2,9 +2,9 @@
 //!
 //! Per V1.1/TD review alignment (feedback !ee926d82) the previous self-authored
 //! corpus is replaced with examples in the authoritative V1.1 grammar: the full
-//! titles (`【现货信号】` / `【Spot Signal】` …), the fixed-order `|` fields per
+//! titles (the full zh/en signal headers), the fixed-order `|` fields per
 //! asset class, the Prediction `<OUTCOME> @<odds>` form, and both perp TP forms
-//! (separate `止盈1..3`/`tp1..3` and combined slash `止盈`/`takeProfit`).
+//! (separate tp1..3 and the combined slash takeProfit form).
 //!
 //! NOTE (see notes.md A1): the byte-exact sample strings in the Lark v1.1 doc were
 //! not reachable from the implementation stage (no Lark tool; KB empty for this
@@ -21,13 +21,13 @@ use super::{parse_envelope, parse_signal_text, SignalParams};
 /// prediction×1, option×1, defi×1 per language (AC-1).
 const CANONICAL: &[&str] = &[
     // ── zh ──
-    "【现货信号】市场:BTC/USDT|币种:BTC|方向:BUY|价格:60000-65000|类型:limit|仓位:5%|有效期:1h",
-    "【现货信号】市场:Solana|币种:WIF|方向:BUY|价格:1.5-2.0|合约地址:EKpQ6uzn|滑点:3%|仓位:10%|有效期:30min",
-    "【合约信号】交易对:BTC-PERP|方向:LONG|杠杆:10|入场:60000-61000|止损:59000|止盈1:62000|止盈2:63000|止盈3:64000|保证金:cross|仓位:5%|有效期:2h",
-    "【合约信号】交易对:ETH-PERP|方向:SHORT|杠杆:5|入场:3000-3100|止损:3200|止盈:2900/2800|保证金:isolated|仓位:8%|有效期:1d",
-    "【预测市场信号】事件:美联储12月降息|结果:YES @0.65|结算日:2025-12-31|仓位:5%|有效期:3d",
-    "【期权信号】合约代码:BTC-251231-60000-C|方向:买入|类型:Call|行权价:60000|到期日:2025-12-31|权利金上限:1500|仓位:5%|有效期:5d",
-    "【DeFi 信号】链:Ethereum|协议:AaveV3|年化:5.5%|锁仓:1.2B|币种:USDC|赎回:活期|仓位:10%|有效期:7d",
+    "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{7c7b}\u{578b}:limit|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h",
+    "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:Solana|\u{5e01}\u{79cd}:WIF|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:1.5-2.0|\u{5408}\u{7ea6}\u{5730}\u{5740}:EKpQ6uzn|\u{6ed1}\u{70b9}:3%|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:30min",
+    "【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{76c8}1:62000|\u{6b62}\u{76c8}2:63000|\u{6b62}\u{76c8}3:64000|\u{4fdd}\u{8bc1}\u{91d1}:cross|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:2h",
+    "【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:ETH-PERP|\u{65b9}\u{5411}:SHORT|\u{6760}\u{6746}:5|\u{5165}\u{573a}:3000-3100|\u{6b62}\u{635f}:3200|\u{6b62}\u{76c8}:2900/2800|\u{4fdd}\u{8bc1}\u{91d1}:isolated|\u{4ed3}\u{4f4d}:8%|\u{6709}\u{6548}\u{671f}:1d",
+    "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:\u{7f8e}\u{8054}\u{50a8}12\u{6708}\u{964d}\u{606f}|\u{7ed3}\u{679c}:YES @0.65|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:3d",
+    "【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d",
+    "【DeFi \u{4fe1}\u{53f7}】\u{94fe}:Ethereum|\u{534f}\u{8bae}:AaveV3|\u{5e74}\u{5316}:5.5%|\u{9501}\u{4ed3}:1.2B|\u{5e01}\u{79cd}:USDC|\u{8d4e}\u{56de}:\u{6d3b}\u{671f}|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:7d",
     // ── en ──
     "【Spot Signal】market:ETH/USDT|symbol:ETH|side:SELL|price:3000-3200|orderType:market|position:0.1%|ttl:5min",
     "【Spot Signal】market:base|symbol:DEGEN|side:BUY|price:0.01-0.02|tokenAddr:0xabc123|slippage:5%|position:20%|ttl:7d",
@@ -147,11 +147,11 @@ fn ac8_boundaries() {
 fn ac5_ac6_outcome_and_option() {
     for (text, ok) in [
         (
-            "【预测市场信号】事件:x|结果:NO @0.5|结算日:2025-12-31|仓位:5%|有效期:1d",
+            "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:NO @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d",
             true,
         ),
         (
-            "【预测市场信号】事件:x|结果:DOWN @0.5|结算日:2025-12-31|仓位:5%|有效期:1d",
+            "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:DOWN @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d",
             true,
         ),
     ] {
@@ -173,18 +173,27 @@ fn ac5_ac6_outcome_and_option() {
 /// AC-10: header preceded by space / unknown / half-width `[` / old short header.
 #[test]
 fn ac10_header() {
-    assert_eq!(code(" 【现货信号】市场:BTC/USDT"), "unknown_header");
-    assert_eq!(code("【unknown】市场:BTC"), "unknown_header");
-    assert_eq!(code("[现货信号]市场:BTC"), "unknown_header");
+    assert_eq!(
+        code(" 【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT"),
+        "unknown_header"
+    );
+    assert_eq!(code("【unknown】\u{5e02}\u{573a}:BTC"), "unknown_header");
+    assert_eq!(
+        code("[\u{73b0}\u{8d27}\u{4fe1}\u{53f7}]\u{5e02}\u{573a}:BTC"),
+        "unknown_header"
+    );
     // the self-authored short header is no longer accepted.
-    assert_eq!(code("【现货】市场:BTC/USDT|币种:BTC"), "unknown_header");
+    assert_eq!(
+        code("【\u{73b0}\u{8d27}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC"),
+        "unknown_header"
+    );
 }
 
-/// AC-11: mixed 中/英 labels.
+/// AC-11: mixed zh/en labels.
 #[test]
 fn ac11_language_mix() {
     assert_eq!(
-        code("【现货信号】market:BTC/USDT|币种:BTC|方向:BUY|价格:60000-65000|仓位:5%|有效期:1h"),
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】market:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "language_mix"
     );
 }
@@ -192,28 +201,40 @@ fn ac11_language_mix() {
 /// AC-12: multi-line, 201 chars, emoji, link, out-of-place @mention, extra field, empty field.
 #[test]
 fn ac12_forbidden_and_shape() {
-    assert_eq!(code("【现货信号】市场:BTC\n方向:BUY"), "multi_line");
     assert_eq!(
-        code(&format!("【现货信号】市场:{}", "A".repeat(210))),
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC\n\u{65b9}\u{5411}:BUY"),
+        "multi_line"
+    );
+    assert_eq!(
+        code(&format!(
+            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:{}",
+            "A".repeat(210)
+        )),
         "too_long"
     );
-    assert_eq!(code("【现货信号】市场:BTC🚀|方向:BUY"), "forbidden_content");
     assert_eq!(
-        code("【现货信号】市场:https://x.io|方向:BUY"),
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC🚀|\u{65b9}\u{5411}:BUY"),
+        "forbidden_content"
+    );
+    assert_eq!(
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:https://x.io|\u{65b9}\u{5411}:BUY"),
         "forbidden_content"
     );
     // `@` outside the Prediction outcome field is still forbidden.
-    assert_eq!(code("【现货信号】市场:@btc|方向:BUY"), "forbidden_content");
+    assert_eq!(
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:@btc|\u{65b9}\u{5411}:BUY"),
+        "forbidden_content"
+    );
     // extra (unrecognized) label.
     assert_eq!(
         code(
-            "【现货信号】市场:BTC/USDT|币种:BTC|方向:BUY|价格:60000-65000|仓位:5%|有效期:1h|额外:1"
+            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h|\u{989d}\u{5916}:1"
         ),
         "forbidden_content"
     );
     // empty field (double pipe).
     assert_eq!(
-        code("【现货信号】市场:BTC/USDT||方向:BUY|价格:60000-65000|仓位:5%|有效期:1h"),
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT||\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "empty_field"
     );
 }
@@ -222,9 +243,9 @@ fn ac12_forbidden_and_shape() {
 /// out of the canonical order — is rejected.
 #[test]
 fn ac12b_fixed_order_reorder_rejected() {
-    // 币种 (symbol) before 市场 (market).
+    // symbol before market (reordered).
     assert_eq!(
-        code("【现货信号】币种:BTC|市场:BTC/USDT|方向:BUY|价格:60000-65000|仓位:5%|有效期:1h"),
+        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e01}\u{79cd}:BTC|\u{5e02}\u{573a}:BTC/USDT|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "field_count_error"
     );
 }
@@ -233,7 +254,7 @@ fn ac12b_fixed_order_reorder_rejected() {
 #[test]
 fn ac13_position() {
     let base = |pos: &str| {
-        format!("【现货信号】市场:BTC/USDT|币种:BTC|方向:BUY|价格:60000-65000|仓位:{pos}|有效期:1h")
+        format!("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:{pos}|\u{6709}\u{6548}\u{671f}:1h")
     };
     for pos in ["0%", "20.1%", "5-10%", "5%,10%"] {
         assert_eq!(code(&base(pos)), "out_of_range", "position {pos}");
@@ -244,7 +265,7 @@ fn ac13_position() {
 #[test]
 fn ac14_ttl() {
     let base = |ttl: &str| {
-        format!("【现货信号】市场:BTC/USDT|币种:BTC|方向:BUY|价格:60000-65000|仓位:5%|有效期:{ttl}")
+        format!("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:{ttl}")
     };
     for ttl in ["4min", "8d", "30s"] {
         assert_eq!(code(&base(ttl)), "out_of_range", "ttl {ttl}");
@@ -255,7 +276,7 @@ fn ac14_ttl() {
 #[test]
 fn ac15_numbers() {
     let base = |price: &str| {
-        format!("【现货信号】市场:BTC/USDT|币种:BTC|方向:BUY|价格:{price}|仓位:5%|有效期:1h")
+        format!("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:{price}|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h")
     };
     assert_eq!(code(&base("1e3-2e3")), "invalid_number"); // sci-notation
     assert_eq!(code(&base("1,000-2,000")), "invalid_number"); // thousands sep
@@ -269,22 +290,22 @@ fn ac15_numbers() {
 fn ac16_perp_direction() {
     // wrong-direction SL (LONG, SL not below entry-low).
     assert_eq!(
-        code("【合约信号】交易对:BTC-PERP|方向:LONG|杠杆:10|入场:60000-61000|止损:60500|止盈1:62000|仓位:5%|有效期:1h"),
+        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:60500|\u{6b62}\u{76c8}1:62000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "direction_constraint"
     );
     // wrong-direction TP (LONG, TP below entry-low).
     assert_eq!(
-        code("【合约信号】交易对:BTC-PERP|方向:LONG|杠杆:10|入场:60000-61000|止损:59000|止盈1:59500|仓位:5%|有效期:1h"),
+        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{76c8}1:59500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "direction_constraint"
     );
     // duplicate stop-loss → a fixed-order violation.
     assert_eq!(
-        code("【合约信号】交易对:BTC-PERP|方向:LONG|杠杆:10|入场:60000-61000|止损:59000|止损:58000|止盈1:62000|仓位:5%|有效期:1h"),
+        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{635f}:58000|\u{6b62}\u{76c8}1:62000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "field_count_error"
     );
     // 0 take-profit.
     assert_eq!(
-        code("【合约信号】交易对:BTC-PERP|方向:LONG|杠杆:10|入场:60000-61000|止损:59000|仓位:5%|有效期:1h"),
+        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
         "direction_constraint"
     );
     // TP numbering gap (tp1 + tp3 without tp2).
@@ -299,7 +320,7 @@ fn ac16_perp_direction() {
 #[test]
 fn ac16b_non_monotonic_tps_accepted() {
     assert!(parse_signal_text(
-        "【合约信号】交易对:BTC-PERP|方向:LONG|杠杆:10|入场:60000-61000|止损:59000|止盈1:64000|止盈2:62000|仓位:5%|有效期:1h"
+        "【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{76c8}1:64000|\u{6b62}\u{76c8}2:62000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"
     )
     .is_ok());
 }
@@ -308,19 +329,19 @@ fn ac16b_non_monotonic_tps_accepted() {
 #[test]
 fn ac17_prediction() {
     assert_eq!(
-        code("【预测市场信号】事件:x|结果:MAYBE @0.5|结算日:2025-12-31|仓位:5%|有效期:1d"),
+        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:MAYBE @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
         "illegal_keyword"
     );
     assert_eq!(
-        code("【预测市场信号】事件:x|结果:YES @1.5|结算日:2025-12-31|仓位:5%|有效期:1d"),
+        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:YES @1.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
         "out_of_range"
     );
     assert_eq!(
-        code("【预测市场信号】事件:x|结果:YES @0.5|结算日:12-31|仓位:5%|有效期:1d"),
+        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:YES @0.5|\u{7ed3}\u{7b97}\u{65e5}:12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
         "invalid_date"
     );
     assert_eq!(
-        code("【预测市场信号】事件:x|结果:YES @0.5|结算日:2025-02-30|仓位:5%|有效期:1d"),
+        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:YES @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-02-30|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
         "invalid_date"
     );
 }
@@ -330,17 +351,17 @@ fn ac17_prediction() {
 fn ac18_option_mismatch() {
     // C code but optionType Put.
     assert_eq!(
-        code("【期权信号】合约代码:BTC-251231-60000-C|方向:买入|类型:Put|行权价:60000|到期日:2025-12-31|权利金上限:1500|仓位:5%|有效期:5d"),
+        code("【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Put|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d"),
         "option_field_mismatch"
     );
     // strike mismatch.
     assert_eq!(
-        code("【期权信号】合约代码:BTC-251231-60000-C|方向:买入|类型:Call|行权价:59000|到期日:2025-12-31|权利金上限:1500|仓位:5%|有效期:5d"),
+        code("【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call|\u{884c}\u{6743}\u{4ef7}:59000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d"),
         "option_field_mismatch"
     );
     // expiry mismatch.
     assert_eq!(
-        code("【期权信号】合约代码:BTC-251231-60000-C|方向:买入|类型:Call|行权价:60000|到期日:2025-12-30|权利金上限:1500|仓位:5%|有效期:5d"),
+        code("【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-30|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d"),
         "option_field_mismatch"
     );
 }
@@ -348,16 +369,16 @@ fn ac18_option_mismatch() {
 /// AC-19: DeFi missing APY / redeem terms (fixed-order required field absent).
 #[test]
 fn ac19_defi_missing_field() {
-    // missing 年化 (apy).
+    // missing apy.
     assert_eq!(
         code(
-            "【DeFi 信号】链:Ethereum|协议:AaveV3|锁仓:1.2B|币种:USDC|赎回:活期|仓位:10%|有效期:7d"
+            "【DeFi \u{4fe1}\u{53f7}】\u{94fe}:Ethereum|\u{534f}\u{8bae}:AaveV3|\u{9501}\u{4ed3}:1.2B|\u{5e01}\u{79cd}:USDC|\u{8d4e}\u{56de}:\u{6d3b}\u{671f}|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:7d"
         ),
         "field_count_error"
     );
-    // missing 赎回 (redeemTerms).
+    // missing redeemTerms.
     assert_eq!(
-        code("【DeFi 信号】链:Ethereum|协议:AaveV3|年化:5%|锁仓:1.2B|币种:USDC|仓位:10%|有效期:7d"),
+        code("【DeFi \u{4fe1}\u{53f7}】\u{94fe}:Ethereum|\u{534f}\u{8bae}:AaveV3|\u{5e74}\u{5316}:5%|\u{9501}\u{4ed3}:1.2B|\u{5e01}\u{79cd}:USDC|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:7d"),
         "field_count_error"
     );
 }
@@ -393,11 +414,11 @@ fn ac20_envelope() {
 fn ac24_errors_never_leak_input() {
     let leaky_inputs = [
         // tokenAddr in an otherwise-bad on-chain spot (bad slippage).
-        "【现货信号】市场:base|币种:X|方向:BUY|价格:1-2|合约地址:0xSECRETADDR|滑点:9%|仓位:5%|有效期:1h",
+        "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:base|\u{5e01}\u{79cd}:X|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:1-2|\u{5408}\u{7ea6}\u{5730}\u{5740}:0xSECRETADDR|\u{6ed1}\u{70b9}:9%|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h",
         // event free text in a bad prediction (odds out of range).
-        "【预测市场信号】事件:SECRETEVENTTEXT|结果:YES @9|结算日:2025-12-31|仓位:5%|有效期:1d",
+        "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:SECRETEVENTTEXT|\u{7ed3}\u{679c}:YES @9|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d",
         // contractCode in a mismatched option.
-        "【期权信号】合约代码:SECRETCODE-251231-60000-C|方向:买入|类型:Put|行权价:60000|到期日:2025-12-31|权利金上限:1|仓位:5%|有效期:5d",
+        "【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:SECRETCODE-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Put|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d",
     ];
     let secrets = ["0xSECRETADDR", "SECRETEVENTTEXT", "SECRETCODE"];
     for input in leaky_inputs {

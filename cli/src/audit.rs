@@ -190,9 +190,6 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
-    // Trade-signal parser diagnostic (`signal parse`): carries a full V1.1 signal
-    // that may embed `tokenAddr` / `event` free text (SR-3 / SR-4).
-    "--text",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -498,7 +495,6 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
-        SignalCommand::Parse { .. } => "parse",
     }
 }
 
@@ -1002,26 +998,6 @@ mod tests {
         let out = redact_args(&args);
         assert_eq!(out[4], "--param");
         assert_eq!(out[5], "[REDACTED]");
-    }
-
-    #[test]
-    fn redact_signal_parse_text() {
-        // `signal parse --text <T>` carries a full trade signal (may embed
-        // tokenAddr / event) -> fully redacted (SR-4).
-        let args = vec_s(&[
-            "onchainos",
-            "signal",
-            "parse",
-            "--text",
-            "【SPOT】market:BTC/USDT|tokenAddr:0xsecretdeadbeef|slippage:1%",
-        ]);
-        let out = redact_args(&args);
-        assert_eq!(out[3], "--text");
-        assert_eq!(out[4], "[REDACTED]");
-        // Equals form.
-        let args = vec_s(&["onchainos", "signal", "parse", "--text=【SPOT】x"]);
-        let out = redact_args(&args);
-        assert_eq!(out[3], "--text=[REDACTED]");
     }
 
     #[test]

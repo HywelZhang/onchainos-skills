@@ -7,13 +7,17 @@
 //! - [`parse_signal_text`] — parse one V1.1 `signalText` → [`ParsedSignal`] (FR-2).
 //! - [`parse_envelope`] — validate a V2 wire envelope then delegate (FR-3).
 //!
-//! ## Input grammar (Implementation-defined — see notes.md / changes_summary.md)
-//! The authoritative wire grammar lives in Lark spec v1.1, not quoted in the
-//! stage inputs; this module defines a coherent bilingual labeled-field grammar
-//! satisfying every FR/AC. The *output* `ParsedSignal` JSON and the `errorCode`
-//! set are the spec's frozen stability contract (NFR-4).
+//! ## Input grammar
+//! The authoritative wire grammar is Lark spec v1.1. Each asset class is a
+//! FIXED-ORDER sequence of `|`-separated `label:value` fields behind a full-title
+//! header (`【现货信号】…` / `【Spot Signal】…`); see [`header`] and [`fields`].
 //!
-//! Grammar: `【HEADER】label:value|label:value|...` — see [`header`] and [`fields`].
+//! The [`ParsedSignal`] result is an **internal** parser model, NOT a second
+//! frozen public trading-signal contract. Its field naming follows the runtime
+//! autotrade conventions (`positionPct`, `ttlSec`) and it reuses the shared
+//! `Decimal` + [`AssetClass`] types (feedback !a15bed9d). Wiring this output into
+//! the runtime `agent_commerce::task::common::autotrade` pipeline is a separate
+//! task (Task 3); this module only produces the parse result.
 
 use serde::Serialize;
 
@@ -179,15 +183,16 @@ pub enum SignalParams {
     Defi(DefiParams),
 }
 
-/// The public parse result — the stability contract (NFR-4). `assetClass` (top)
-/// and `params.kind` are always equal.
+/// The public parse result — an internal parser model (NOT a frozen public
+/// contract), named to match the runtime autotrade conventions (`positionPct`,
+/// `ttlSec`). `assetClass` (top) and `params.kind` are always equal.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedSignal {
     pub asset_class: AssetClass,
     pub language: Language,
-    pub position_percent: String,
-    pub ttl_seconds: u64,
+    pub position_pct: String,
+    pub ttl_sec: u64,
     pub params: SignalParams,
 }
 
@@ -219,8 +224,8 @@ pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     let mut field_map = fields::FieldMap::build(asset_class, language, &raw_fields)?;
 
     // 7-8. common (position/ttl) + per-class field parse & range/date/constraints.
-    let position_percent = fields::parse_position(&field_map.require(fields::ID_POSITION)?)?;
-    let ttl_seconds = fields::parse_ttl(&field_map.require(fields::ID_TTL)?)?;
+    let position_pct = fields::parse_position(&field_map.require(fields::ID_POSITION)?)?;
+    let ttl_sec = fields::parse_ttl(&field_map.require(fields::ID_TTL)?)?;
     let params = params::dispatch(asset_class, &mut field_map)?;
 
     // Any label valid for the class but unconsumed by its form is an extra field.
@@ -230,8 +235,8 @@ pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     Ok(ParsedSignal {
         asset_class,
         language,
-        position_percent,
-        ttl_seconds,
+        position_pct,
+        ttl_sec,
         params,
     })
 }

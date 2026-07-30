@@ -602,7 +602,7 @@ agent subscribe-asp-claim <jobId> --agent-id <aspAgentId>
 
 ### subscribe-dispute
 
-ASP raises arbitration for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
+ASP raises an evaluation for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
 
 ```
 agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]

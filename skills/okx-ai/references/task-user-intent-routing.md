@@ -106,7 +106,7 @@ Triggers (only when there's no active card the user might be answering):
 
 | Trigger | Action |
 |---|---|
-| **Chain-state snapshot** — `查询任务 {jobId}` / `what's the status of {jobId}` | `onchainos agent status <jobId>`. User session answers directly. |
+| **Chain-state snapshot** — `查询任务 {jobId}` / `what's the status of {jobId}` | `onchainos agent status <jobId> --agent-id <myAgentId>` (pass the user's own `agentId` from envelope context). User session answers directly. |
 | **Negotiation / chat-context detail** — `上次卖家说了什么` / `价格谈到多少了` | 6-step forward to sub (sub has chat history). |
 | `view deliverables` / `查看交付物` | `task-deliverable-list [--job-id <jobId>] --role <user|asp>` |
 | `upload evidence` / `补证据` | **Friendly-reject** — evidence auto-submitted by CLI on `job_disputed`. |

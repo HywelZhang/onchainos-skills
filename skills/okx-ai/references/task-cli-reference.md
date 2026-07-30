@@ -10,7 +10,7 @@
 
 - **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **User**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
-- **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost`
+- **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
@@ -377,7 +377,7 @@ agent create-subscribe \
   --service-token-amount <amt> --service-token-address <addr> \
   --auto-renew <0|1> --copy-trade <0|1> \
   --title <txt> --description <txt> --description-summary <txt> \
-  [--provider-agent-id <id>] [--service-params <params>] [--format json]
+  [--provider-agent-id <id>] [--service-params <params>] [--exclude-device <id>]... [--format json]
 ```
 
 | Param | Required | Default | Description |
@@ -392,6 +392,9 @@ agent create-subscribe \
 | `--description` | Yes | - | Max 4096 chars |
 | `--description-summary` | Yes | - | Max 512 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
+| `--exclude-device` | No | *(none)* | Device id to omit from the default all-devices routing set (repeatable) |
+
+> **Device routing (WBW-14118):** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
 
 ### subscribe-detail
 
@@ -400,6 +403,8 @@ Show subscription detail.
 ```
 agent subscribe-detail <subId> [--format json]
 ```
+
+> **Enriched output (WBW-14118):** `data` gains `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives` (bool) + `thisDeviceId` (String|null). Subscribe time fields (`trialStartTime`/`trialEndTime`/`subStartTime`/`subEndTime`/`subBufferEndTime`) stay Unix **seconds** — device-list times are ms.
 
 ### subscribe-cancel
 
@@ -443,6 +448,8 @@ agent my-subscriptions [--role <buyer|provider>] [--status <code|name>]
 | `--role` | No | `buyer` | Viewpoint: `buyer` (subscriber) or `provider` (ASP) |
 | `--status` | No | all | Filter by status code (-1/1/3/4/6/7/9) or name (INIT/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/FAILED) |
 
+> **Enriched output (WBW-14118):** each row adds `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives`; the envelope echoes top-level `thisDeviceId` (String|null) once.
+
 ### subscribe-cost
 
 Return the total monthly cost of the caller's active subscriptions
@@ -452,6 +459,38 @@ agent subscribe-cost
 ```
 
 No parameters. Output via `output::success`.
+
+### subscribe-device-update
+
+Overwrite the receive-device list for one or more subscriptions (buyer side). The passed list wholly replaces the stored list; empty/omitted clears it. No `confirming` gate — the clear-list confirmation is a skill-dialog responsibility.
+
+```
+agent subscribe-device-update --job-id <jobId> [--device-list <id1,id2>]
+agent subscribe-device-update --items '[{"jobId":"0x..","deviceList":["d1"]}]'
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--job-id` | form A | — | subscription jobId (single-item form) |
+| `--device-list` | No | *(clear)* | comma-separated device ids; empty/omitted clears the list |
+| `--items` | form B | — | JSON array of `{jobId, deviceList}`; non-empty, ≤100. Wins over form A if both given |
+
+Client pre-validates `items` non-empty and ≤100 (0 / >100 fail locally with **no request**). Output `data`: `{ "updated": [ { "jobId", "deviceList": [...] } ] }` (echoes what was written so the skill re-renders without a second fetch). Success iff backend `data == true`; any other shape echoes the raw body into the error. Exit 0 success · 1 error.
+
+### device-list
+
+List the devices this agent is logged in on, with CLI-derived local last-online time and a this-device marker. Paginates to completion.
+
+```
+agent device-list [--page <n>] [--page-size <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--page` | No | 1 | starting page (`<1`→1) |
+| `--page-size` | No | 20 | page size (`<1`→20; `>100`→backend error 81001) |
+
+Output `data`: `{ "list": [ { "deviceId", "deviceName", "lastOnlineTime" (ms), "lastOnlineLocal", "isThisDevice" } ], "total", "page", "pageSize", "thisDeviceId" }`. `lastOnlineLocal` is CLI-formatted local time — render **verbatim**, never re-convert. **No `online` field** — never synthesize one. No devices ⇒ `list: []`, `total: 0` (exit 0). `pageSize>100` / transport / endpoint-unavailable ⇒ `output::error` (exit 1) — the endpoint is not live in production yet, so exercise the degraded render path.
 
 ---
 

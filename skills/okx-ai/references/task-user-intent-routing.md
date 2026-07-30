@@ -154,5 +154,9 @@ Triggers:
 |---|---|
 | `我的订阅` / `订阅列表` / `我订阅了哪些` / `my subscriptions` / `what am I subscribed to` | `onchainos agent my-subscriptions --role buyer` → render per [`task-user-playbook.md` §My Subscriptions](task-user-playbook.md). User session answers directly (do NOT 6-step forward). |
 | `订阅详情` / `这个订阅的详情` / `subscription detail` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
+| 查看/列出我登录的设备、`设备列表`、`device list`、`哪些设备在线` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
+| `让这个设备开始接收 X 订阅的消息`、`在本机接收 X`、`start receiving X on this device` | [`task-user-playbook.md` §Turn on receipt (this device)](task-user-playbook.md) — fresh-read → overwrite → re-read. |
+| `不要再把 X 推送到这个/某台设备`、`停止向 X 设备推送 Y`、`stop pushing Y to device` | [`task-user-playbook.md` §Turn off receipt](task-user-playbook.md) — fresh-read → remove → overwrite → read back remaining. |
+| `监听任务` / `监听消息` 未指定具体任务 | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task (“一次只能监听一个”) → turn on this-device receipt → enter watch flow. |
 
-⚠️ Disambig — `我的订阅` (subscriptions) vs `我的任务` (tasks): subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix.
+⚠️ Disambig — `我的订阅` (subscriptions) vs `我的任务` (tasks): subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix. **Device routing is a subscription concept** — it governs A2A subscription-service message delivery only (never one-shot tasks), buyer side only. Do NOT route these to `task-asp.md` or any ASP/provider rendering.

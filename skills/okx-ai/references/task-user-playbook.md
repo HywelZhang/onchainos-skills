@@ -82,8 +82,17 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | Apply for refund (退款 / 发起退款 / 申请退款 / 拒收 / 申请仲裁 / 申请评审 / 仲裁 / 评审 / refund / dispute / evaluation / arbitration) | `reject {id} --reason "..."` | **unified command** — auto-detects subscription vs regular task. User says any of these keywords → **always use `reject`** as the first step |
 | Claim refund after timeout | `claim-auto-refund {id}` | 🛑 **NEVER use as first step** — only after `reject` AND ASP misses 1-day response window |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
+| 让本机开始接收某订阅消息 (start receiving on this device) | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail`/`my-subscriptions`); if this device is already present, tell the user & do NOT re-write; after write, re-read and mark 是（本次新增） |
+| 停止向某设备推送某订阅 (stop pushing to a device) | `subscribe-device-update --job-id <id> --device-list <fresh list − device>` | resolve device name→id via `device-list`; after write, read back remaining receivers; copy: 「已停止向 X 推送 Y。现在这个任务只会推到 Z。」（名称不可得时降级为数量，绝不编造名称） |
+| 列出登录设备 (list devices) | `device-list` | render §Device List; ms→local time is already CLI-derived (`lastOnlineLocal`) |
+| 监听任务/消息（未指定任务）(listen, no task specified) | — | confirm exactly one task（「一次只能监听一个」）→ turn on this-device receipt → enter the existing watch flow (`watch-core.md`) → tell the user new messages push live into this conversation |
 
 If the user does not specify a `subId`, use `subscribe-detail` to check the subscription, or ask the user to provide it.
+
+**Device-routing safety flows (must be encoded as copy/behavior):**
+- **Clear-list confirmation:** if a removal would empty the device list, first explicitly warn 「该订阅将没有任何设备接收消息」 and obtain confirmation, only then write.
+- **Overwrite from fresh read:** the new `--device-list` is ALWAYS built from the just-re-read list (`subscribe-detail` / `my-subscriptions`), never from conversational memory — `subscribe-device-update` overwrites wholesale.
+- **Neutral copy:** promise only 「本订阅任务的消息」; make no promise about system-notification scope.
 
 ### Reject + refund flow (detailed)
 
@@ -121,16 +130,19 @@ Key rules:
 
 Trigger: user asks for their subscriptions (`我的订阅` / `订阅列表` / `我订阅了哪些服务` / `my subscriptions` / `what am I subscribed to`). Routing entry lives in [`task-user-intent-routing.md`](task-user-intent-routing.md).
 
-Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ] }`. Render each element as one row (localize labels for non-CN users). **Render ALL columns below — never drop 服务商 or 期数, and never merge 下次扣款 into a raw period range; 下次扣款 is a single derived date per the rule below.**
+Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ], "thisDeviceId": <String|null> }`. Render each element as one row (localize labels for non-CN users). **Render ALL columns below — never drop 服务商 or 期数, and never merge 下次扣款 into a raw period range; 下次扣款 is a single derived date per the rule below.**
 
-| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 |
-|---|------|--------|------|------|---------|---------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} |
+| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | 已登陆设备 | 设备是否接收任务消息 |
+|---|------|--------|------|------|---------|---------|------|------|------|
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本机）if this device} | {是/否} |
 
 - **状态**: 直接展示 CLI 返回的 `statusName`（ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式改由「期数」列区分（`trialType==1` 显示"试用期"）。
 - **费用**: `serviceTokenAmount` 字符串原样展示（绝不转 float）；CLI 不提供 token 符号，仅 `serviceTokenAddress`。
 - **期数** (按状态分派): `trialType==1` → "试用期"; else `periodIndex` 为合法正整数(> 0) → `第{periodIndex}期`; else (`periodIndex` 为 null 或 ≤ 0) → "—"。
 - **下次扣款** (no CLI field — derive): `statusName != "ACTIVE"` → "—"; else `trialType==1` → 读 `trialEndTime`(正拼, 优先) 或 `trailEndTime`(`trail*` 旧拼, fallback) 双读(复用 AC-17)，渲染为日期(试用转正扣款日)，两者皆缺 → "日期暂缺"; else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
+- **已登陆设备 / 设备是否接收任务消息** (per-device expansion): a subscription logged in on N devices occupies **N rows** — the `#` and all leading subscription columns **repeat unchanged** across that subscription's rows. 已登陆设备 = that device's readable `deviceName` (join each id in the subscription's `deviceList` from `my-subscriptions` against the `device-list` rows to get names; the **this-device** row gets a prominent marker `（本机）`). 设备是否接收任务消息 = **是** when the device id ∈ this subscription's `deviceList`, else **否**; the this-device row's value comes directly from the CLI `thisDeviceReceives` flag — never recompute it. When a device name is unavailable, **degrade to a count / raw id — never fabricate a name**.
+- **Degraded render (MANDATORY — device table unavailable, PRD §4.3/§7.3):** when `device-list` fails or is empty, fall back to **one row per subscription** and **explicitly state that other devices' receipt status is temporarily unavailable** (e.g. 「其他设备的接收状态暂不可用」). It is forbidden to present the one known (this) device as the full picture. The this-device row still shows 是/否 from `thisDeviceReceives`; all other devices are shown as unavailable, not omitted silently.
+- **Display-only rule:** on any list render, do **not** proactively ask whether to turn on receipt (product retracted that prompt); turning on happens only on explicit user request.
 - All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.
 - To open one row's full detail, pass that row's **`jobId`** to `subscribe-detail` (§订阅详情).
@@ -150,3 +162,33 @@ Trigger: user selects a row / asks about one subscription (`订阅详情` / `这
 
 - 金额字段（`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`）是**字符串**，原样展示，绝不转 float。
 - token 符号 CLI 不提供，仅有 `serviceTokenAddress`（展示短地址）。
+
+After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row gets a prominent marker `（本机）`.
+
+| 已登陆设备 | 设备是否接收任务消息 |
+|---|---|
+| {deviceName}{（本机）if this device} | {是/否 from `thisDeviceReceives` / membership} |
+
+- 已登陆设备 names come from joining the detail's `deviceList` ids against `device-list` rows; **degrade to a raw id / count when a name is unavailable — never fabricate a name**.
+- 设备是否接收任务消息 = 是 when the device id ∈ `deviceList`; the this-device row reads the CLI `thisDeviceReceives` flag directly.
+- Subscribe time fields render as Unix **seconds** (device-list times are ms — different unit).
+- **Degraded fallback:** two rows — the this-device row (known) + an explicit `其他设备接收状态暂不可用` row — when the device table is unavailable. Never present this device as the full picture.
+
+## Device List (设备列表)
+
+Trigger: `设备列表` / `我登录了哪些设备` / `哪些设备在线` / `device list`. Command: `onchainos agent device-list` → JSON `{ "list": [ … ], "total", "thisDeviceId" }` (paginated to completion CLI-side; render the full set as-is). Render **three columns — no 是否在线 column** (the CLI emits no `online` field; never synthesize one):
+
+| 设备 | 最后在线时间 | 接收的订阅任务消息 |
+|---|---|---|
+| {deviceName}{（本机）if `isThisDevice`} | {lastOnlineLocal} | {derived — see below} |
+
+- **设备**: readable `deviceName` (may be empty → show raw `deviceId` / a count, never fabricate); the `isThisDevice==true` row gets the `（本机）` marker.
+- **最后在线时间**: render `lastOnlineLocal` **verbatim** — it is already CLI-formatted local time; never re-convert or re-parse `lastOnlineTime`.
+- **接收的订阅任务消息**: derived by joining each `deviceId` against the subscriptions' `deviceList` (from `my-subscriptions`) — e.g. list which subscriptions that device receives, or 是/否 for a specific subscription in context.
+- Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), see the degraded render in §My Subscriptions / §Subscription Detail — state that device info is temporarily unavailable rather than presenting a partial picture as complete.
+
+## Create-subscribe device preview
+
+Before creating a subscription, show the device table (设备 + 最后在线时间 from `device-list`) and tell the user the task's messages will **auto-push to all logged-in devices**, and any device can be disconnected later. On create, the CLI always sends `deviceList` explicitly (all logged-in devices minus any excluded).
+
+- **Degrade (§4.4):** if `device-list` fails/empty, the create still **proceeds with this device only**, the CLI returns `data.deviceRoutingDegraded: true`, and the skill tells the user only this device was set (do NOT abort). Surface this as a plain notice, not an error.

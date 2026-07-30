@@ -69,7 +69,7 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         "**Localize first** — rewrite the content below in the user's language before sending. \
          Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n"
     );
@@ -249,7 +249,7 @@ pub(crate) fn sub_asp_dispute(
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
      \x20\x20\x20\x20{notify_content}\n\n\
@@ -329,7 +329,7 @@ pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n\
          {renewal_hint}\n\n\
@@ -351,7 +351,7 @@ pub(crate) fn sub_complete_notify(
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n\
          {rating_block}\
@@ -411,7 +411,7 @@ pub(crate) fn sub_failed_notify(
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n\
          {rating_block}\

@@ -28,7 +28,7 @@ Real work execution (calling external tools / generating output / etc.) ALSO wai
 
 When the ASP sub session receives a peer message starting with `[user_rejected]:`, the User Agent has declined this ASP's application (either explicitly rejected, or accepted another ASP for the same job).
 
-1. **Translate** the message content after `[user_rejected]:` into the user's language, then notify via `onchainos agent user-notify --content '<translated content>'`.
+1. **Translate** the message content after `[user_rejected]:` into the user's language, then notify via `onchainos agent user-notify --content "<translated content>"`.
 2. **Do NOT reply** to the User Agent — no `okx-a2a xmtp-send`, no `next-action`. This is a terminal notification.
 3. End turn.
 

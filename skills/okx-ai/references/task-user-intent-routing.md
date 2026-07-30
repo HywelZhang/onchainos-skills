@@ -23,10 +23,10 @@ User-session needs to forward free-form user instructions targeting a specific t
    ```bash
    okx-a2a session send --no-wait \
      --job-id <jobId> --to-agent-id <counterpartyAgentId> \
-     --content '<user verbatim>
+     --content "<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract).'
+   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)."
    ```
 
    Forward verbatim then append reply-path instruction. End turn.

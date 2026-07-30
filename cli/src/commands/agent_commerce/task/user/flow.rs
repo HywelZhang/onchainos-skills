@@ -45,7 +45,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x205. **Route by inference result:**\n\
                      \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<to be provided>` marks) → call `set-asp` directly:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params \"<inferred or empty>\" --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
@@ -80,7 +80,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.'\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -119,7 +119,7 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {canonical_content}\n\n\
          End turn after the call.\n"
@@ -131,7 +131,7 @@ pub(super) fn notify_and_end_terminal(canonical_content: &str, terminal_hint: &s
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {canonical_content}\n\n\
          {terminal_hint}\n"
@@ -156,7 +156,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token/amount from task detail API)"),
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
-            format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
+            format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params \"<params>\" --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
         Status::Accepted => vec![
@@ -526,7 +526,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x203. **Route by inference result:**\n\
                      \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<to be provided>` marks) → call `set-asp` directly:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-type <serviceType> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-type <serviceType> --service-params \"<inferred or empty>\" --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
@@ -595,7 +595,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x205. **Route by inference result:**\n\
                      \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<to be provided>` marks) → call `set-asp` directly:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params \"<inferred or empty>\" --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
@@ -658,7 +658,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x205. **Route by inference result:**\n\
                      \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<to be provided>` marks) → call `set-asp` directly:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params \"<inferred or empty>\" --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
@@ -857,7 +857,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Step 2 — Retrieve service info** from `[SERVICE_CONTEXT]`: `providerAgentId`, `serviceId`, `serviceType`, `serviceTokenAddress`, `serviceTokenAmount`.\n\n\
                      **Step 3 — Call set-asp:**\n\
                      ```bash\n\
-                     onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-type <serviceType> --service-params '<resolved serviceParams from Step 1>' --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
+                     onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-type <serviceType> --service-params \"<resolved serviceParams from Step 1>\" --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
                      ```\n\
                      {step3_success}\
                      4. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
@@ -866,7 +866,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.'\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\

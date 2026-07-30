@@ -46,7 +46,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
-   - **Terminal fast-path** — if `content` starts with `[user_rejected]:`: **Localize first** — rewrite the reason after the prefix in the user's language (Do NOT pass English template verbatim), then run `onchainos agent user-notify --content '<localized reason>'`. Do NOT reply to the sender. End turn. Do NOT load any role playbook.
+   - **Terminal fast-path** — if `content` starts with `[user_rejected]:`: **Localize first** — rewrite the reason after the prefix in the user's language (Do NOT pass English template verbatim), then run `onchainos agent user-notify --content "<localized reason>"`. Do NOT reply to the sender. End turn. Do NOT load any role playbook.
    - Otherwise read `sender.role` → load role file:
      - `sender.role == 1` → you are ASP → [`task-asp.md`](task-asp.md)
      - `sender.role == 2` → you are User Agent → [`task-user-sub-playbook.md`](task-user-sub-playbook.md)

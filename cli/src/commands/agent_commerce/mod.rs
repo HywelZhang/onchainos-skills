@@ -150,6 +150,27 @@ pub enum AgentCommand {
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
 
+    /// Overwrite the receive-device list for one or more subscriptions (batch).
+    /// The passed list wholly replaces the stored list; empty/omitted clears it.
+    #[command(name = "subscribe-device-update")]
+    SubscribeDeviceUpdate {
+        /// Subscription jobId to overwrite (Form A, single subscription).
+        #[arg(long = "job-id")] job_id: Option<String>,
+        /// Comma-separated device ids (Form A); empty/omitted clears the list.
+        #[arg(long = "device-list")] device_list: Option<String>,
+        /// JSON array of {jobId, deviceList} (Form B, batch). Wins over Form A if both are given.
+        #[arg(long)] items: Option<String>,
+    },
+
+    /// List the devices this agent is logged in on (paginated to completion).
+    #[command(name = "device-list")]
+    DeviceList {
+        /// Starting page (`<1` normalized to 1).
+        #[arg(long, default_value = "1")] page: i64,
+        /// Page size (`<1` normalized to 20; `>100` → backend error 81001).
+        #[arg(long = "page-size", default_value = "20")] page_size: i64,
+    },
+
     /// Search matching ASPs (pre-publish or post-publish)
     #[command(name = "asp-match")]
     AspMatch {
@@ -997,6 +1018,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::SubscribeDetail { sub_id, format }, ctx).await,
         AgentCommand::SubscribeCost {} =>
             task::user::run_task(T::SubscribeCost {}, ctx).await,
+
+        AgentCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            task::user::run_task(T::SubscribeDeviceUpdate { job_id, device_list, items }, ctx).await,
+        AgentCommand::DeviceList { page, page_size } =>
+            task::user::run_task(T::DeviceList { page, page_size }, ctx).await,
 
         AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
             task::user::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format }, ctx).await,

@@ -21,6 +21,7 @@ mod complete;
 mod content;
 mod create;
 mod create_subscribe;
+mod device_routing;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
@@ -329,6 +330,19 @@ pub enum TaskCommand {
     /// Show total monthly cost of active subscriptions.
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
+    /// Overwrite the receive-device list for one or more subscriptions (batch).
+    #[command(name = "subscribe-device-update")]
+    SubscribeDeviceUpdate {
+        job_id: Option<String>,
+        device_list: Option<String>,
+        items: Option<String>,
+    },
+    /// List the devices this agent is logged in on (paginated to completion).
+    #[command(name = "device-list")]
+    DeviceList {
+        page: i64,
+        page_size: i64,
+    },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -413,6 +427,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reject::handle_reject(&mut client, &sub_id, &reason).await,
         TaskCommand::SubscribeDetail { sub_id, format } =>
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
+        TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            device_routing::handle_subscribe_device_update(&mut client, job_id.as_deref(), device_list.as_deref(), items.as_deref()).await,
+        TaskCommand::DeviceList { page, page_size } =>
+            device_routing::handle_device_list(&mut client, page, page_size).await,
 
         // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>

@@ -464,6 +464,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
         AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
         AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
+        AgentCommand::SubscribeDeviceUpdate { .. } => "subscribe-device-update".into(),
+        AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),

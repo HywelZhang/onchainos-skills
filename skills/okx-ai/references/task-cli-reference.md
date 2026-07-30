@@ -394,7 +394,7 @@ agent create-subscribe \
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--exclude-device` | No | *(none)* | Device id to omit from the default all-devices routing set (repeatable) |
 
-> **Device routing (WBW-14118):** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
+> **Device routing:** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
 
 ### subscribe-detail
 
@@ -404,7 +404,7 @@ Show subscription detail.
 agent subscribe-detail <subId> [--format json]
 ```
 
-> **Enriched output (WBW-14118):** `data` gains `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives` (bool) + `thisDeviceId` (String|null). Subscribe time fields (`trialStartTime`/`trialEndTime`/`subStartTime`/`subEndTime`/`subBufferEndTime`) stay Unix **seconds** — device-list times are ms.
+> **Enriched output:** `data` gains `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives` (bool) + `thisDeviceId` (String|null). Subscribe time fields (`trialStartTime`/`trialEndTime`/`subStartTime`/`subEndTime`/`subBufferEndTime`) stay Unix **seconds** — device-list times are ms.
 
 ### subscribe-cancel
 
@@ -448,7 +448,7 @@ agent my-subscriptions [--role <buyer|provider>] [--status <code|name>]
 | `--role` | No | `buyer` | Viewpoint: `buyer` (subscriber) or `provider` (ASP) |
 | `--status` | No | all | Filter by status code (-1/1/3/4/6/7/9) or name (INIT/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/FAILED) |
 
-> **Enriched output (WBW-14118):** each row adds `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives`; the envelope echoes top-level `thisDeviceId` (String|null) once.
+> **Enriched output:** each row adds `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives`; the envelope echoes top-level `thisDeviceId` (String|null) once.
 
 ### subscribe-cost
 

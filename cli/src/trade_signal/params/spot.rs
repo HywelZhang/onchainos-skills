@@ -47,11 +47,15 @@ mod tests {
 
     /// Build a spot `FieldMap` from raw en `(label, value)` pairs (en labels are
     /// identical to the canonical field ids, so this exercises the real path).
+    /// The required trailing `position`/`ttl` slots are appended automatically so
+    /// the fixed-order build succeeds; `spot::parse` leaves them for the caller.
     fn spot_fm(pairs: &[(&str, &str)]) -> FieldMap {
-        let raw: Vec<(String, String)> = pairs
+        let mut raw: Vec<(String, String)> = pairs
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
+        raw.push(("position".to_string(), "5%".to_string()));
+        raw.push(("ttl".to_string(), "1h".to_string()));
         FieldMap::build(AssetClass::Spot, Language::En, &raw).expect("field map builds")
     }
 

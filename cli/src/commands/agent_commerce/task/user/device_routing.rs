@@ -123,7 +123,11 @@ async fn fetch_all_devices(
     page_size: i64,
 ) -> Result<DevicePage> {
     let start_page = if page < 1 { 1 } else { page };
-    let norm_size = if page_size < 1 { DEFAULT_PAGE_SIZE } else { page_size };
+    let norm_size = if page_size < 1 {
+        DEFAULT_PAGE_SIZE
+    } else {
+        page_size
+    };
 
     let mut acc: Vec<DeviceRow> = Vec::new();
     let total: i64;
@@ -184,7 +188,9 @@ pub(crate) fn resolve_create_device_set(
             (kept, false)
         }
         _ => (
-            this_device_id.map(|id| vec![id.to_string()]).unwrap_or_default(),
+            this_device_id
+                .map(|id| vec![id.to_string()])
+                .unwrap_or_default(),
             true,
         ),
     }
@@ -220,7 +226,11 @@ pub async fn handle_device_list(
         .collect();
 
     let echoed_page = if page < 1 { 1 } else { page };
-    let echoed_size = if page_size < 1 { DEFAULT_PAGE_SIZE } else { page_size };
+    let echoed_size = if page_size < 1 {
+        DEFAULT_PAGE_SIZE
+    } else {
+        page_size
+    };
 
     output::success(json!({
         "list": list,
@@ -270,8 +280,8 @@ fn normalize_items(
         })?;
         Ok(parsed)
     } else {
-        let job_id =
-            job_id.ok_or_else(|| anyhow!("either --job-id (form A) or --items (form B) is required"))?;
+        let job_id = job_id
+            .ok_or_else(|| anyhow!("either --job-id (form A) or --items (form B) is required"))?;
         if job_id.is_empty() {
             bail!("--job-id must not be empty");
         }
@@ -369,7 +379,10 @@ mod tests {
     #[test]
     fn fmt_unix_millis_unparseable_sentinel() {
         let out = fmt_unix_millis(i64::MAX);
-        assert!(out.contains("unparseable"), "expected unparseable sentinel: {out}");
+        assert!(
+            out.contains("unparseable"),
+            "expected unparseable sentinel: {out}"
+        );
     }
 
     #[test]
@@ -377,7 +390,10 @@ mod tests {
         // 1_784_620_000_000 ms → 2026 (UTC 2026-07-19); local offsets keep the year.
         let ms = 1_784_620_000_000i64;
         let as_ms = fmt_unix_millis(ms);
-        assert!(as_ms.contains("2026"), "ms must format to year 2026: {as_ms}");
+        assert!(
+            as_ms.contains("2026"),
+            "ms must format to year 2026: {as_ms}"
+        );
         // RED assertion: reading the same integer as *seconds* lands in the wrong
         // (far-future) year — proving the helper is millisecond-based.
         if let Some(dt) = chrono::Local.timestamp_opt(ms, 0).single() {

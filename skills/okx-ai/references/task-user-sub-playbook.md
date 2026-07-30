@@ -107,7 +107,7 @@ This ensures the deliverable data is not lost when the system event interrupts t
 
 #### Fallback decision tree (routing #3)
 
-**First peer message in sub** (no prior `negotiate_reply` handled) → call `agent status <jobId>`, then branch:
+**First peer message in sub** (no prior `negotiate_reply` handled) → call `agent status <jobId> --agent-id <myAgentId>` (use the sub session's own `agentId` from the envelope's top-level `agentId`; do not rely on auto-resolution), then branch:
 
 | Condition | Action |
 |---|---|

@@ -116,12 +116,12 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     };
 
     let winner_line = if user_won {
-        "**Arbitration outcome: user WINS** (chain status = 9/failed).\n\n"
+        "**Evaluation outcome: user WINS** (chain status = 9/failed).\n\n"
     } else {
-        "**Arbitration outcome: user LOSES** (chain status = 6/completed; ASP wins).\n\n"
+        "**Evaluation outcome: user LOSES** (chain status = 6/completed; ASP wins).\n\n"
     };
-    // Arbitration result copy reuses the online task-level notice for subscriptions too
-    // (product decision 2026-07-24: arbitration copy uses the existing online version).
+    // Deliberate reuse: subscription evaluation results render the existing online
+    // task-level notice rather than subscription-specific copy.
     let dispatch_content = if user_won { &dispute_won } else { &dispute_lost };
     let score_guide = if user_won {
         "provider at fault → 0.00–2.00"

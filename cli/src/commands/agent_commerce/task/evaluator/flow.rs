@@ -246,7 +246,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             let vote = message.and_then(|m| i64_field(m, "vote"));
 
             let mut lines = vec![
-                format!("【Arbitration vote committed for task [{job_title}] · waiting for Reveal】"),
+                format!("【Evaluation vote committed for task [{job_title}] · waiting for Reveal】"),
                 format!("Task title: {job_title}"),
                 format!("Task ID: #{job_id}"),
             ];
@@ -267,7 +267,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             let slashed_cooldown_seconds = message.and_then(|m| i64_field(m, "slashedCooldownSeconds"));
 
             let mut lines = vec![
-                format!("【⏰ URGENT: Arbitration vote for task [{job_title}] is about to close】"),
+                format!("【⏰ URGENT: Evaluation vote for task [{job_title}] is about to close】"),
                 format!("Task title: {job_title}"),
                 format!("Task ID: #{job_id}"),
             ];
@@ -302,7 +302,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             let slashed_cooldown_seconds = message.and_then(|m| i64_field(m, "slashedCooldownSeconds"));
 
             let mut lines = vec![
-                format!("【⏰ URGENT: Arbitration reveal for task [{job_title}] is about to close】"),
+                format!("【⏰ URGENT: Evaluation reveal for task [{job_title}] is about to close】"),
                 format!("Task title: {job_title}"),
                 format!("Task ID: #{job_id}"),
             ];
@@ -389,8 +389,8 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     let phase = if matches!(branch, Branch::MissedCommit) { "Commit" } else { "Reveal" };
                     let mut lines = Vec::new();
                     match &agent_name {
-                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] arbitration — penalty incoming】")),
-                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] arbitration — penalty incoming")),
+                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] evaluation — penalty incoming】")),
+                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] evaluation — penalty incoming")),
                     }
                     lines.push(format!("Task title: {job_title}"));
                     lines.push(format!("Task ID: #{job_id}"));
@@ -411,7 +411,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 }
                 Branch::Won => {
                     let mut lines = vec![
-                        format!("【🎉 Arbitration result for task [{job_title}]: your vote aligned with the majority — reward eligible】"),
+                        format!("【🎉 Evaluation result for task [{job_title}]: your vote aligned with the majority — reward eligible】"),
                         format!("Task title: {job_title}"),
                         format!("Task ID: #{job_id}"),
                     ];
@@ -437,7 +437,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 }
                 Branch::Lost => {
                     let mut lines = vec![
-                        format!("【⚠️ Arbitration result for task [{job_title}]: your vote disagreed with the majority — slash penalty incoming】"),
+                        format!("【⚠️ Evaluation result for task [{job_title}]: your vote disagreed with the majority — slash penalty incoming】"),
                         format!("Task title: {job_title}"),
                         format!("Task ID: #{job_id}"),
                     ];
@@ -495,8 +495,8 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     let phase = if matches!(branch, Branch::MissedCommit) { "Commit" } else { "Reveal" };
                     let mut lines = Vec::new();
                     match &agent_name {
-                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] arbitration — penalty incoming】")),
-                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] arbitration — penalty incoming")),
+                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] evaluation — penalty incoming】")),
+                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] evaluation — penalty incoming")),
                     }
                     lines.push(format!("Task title: {job_title}"));
                     lines.push(format!("Task ID: #{job_id}"));
@@ -517,7 +517,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 }
                 Branch::Invalidated => {
                     let mut lines = vec![
-                        format!("【⚖️ Task [{job_title}] arbitration round invalidated】"),
+                        format!("【⚖️ Task [{job_title}] evaluation round invalidated】"),
                         format!("Task title: {job_title}"),
                         format!("Task ID: #{job_id}"),
                         "Tally: no side reached ≥ 50%".to_string(),
@@ -540,7 +540,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
 
         "reward_claimed" => format!(
             "[Current Status] reward_claimed\n\n{}\n{}",
-            notify_block("Your arbitration reward has been credited."),
+            notify_block("Your evaluation reward has been credited."),
             terminal_session_hint(job_id),
         ),
 

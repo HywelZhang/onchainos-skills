@@ -172,7 +172,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Rejected => vec![
             next_action("job_rejected"),
-            "(passive wait) ASP decides: job_disputed → enter arbitration evidence; job_refunded → refund".to_string(),
+            "(passive wait) ASP decides: job_disputed → enter evaluation evidence; job_refunded → refund".to_string(),
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
@@ -182,7 +182,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_completed"),
             "(terminal) Task is COMPLETE — **funds released to ASP**".to_string(),
             "  ▸ escrow review approved → release escrow funds to ASP".to_string(),
-            "  ▸ arbitration ASP wins (dispute_resolved seller-wins) → release escrow funds to ASP".to_string(),
+            "  ▸ evaluation ASP wins (dispute_resolved seller-wins) → release escrow funds to ASP".to_string(),
             "  ▸ x402 funds were already paid in the accept phase".to_string(),
             "Keep the sub session (do not close), for later reference.".to_string(),
         ],
@@ -190,7 +190,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_refunded"),
             "(terminal) Task is FAILED — **funds refunded to user**".to_string(),
             "  ▸ ASP agreed to refund (agree-refund) / auto-refund → funds returned along the original path".to_string(),
-            "  ▸ Arbitration user wins (dispute_resolved user-wins) → refund".to_string(),
+            "  ▸ Evaluation user wins (dispute_resolved user-wins) → refund".to_string(),
             "Keep the sub session (do not close), for later reference.".to_string(),
         ],
         Status::Close => vec![
@@ -313,7 +313,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
                 Event::JobRejected => "onchainos agent user-notify (notify rejection on-chain) → wait for provider decision",
                 Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → onchainos agent user-notify (notify)",
-                Event::DisputeResolved => "onchainos agent user-notify (notify arbitration result)",
+                Event::DisputeResolved => "onchainos agent user-notify (notify evaluation result)",
                 Event::JobRefunded => "onchainos agent user-notify (notify refund complete)",
                 Event::JobAutoRefunded => "onchainos agent user-notify (claimAutoRefund tx receipt)",
                 Event::NegotiateReply =>
@@ -1152,7 +1152,7 @@ mod tests {
         assert!(out.contains("[Dispute Won]"), "subscription dispute uses online copy: {out}");
         assert!(
             !out.contains("ruled in your favor"),
-            "no subscription-specific arbitration copy: {out}"
+            "no subscription-specific evaluation copy: {out}"
         );
     }
 }

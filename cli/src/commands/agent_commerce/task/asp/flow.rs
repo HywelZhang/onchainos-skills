@@ -1675,7 +1675,7 @@ mod tests {
             "precise deadline + amount slots: {out}"
         );
         assert!(
-            out.contains("A. File a dispute for arbitration.")
+            out.contains("A. File a dispute for evaluation.")
                 && out.contains("B. Confirm the refund for this period."),
             "A/B decision preserved: {out}"
         );

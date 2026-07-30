@@ -590,7 +590,7 @@ pub fn sub_user_reject_user_notify(
     out
 }
 
-/// `sub_asp_dispute` (user side) — the ASP disputed the user's rejection; arbitration
+/// `sub_asp_dispute` (user side) — the ASP disputed the user's rejection; evaluation
 /// opened (non-terminal). Added the current-period range (subStartTime/subEndTime).
 pub fn sub_asp_dispute_user_notify(
     service_name: &str,
@@ -604,7 +604,7 @@ pub fn sub_asp_dispute_user_notify(
         out.push_str(&format!("'s current period ({s}–{e})"));
     }
     out.push_str(&format!(
-        " and escalated to arbitration. Job {job_id} status: Disputed."
+        " and escalated to evaluation. Job {job_id} status: Disputed."
     ));
     out
 }
@@ -1126,7 +1126,7 @@ mod tests {
         assert!(out.contains("Job job-1 status: Disputed."));
         // Period absent → range omitted, core copy intact.
         let bare = sub_asp_dispute_user_notify("My Sub", "job-1", None, None);
-        assert!(bare.contains("disputed your rejection of \"My Sub\" and escalated to arbitration"));
+        assert!(bare.contains("disputed your rejection of \"My Sub\" and escalated to evaluation"));
         assert!(!bare.contains("current period"));
     }
 

@@ -542,7 +542,7 @@ pub fn sub_user_reject_asp_decision_copy(
         _ => {}
     }
     out.push_str(" will be issued to the user automatically.\n");
-    out.push_str("  A. File a dispute for arbitration.\n");
+    out.push_str("  A. File a dispute for evaluation.\n");
     out.push_str("  B. Confirm the refund for this period.");
     out
 }

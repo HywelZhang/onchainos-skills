@@ -1,31 +1,42 @@
-//! FR-2.5 option parser with `contractCode` cross-consistency (OptionFieldMismatch).
+//! FR-2.5 option parser (positional V1.1 grammar). 7 fields:
+//!
+//! `contractCode | <SIDE> <Call|Put> | strike(zh) <strike> | expiry(zh) <YYYY-MM-DD> | premium(zh) ≤N [CCY] | position(zh) N% | <ttl>`
 //!
 //! `contractCode` = `UNDERLYING-YYMMDD-STRIKE-C|P`. Its trailing date, strike, and
 //! C/P MUST match the standalone `expiry`, `strike`, and `optionType` fields
 //! (2-digit year is interpreted as 20YY).
 
 use super::super::error::ParseError;
-use super::super::fields::{self, FieldMap};
-use super::super::{OptionParams, OptionType};
+use super::super::fields;
+use super::super::{Language, OptionParams, OptionType, SignalParams};
+use super::ClassParse;
 
-pub fn parse(fm: &mut FieldMap) -> Result<OptionParams, ParseError> {
-    let contract_code = fm.require(fields::ID_CONTRACT_CODE)?;
-    let side = fields::parse_option_side(&fm.require(fields::ID_SIDE)?)?;
-    let option_type = fields::parse_option_type(&fm.require(fields::ID_OPTION_TYPE)?)?;
-    let strike = fields::parse_decimal(&fm.require(fields::ID_STRIKE)?)?;
-    let expiry = fields::parse_date(&fm.require(fields::ID_EXPIRY)?)?;
-    let premium_cap = fields::parse_decimal(&fm.require(fields::ID_PREMIUM_CAP)?)?;
+pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError> {
+    if fields.len() != 7 {
+        return Err(ParseError::FieldCountError);
+    }
+    let contract_code = fields[0].clone();
+    let (side, option_type) = fields::parse_side_type(&fields[1], lang)?;
+    let strike = fields::parse_decimal(&fields::strip_strike(&fields[2], lang)?)?;
+    let expiry = fields::parse_date(&fields::strip_expiry(&fields[3], lang)?)?;
+    let premium_cap = fields::parse_premium_cap(&fields::strip_premium(&fields[4], lang)?)?;
+    let position_pct = fields::parse_position_field(&fields[5], lang)?;
+    let ttl_sec = fields::parse_ttl_field(&fields[6], lang)?;
 
     check_contract_consistency(&contract_code, option_type, &strike, &expiry)?;
 
-    Ok(OptionParams {
-        contract_code,
-        side,
-        option_type,
-        strike,
-        expiry,
-        premium_cap,
-    })
+    Ok((
+        SignalParams::Option(OptionParams {
+            contract_code,
+            side,
+            option_type,
+            strike,
+            expiry,
+            premium_cap,
+        }),
+        position_pct,
+        ttl_sec,
+    ))
 }
 
 /// Verify `UNDERLYING-YYMMDD-STRIKE-(C|P)` matches the typed fields.
@@ -41,7 +52,6 @@ fn check_contract_consistency(
     }
     let (yymmdd, code_strike, cp) = (parts[1], parts[2], parts[3]);
 
-    // Trailing C/P vs optionType.
     let cp_ok = matches!(
         (cp, option_type),
         ("C", OptionType::Call) | ("P", OptionType::Put)
@@ -50,12 +60,10 @@ fn check_contract_consistency(
         return Err(ParseError::OptionFieldMismatch);
     }
 
-    // Strike equality (exact decimal compare).
     if !fields::equal(code_strike, strike) {
         return Err(ParseError::OptionFieldMismatch);
     }
 
-    // YYMMDD → 20YY-MM-DD vs expiry.
     if yymmdd.len() != 6 || !yymmdd.bytes().all(|b| b.is_ascii_digit()) {
         return Err(ParseError::OptionFieldMismatch);
     }
@@ -64,4 +72,58 @@ fn check_contract_consistency(
         return Err(ParseError::OptionFieldMismatch);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn f(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn consistent_contract_parses() {
+        let (params, _, _) = parse(
+            &f(&[
+                "BTC-260327-100000-C",
+                "Buy Call",
+                "Strike 100000",
+                "Expiry 2026-03-27",
+                "Premium \u{2264}320 USDT",
+                "Position 3%",
+                "valid for 24h",
+            ]),
+            Language::En,
+        )
+        .unwrap();
+        match params {
+            SignalParams::Option(o) => {
+                assert_eq!(o.strike, "100000");
+                assert_eq!(o.expiry, "2026-03-27");
+                assert_eq!(o.premium_cap, "320");
+            }
+            _ => panic!("expected option"),
+        }
+    }
+
+    #[test]
+    fn inconsistent_option_type_rejected() {
+        assert_eq!(
+            parse(
+                &f(&[
+                    "BTC-260327-100000-C",
+                    "Buy Put",
+                    "Strike 100000",
+                    "Expiry 2026-03-27",
+                    "Premium \u{2264}320 USDT",
+                    "Position 3%",
+                    "valid for 24h",
+                ]),
+                Language::En,
+            )
+            .unwrap_err(),
+            ParseError::OptionFieldMismatch
+        );
+    }
 }

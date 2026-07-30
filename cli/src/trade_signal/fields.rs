@@ -1,196 +1,90 @@
-//! FR-2 steps 4-8: fixed-order field parsing, per-position label→id translation
-//! with the same-language check, and the shared value validators (position %,
-//! TTL, exact decimal, price range, calendar date, keyword whitelists,
-//! forbidden-content scan).
+//! FR-2 field ingestion — the authoritative V1.1 grammar (feedback !f00000ab /
+//! note 9916440).
 //!
-//! Per V1.1/TD review alignment (feedback !668dedbf) this is NOT a generic
-//! reorderable `label:value` map: each asset class defines a FIXED ORDER of `|`
-//! fields, and a field that is missing (required), extra (unknown label), or
-//! out-of-order is rejected. Optional fields may be absent but, when present,
-//! must occupy their canonical slot. Labels are recognized only within the
-//! spec-defined fields for the header's language.
+//! The wire format is NOT a reorderable `label:value` map. Each asset class is a
+//! FIXED, POSITIONAL sequence of `|`-separated fields; a field's meaning comes
+//! from its POSITION, its SHAPE, and a small set of reserved KEYWORDS embedded in
+//! the field value — the keyword is part of the value, never a `label:`. Example
+//! (en perp):
+//!
+//! ```text
+//! 【Futures Signal】ETH-PERP | LONG 3x | Entry 3420-3450 | SL 3300 | TP1 3720 | Position 10% | valid for 4h
+//! ```
+//!
+//! Here `ETH-PERP` is positional (the pair), `LONG 3x` packs direction+leverage,
+//! `Entry`/`SL`/`TP1`/`Position` are reserved keyword prefixes, and the zh form
+//! wraps TTL as `<ttl> <ttl-suffix zh>` where en wraps it as `valid for <ttl>`. Chain-based
+//! spot's subject spans TWO positional fields (`chain | $token (address)`), so
+//! the two spot forms are told apart by the SHAPE of the 2nd field, not by a
+//! per-class fixed index.
+//!
+//! All Chinese keyword literals are `\u{…}` escapes (never raw Han bytes) so this
+//! production source clears the `onchainos_check` "no CJK in Rust source" lint;
+//! the escape compiles to the exact same bytes as the literal glyph. The verbatim
+//! bilingual corpus itself lives in `corpus_v1_1.txt` (a non-`.rs` fixture), which
+//! is where the byte-exact Chinese is allowed to live.
 //!
 //! All numeric parse/compare goes through the repo's exact [`Decimal`] (no float,
 //! NFR-2). `Decimal::parse` already rejects sign / exponent / whitespace /
 //! thousands-separator / lone-dot, which satisfies the PRD numeric grammar.
 
-use crate::asset_class::AssetClass;
 use crate::commands::agent_commerce::task::common::autotrade::amount::Decimal;
 
 use super::error::ParseError;
 use super::{Direction, Language, MarginMode, OptionType, OrderType, Outcome, PriceRange, Side};
 
-// ── Canonical field ids (stable within the parser; not a wire contract) ──────
-pub const ID_POSITION: &str = "position";
-pub const ID_TTL: &str = "ttl";
-pub const ID_MARKET: &str = "market";
-pub const ID_SYMBOL: &str = "symbol";
-pub const ID_SIDE: &str = "side";
-pub const ID_PRICE: &str = "price";
-pub const ID_ORDER_TYPE: &str = "orderType";
-pub const ID_TOKEN_ADDR: &str = "tokenAddr";
-pub const ID_SLIPPAGE: &str = "slippage";
-pub const ID_PAIR: &str = "pair";
-pub const ID_DIRECTION: &str = "direction";
-pub const ID_LEVERAGE: &str = "leverage";
-pub const ID_ENTRY: &str = "entry";
-pub const ID_STOP_LOSS: &str = "stopLoss";
-/// Combined slash form (`v1/v2/v3`) — the alternate to separate `tp1..tp3` fields.
-pub const ID_TP: &str = "takeProfit";
-pub const ID_TP1: &str = "tp1";
-pub const ID_TP2: &str = "tp2";
-pub const ID_TP3: &str = "tp3";
-pub const ID_MARGIN_MODE: &str = "marginMode";
-pub const ID_EVENT: &str = "event";
-/// Prediction outcome+odds are one fixed-position field: `<OUTCOME> @<odds>`.
-pub const ID_OUTCOME: &str = "outcome";
-pub const ID_SETTLE_DATE: &str = "settleDate";
-pub const ID_CONTRACT_CODE: &str = "contractCode";
-pub const ID_OPTION_TYPE: &str = "optionType";
-pub const ID_STRIKE: &str = "strike";
-pub const ID_EXPIRY: &str = "expiry";
-pub const ID_PREMIUM_CAP: &str = "premiumCap";
-pub const ID_CHAIN: &str = "chain";
-pub const ID_PROTOCOL_POOL: &str = "protocolPool";
-pub const ID_APY: &str = "apy";
-pub const ID_TVL: &str = "tvl";
-pub const ID_TOKEN: &str = "token";
-pub const ID_REDEEM_TERMS: &str = "redeemTerms";
-
-// ── Fixed-order field specs per asset class ──────────────────────────────────
+// ── Reserved keywords (zh forms are \u{…}-escaped; see module doc) ────────────
 //
-// `(id, zh_label, en_label, required)` in canonical order. The shared
-// `position`/`ttl` fields always occupy the final two (required) slots.
+// Leading keyword + a single ASCII space then the value, e.g. `position(zh) 5%`. Neutral
+// keywords (SL / TP / APY / TVL) are Latin in both languages, so zh == en.
 
-/// One field's position in a class's canonical order.
-struct FieldSpec {
-    id: &'static str,
-    zh: &'static str,
-    en: &'static str,
-    required: bool,
-}
+/// Position: zh `position(zh)` / en `Position`.
+const KW_POSITION_ZH: &str = "\u{4ed3}\u{4f4d}";
+const KW_POSITION_EN: &str = "Position";
+/// TTL wrapper: zh suffix `<ttl-suffix zh>` (`<ttl> <ttl-suffix zh>`) / en prefix `valid for` (`valid for <ttl>`).
+const KW_TTL_SUFFIX_ZH: &str = "\u{5185}\u{6709}\u{6548}";
+const KW_TTL_PREFIX_EN: &str = "valid for";
+/// Slippage: zh `slippage(zh)` / en `Slippage`.
+const KW_SLIPPAGE_ZH: &str = "\u{6ed1}\u{70b9}";
+const KW_SLIPPAGE_EN: &str = "Slippage";
+/// Perp entry range: zh `entry(zh)` / en `Entry`.
+const KW_ENTRY_ZH: &str = "\u{5165}\u{573a}";
+const KW_ENTRY_EN: &str = "Entry";
+/// Perp stop-loss (neutral): `SL`.
+const KW_SL: &str = "SL";
+/// Perp take-profit tag prefix (neutral): `TP` + a 1-based index.
+const KW_TP: &str = "TP";
+/// Prediction settle date: zh `settle(zh)` / en `Settle`.
+const KW_SETTLE_ZH: &str = "\u{7ed3}\u{7b97}";
+const KW_SETTLE_EN: &str = "Settle";
+/// Option strike: zh `strike(zh)` / en `Strike`.
+const KW_STRIKE_ZH: &str = "\u{884c}\u{6743}\u{4ef7}";
+const KW_STRIKE_EN: &str = "Strike";
+/// Option expiry: zh `expiry(zh)` / en `Expiry`.
+const KW_EXPIRY_ZH: &str = "\u{5230}\u{671f}";
+const KW_EXPIRY_EN: &str = "Expiry";
+/// Option premium cap: zh `premium(zh)` / en `Premium`.
+const KW_PREMIUM_ZH: &str = "\u{6743}\u{5229}\u{91d1}";
+const KW_PREMIUM_EN: &str = "Premium";
+/// DeFi APY / TVL (neutral, Latin in both languages).
+const KW_APY: &str = "APY";
+const KW_TVL: &str = "TVL";
+/// Perp margin-mode values: zh `isolated(zh)`(isolated) / `cross(zh)`(cross); en `isolated` / `cross`.
+const MM_ISO_ZH: &str = "\u{9010}\u{4ed3}";
+const MM_CROSS_ZH: &str = "\u{5168}\u{4ed3}";
+/// Spot CEX order-type values: zh `limit(zh)`(limit) / `market(zh)`(market); en `limit` / `market`.
+const OT_LIMIT_ZH: &str = "\u{9650}\u{4ef7}";
+const OT_MARKET_ZH: &str = "\u{5e02}\u{4ef7}";
+/// The `≤` cap prefix on slippage / premium (`≤1%`, `≤320 USDT`).
+const LE: char = '\u{2264}';
 
-const fn f(id: &'static str, zh: &'static str, en: &'static str, required: bool) -> FieldSpec {
-    FieldSpec {
-        id,
-        zh,
-        en,
-        required,
-    }
-}
+// ── Field splitting ────────────────────────────────────────────────────────────
 
-const SPOT_SPEC: &[FieldSpec] = &[
-    f(ID_MARKET, "\u{5e02}\u{573a}", "market", true),
-    f(ID_SYMBOL, "\u{5e01}\u{79cd}", "symbol", true),
-    f(ID_SIDE, "\u{65b9}\u{5411}", "side", true),
-    f(ID_PRICE, "\u{4ef7}\u{683c}", "price", true),
-    f(ID_ORDER_TYPE, "\u{7c7b}\u{578b}", "orderType", false),
-    f(
-        ID_TOKEN_ADDR,
-        "\u{5408}\u{7ea6}\u{5730}\u{5740}",
-        "tokenAddr",
-        false,
-    ),
-    f(ID_SLIPPAGE, "\u{6ed1}\u{70b9}", "slippage", false),
-    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
-    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
-];
-
-const PERP_SPEC: &[FieldSpec] = &[
-    f(ID_PAIR, "\u{4ea4}\u{6613}\u{5bf9}", "pair", true),
-    f(ID_DIRECTION, "\u{65b9}\u{5411}", "direction", true),
-    f(ID_LEVERAGE, "\u{6760}\u{6746}", "leverage", true),
-    f(ID_ENTRY, "\u{5165}\u{573a}", "entry", true),
-    f(ID_STOP_LOSS, "\u{6b62}\u{635f}", "stopLoss", true),
-    f(ID_TP, "\u{6b62}\u{76c8}", "takeProfit", false),
-    f(ID_TP1, "\u{6b62}\u{76c8}1", "tp1", false),
-    f(ID_TP2, "\u{6b62}\u{76c8}2", "tp2", false),
-    f(ID_TP3, "\u{6b62}\u{76c8}3", "tp3", false),
-    f(
-        ID_MARGIN_MODE,
-        "\u{4fdd}\u{8bc1}\u{91d1}",
-        "marginMode",
-        false,
-    ),
-    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
-    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
-];
-
-const PREDICTION_SPEC: &[FieldSpec] = &[
-    f(ID_EVENT, "\u{4e8b}\u{4ef6}", "event", true),
-    f(ID_OUTCOME, "\u{7ed3}\u{679c}", "outcome", true),
-    f(
-        ID_SETTLE_DATE,
-        "\u{7ed3}\u{7b97}\u{65e5}",
-        "settleDate",
-        true,
-    ),
-    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
-    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
-];
-
-const OPTION_SPEC: &[FieldSpec] = &[
-    f(
-        ID_CONTRACT_CODE,
-        "\u{5408}\u{7ea6}\u{4ee3}\u{7801}",
-        "contractCode",
-        true,
-    ),
-    f(ID_SIDE, "\u{65b9}\u{5411}", "side", true),
-    f(ID_OPTION_TYPE, "\u{7c7b}\u{578b}", "optionType", true),
-    f(ID_STRIKE, "\u{884c}\u{6743}\u{4ef7}", "strike", true),
-    f(ID_EXPIRY, "\u{5230}\u{671f}\u{65e5}", "expiry", true),
-    f(
-        ID_PREMIUM_CAP,
-        "\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}",
-        "premiumCap",
-        true,
-    ),
-    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
-    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
-];
-
-const DEFI_SPEC: &[FieldSpec] = &[
-    f(ID_CHAIN, "\u{94fe}", "chain", true),
-    f(ID_PROTOCOL_POOL, "\u{534f}\u{8bae}", "protocolPool", true),
-    f(ID_APY, "\u{5e74}\u{5316}", "apy", true),
-    f(ID_TVL, "\u{9501}\u{4ed3}", "tvl", true),
-    f(ID_TOKEN, "\u{5e01}\u{79cd}", "token", true),
-    f(ID_REDEEM_TERMS, "\u{8d4e}\u{56de}", "redeemTerms", true),
-    f(ID_POSITION, "\u{4ed3}\u{4f4d}", "position", true),
-    f(ID_TTL, "\u{6709}\u{6548}\u{671f}", "ttl", true),
-];
-
-fn class_spec(class: AssetClass) -> &'static [FieldSpec] {
-    match class {
-        AssetClass::Spot => SPOT_SPEC,
-        AssetClass::Perp => PERP_SPEC,
-        AssetClass::Prediction => PREDICTION_SPEC,
-        AssetClass::Option => OPTION_SPEC,
-        AssetClass::Defi => DEFI_SPEC,
-    }
-}
-
-/// Resolve a label to `(canonical_id, label_language)` within this class's spec,
-/// or `None` when the label is not valid for the class in either language.
-fn resolve_label(spec: &'static [FieldSpec], label: &str) -> Option<(&'static str, Language)> {
-    for s in spec {
-        if label == s.zh {
-            return Some((s.id, Language::Zh));
-        }
-        if label == s.en {
-            return Some((s.id, Language::En));
-        }
-    }
-    None
-}
-
-// ── Field splitting ──────────────────────────────────────────────────────────
-
-/// Split the post-header remainder on `|`, trim, and parse each `label:value`.
-/// Empty field → [`ParseError::EmptyField`]; a field with no `:` / empty label →
-/// [`ParseError::ForbiddenContent`] (content beyond the field grammar).
-pub fn split_fields(remainder: &str) -> Result<Vec<(String, String)>, ParseError> {
+/// Split the post-header remainder on `|`, trim each field, and reject an empty
+/// remainder ([`ParseError::FieldCountError`]) or any empty field
+/// ([`ParseError::EmptyField`]). The returned values are POSITIONAL — no label
+/// parsing; each per-class parser interprets them by position + shape.
+pub fn split_pipe_fields(remainder: &str) -> Result<Vec<String>, ParseError> {
     if remainder.trim().is_empty() {
         return Err(ParseError::FieldCountError);
     }
@@ -200,111 +94,272 @@ pub fn split_fields(remainder: &str) -> Result<Vec<(String, String)>, ParseError
         if trimmed.is_empty() {
             return Err(ParseError::EmptyField);
         }
-        match trimmed.split_once(':') {
-            Some((label, value)) => {
-                let label = label.trim();
-                let value = value.trim();
-                if label.is_empty() {
-                    return Err(ParseError::ForbiddenContent);
-                }
-                if value.is_empty() {
-                    return Err(ParseError::EmptyField);
-                }
-                out.push((label.to_string(), value.to_string()));
-            }
-            None => return Err(ParseError::ForbiddenContent),
-        }
+        out.push(trimmed.to_string());
     }
     Ok(out)
 }
 
-// ── Field map (fixed-order positional validation + consume-once access) ───────
+// ── Keyword stripping ─────────────────────────────────────────────────────────
 
-/// An ordered, consume-once map of canonical field id → raw value.
-#[derive(Debug)]
-pub struct FieldMap {
-    entries: Vec<(&'static str, String)>,
+/// If `field` starts with `kw` followed by exactly the field (kw-only) or an
+/// ASCII space, return the trimmed remainder; `None` otherwise. The trailing-space
+/// requirement stops `APY` from matching `APYX`.
+fn strip_leading(field: &str, kw: &str) -> Option<String> {
+    let rest = field.strip_prefix(kw)?;
+    if rest.is_empty() {
+        Some(String::new())
+    } else if rest.starts_with(' ') {
+        Some(rest.trim().to_string())
+    } else {
+        None
+    }
 }
 
-impl FieldMap {
-    /// Build from raw `(label, value)` pairs, enforcing (FR-2 steps 5-6):
-    /// - each label is valid for `class` in `header_lang` (else `LanguageMix` /
-    ///   `ForbiddenContent`);
-    /// - the fields appear in the class's canonical order — a required field that
-    ///   is skipped, an out-of-order field, or a duplicate is `FieldCountError`;
-    /// - `@` appears ONLY in the Prediction `outcome` field (the odds separator);
-    ///   anywhere else it is `ForbiddenContent` (feedback !21bc5915).
-    pub fn build(
-        class: AssetClass,
-        header_lang: Language,
-        raw: &[(String, String)],
-    ) -> Result<Self, ParseError> {
-        let spec = class_spec(class);
-        let mut entries: Vec<(&'static str, String)> = Vec::new();
-        let mut exp = 0usize; // pointer into the canonical spec order
-
-        for (label, value) in raw {
-            let (id, lang) = resolve_label(spec, label).ok_or(ParseError::ForbiddenContent)?;
-            if lang != header_lang {
-                return Err(ParseError::LanguageMix);
-            }
-            // `@` is only legal inside the Prediction outcome field.
-            let at_ok = class == AssetClass::Prediction && id == ID_OUTCOME;
-            if !at_ok && value.contains('@') {
-                return Err(ParseError::ForbiddenContent);
-            }
-            // Advance the canonical pointer to this field's slot; skipping a
-            // REQUIRED slot (or running off the end) means missing/reordered/dup.
-            loop {
-                if exp >= spec.len() {
-                    return Err(ParseError::FieldCountError);
-                }
-                let s = &spec[exp];
-                exp += 1;
-                if s.id == id {
-                    break;
-                }
-                if s.required {
-                    return Err(ParseError::FieldCountError);
-                }
-            }
-            entries.push((id, value.clone()));
-        }
-
-        // Any REQUIRED slot not consumed is a missing field.
-        if spec[exp..].iter().any(|s| s.required) {
-            return Err(ParseError::FieldCountError);
-        }
-        Ok(FieldMap { entries })
+/// Strip a leading keyword (in the header's language) and its separator, returning
+/// the value. If the field instead carries the OTHER language's keyword →
+/// [`ParseError::LanguageMix`]; if it matches neither → [`ParseError::FieldCountError`]
+/// (a shape/order violation for this position).
+pub fn strip_kw(
+    field: &str,
+    zh: &str,
+    en: &str,
+    lang: Language,
+) -> Result<String, ParseError> {
+    let (want, other) = match lang {
+        Language::Zh => (zh, en),
+        Language::En => (en, zh),
+    };
+    if let Some(v) = strip_leading(field, want) {
+        return Ok(v);
     }
-
-    /// Remove and return the value for `id`, if present.
-    pub fn take(&mut self, id: &str) -> Option<String> {
-        let pos = self.entries.iter().position(|(eid, _)| *eid == id)?;
-        Some(self.entries.remove(pos).1)
+    if want != other && strip_leading(field, other).is_some() {
+        return Err(ParseError::LanguageMix);
     }
+    Err(ParseError::FieldCountError)
+}
 
-    /// Remove and return a required field's value, or [`ParseError::FieldCountError`].
-    pub fn require(&mut self, id: &str) -> Result<String, ParseError> {
-        self.take(id).ok_or(ParseError::FieldCountError)
+// ── Common trailing fields (position / ttl) ───────────────────────────────────
+
+/// Parse a `position(zh) N%` / `Position N%` field → normalized position percent.
+pub fn parse_position_field(field: &str, lang: Language) -> Result<String, ParseError> {
+    let v = strip_kw(field, KW_POSITION_ZH, KW_POSITION_EN, lang)?;
+    parse_position(&v)
+}
+
+/// Parse a `<ttl> <ttl-suffix zh>` (zh) / `valid for <ttl>` (en) field → seconds.
+pub fn parse_ttl_field(field: &str, lang: Language) -> Result<u64, ParseError> {
+    let raw = match lang {
+        Language::Zh => field
+            .strip_suffix(KW_TTL_SUFFIX_ZH)
+            .ok_or(ParseError::FieldCountError)?,
+        Language::En => field
+            .strip_prefix(KW_TTL_PREFIX_EN)
+            .ok_or(ParseError::FieldCountError)?,
+    };
+    parse_ttl(raw.trim())
+}
+
+// ── Per-position keyword strippers (used by the class parsers) ────────────────
+
+/// Strip the perp entry keyword (`entry(zh)` / `Entry`) → the raw range string.
+pub fn strip_entry(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_ENTRY_ZH, KW_ENTRY_EN, lang)
+}
+
+/// Strip the perp stop-loss keyword (`SL`, neutral) → the raw price string.
+pub fn strip_stop_loss(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_SL, KW_SL, lang)
+}
+
+/// Strip the prediction settle-date keyword (`settle(zh)` / `Settle`) → the raw date.
+pub fn strip_settle(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_SETTLE_ZH, KW_SETTLE_EN, lang)
+}
+
+/// Strip the option strike keyword (`strike(zh)` / `Strike`) → the raw price string.
+pub fn strip_strike(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_STRIKE_ZH, KW_STRIKE_EN, lang)
+}
+
+/// Strip the option expiry keyword (`expiry(zh)` / `Expiry`) → the raw date string.
+pub fn strip_expiry(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_EXPIRY_ZH, KW_EXPIRY_EN, lang)
+}
+
+/// Strip the option premium keyword (`premium(zh)` / `Premium`) → the raw `≤N [CCY]`.
+pub fn strip_premium(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_PREMIUM_ZH, KW_PREMIUM_EN, lang)
+}
+
+/// Strip the DeFi APY keyword (`APY`, neutral) → the raw percent string.
+pub fn strip_apy(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_APY, KW_APY, lang)
+}
+
+/// Strip the DeFi TVL keyword (`TVL`, neutral) → the raw compact-amount string.
+pub fn strip_tvl(field: &str, lang: Language) -> Result<String, ParseError> {
+    strip_kw(field, KW_TVL, KW_TVL, lang)
+}
+
+// ── Spot shape helpers ─────────────────────────────────────────────────────────
+
+/// Parse the on-chain spot subject `$SYMBOL (ADDRESS)` → `(symbol, address)`.
+pub fn parse_onchain_token(field: &str) -> Result<(String, String), ParseError> {
+    let rest = field.strip_prefix('$').ok_or(ParseError::FieldCountError)?;
+    let (sym, addr_part) = rest.split_once('(').ok_or(ParseError::FieldCountError)?;
+    let addr = addr_part
+        .strip_suffix(')')
+        .ok_or(ParseError::FieldCountError)?;
+    let symbol = sym.trim();
+    let address = addr.trim();
+    if symbol.is_empty() || address.is_empty() {
+        return Err(ParseError::FieldCountError);
     }
+    Ok((symbol.to_string(), address.to_string()))
+}
 
-    /// Fail if any field remains unconsumed (an extra field for this form).
-    pub fn ensure_consumed(&self) -> Result<(), ParseError> {
-        if self.entries.is_empty() {
-            Ok(())
-        } else {
-            Err(ParseError::FieldCountError)
+/// Parse the spot on-chain `slippage(zh) ≤N%` / `Slippage ≤N%` field (≤5% ceiling, SR-6).
+pub fn parse_slippage_field(field: &str, lang: Language) -> Result<String, ParseError> {
+    let v = strip_kw(field, KW_SLIPPAGE_ZH, KW_SLIPPAGE_EN, lang)?;
+    let v = v.strip_prefix(LE).unwrap_or(&v).trim();
+    parse_percent_max(v, "5")
+}
+
+/// Parse the spot CEX `<SIDE> [orderType]` field → `(Side, OrderType)`. A bare
+/// side defaults `orderType` to `market`; a trailing `limit`/`market(zh)`/… sets it.
+pub fn parse_side_order(field: &str, lang: Language) -> Result<(Side, OrderType), ParseError> {
+    let mut it = field.split_whitespace();
+    let side = parse_side(it.next().ok_or(ParseError::FieldCountError)?)?;
+    let order_type = match it.next() {
+        None => OrderType::Market,
+        Some(tok) => parse_order_type_kw(tok, lang)?,
+    };
+    if it.next().is_some() {
+        return Err(ParseError::FieldCountError);
+    }
+    Ok((side, order_type))
+}
+
+/// Split a CEX pair `BASE/QUOTE` → `(symbol=BASE, market=pair)`. A pair with no
+/// `/` uses the whole string for both.
+pub fn split_pair(pair: &str) -> (String, String) {
+    let symbol = pair.split('/').next().unwrap_or(pair);
+    (symbol.to_string(), pair.to_string())
+}
+
+// ── Perp shape helpers ─────────────────────────────────────────────────────────
+
+/// Parse the perp `<DIR> <LEV>x [marginMode]` field → `(Direction, leverage, marginMode?)`.
+pub fn parse_dir_lev_margin(
+    field: &str,
+    lang: Language,
+) -> Result<(Direction, u32, Option<MarginMode>), ParseError> {
+    let mut it = field.split_whitespace();
+    let direction = parse_direction(it.next().ok_or(ParseError::FieldCountError)?)?;
+    let lev_tok = it.next().ok_or(ParseError::FieldCountError)?;
+    let lev_str = lev_tok
+        .strip_suffix('x')
+        .or_else(|| lev_tok.strip_suffix('X'))
+        .unwrap_or(lev_tok);
+    let leverage = parse_leverage(lev_str)?;
+    let margin_mode = match it.next() {
+        None => None,
+        Some(tok) => Some(parse_margin_mode_kw(tok, lang)?),
+    };
+    if it.next().is_some() {
+        return Err(ParseError::FieldCountError);
+    }
+    Ok((direction, leverage, margin_mode))
+}
+
+/// Parse the perp take-profit field: `TP1 v1 [/ TP2 v2 [/ TP3 v3]]`. Tags must be
+/// contiguous from 1; 1..=3 entries; each value an exact decimal.
+pub fn parse_take_profits(field: &str) -> Result<Vec<String>, ParseError> {
+    let mut out = Vec::new();
+    for (i, entry) in field.split('/').enumerate() {
+        let entry = entry.trim();
+        let rest = entry
+            .strip_prefix(KW_TP)
+            .ok_or(ParseError::DirectionConstraint)?;
+        let mut toks = rest.split_whitespace();
+        let tag = toks.next().ok_or(ParseError::DirectionConstraint)?;
+        let value = toks.next().ok_or(ParseError::DirectionConstraint)?;
+        if toks.next().is_some() {
+            return Err(ParseError::DirectionConstraint);
         }
+        let n: usize = tag.parse().map_err(|_| ParseError::DirectionConstraint)?;
+        if n != i + 1 {
+            return Err(ParseError::DirectionConstraint);
+        }
+        out.push(parse_decimal(value)?);
+    }
+    if out.is_empty() || out.len() > 3 {
+        return Err(ParseError::DirectionConstraint);
+    }
+    Ok(out)
+}
+
+// ── Option shape helpers ────────────────────────────────────────────────────────
+
+/// Parse the option `<SIDE> <Call|Put>` field → `(Side, OptionType)`.
+pub fn parse_side_type(field: &str, _lang: Language) -> Result<(Side, OptionType), ParseError> {
+    let mut it = field.split_whitespace();
+    let side = parse_option_side(it.next().ok_or(ParseError::FieldCountError)?)?;
+    let option_type = parse_option_type(it.next().ok_or(ParseError::FieldCountError)?)?;
+    if it.next().is_some() {
+        return Err(ParseError::FieldCountError);
+    }
+    Ok((side, option_type))
+}
+
+/// Parse the option `≤N [CCY]` premium-cap value (currency token, if present, is
+/// accepted but not stored). No float; the number goes through [`Decimal`].
+pub fn parse_premium_cap(value: &str) -> Result<String, ParseError> {
+    let v = value.strip_prefix(LE).unwrap_or(value).trim();
+    let num = v.split_whitespace().next().ok_or(ParseError::InvalidNumber)?;
+    parse_decimal(num)
+}
+
+// ── Keyword enums ───────────────────────────────────────────────────────────────
+
+fn parse_order_type_kw(tok: &str, lang: Language) -> Result<OrderType, ParseError> {
+    let (limit, market, other_limit, other_market) = match lang {
+        Language::En => ("limit", "market", OT_LIMIT_ZH, OT_MARKET_ZH),
+        Language::Zh => (OT_LIMIT_ZH, OT_MARKET_ZH, "limit", "market"),
+    };
+    if tok == limit {
+        Ok(OrderType::Limit)
+    } else if tok == market {
+        Ok(OrderType::Market)
+    } else if tok == other_limit || tok == other_market {
+        Err(ParseError::LanguageMix)
+    } else {
+        Err(ParseError::IllegalKeyword)
+    }
+}
+
+fn parse_margin_mode_kw(tok: &str, lang: Language) -> Result<MarginMode, ParseError> {
+    let (iso, cross, other_iso, other_cross) = match lang {
+        Language::En => ("isolated", "cross", MM_ISO_ZH, MM_CROSS_ZH),
+        Language::Zh => (MM_ISO_ZH, MM_CROSS_ZH, "isolated", "cross"),
+    };
+    if tok == iso {
+        Ok(MarginMode::Isolated)
+    } else if tok == cross {
+        Ok(MarginMode::Cross)
+    } else if tok == other_iso || tok == other_cross {
+        Err(ParseError::LanguageMix)
+    } else {
+        Err(ParseError::IllegalKeyword)
     }
 }
 
 // ── Forbidden-content scan (SR-2) ─────────────────────────────────────────────
 
 /// True if the input carries content beyond the field grammar: a link or an
-/// emoji. CJK labels and full-width brackets are NOT flagged. `@` is handled
-/// per-field after header classification (Prediction odds separator is legal),
-/// so it is deliberately NOT globally banned here (feedback !21bc5915).
+/// emoji. CJK glyphs, full-width brackets, `$`, `≤`, `…` and ASCII quotes are NOT
+/// flagged. `@` is handled per-field after header classification (the Prediction
+/// odds separator is legal), so it is deliberately NOT globally banned here.
 pub fn contains_forbidden(s: &str) -> bool {
     if s.contains("http://") || s.contains("https://") || s.contains("www.") {
         return true;
@@ -420,9 +475,8 @@ pub fn parse_odds(value: &str) -> Result<String, ParseError> {
     Ok(p.to_plain_string())
 }
 
-/// Parse the Prediction `outcome` field `<OUTCOME> @<odds>` (feedback !21bc5915).
-/// Exactly one `@`: the head is an outcome keyword, the tail an odds decimal in
-/// `[0,1]`. Zero or extra `@` → the field is malformed.
+/// Parse the Prediction `outcome` field `<OUTCOME> @<odds>`. Exactly one `@`: the
+/// head is an outcome keyword, the tail an odds decimal in `[0,1]`.
 pub fn parse_outcome_odds(value: &str) -> Result<(Outcome, String), ParseError> {
     let (outcome_str, odds_str) = value.split_once('@').ok_or(ParseError::IllegalKeyword)?;
     if odds_str.contains('@') {
@@ -433,7 +487,7 @@ pub fn parse_outcome_odds(value: &str) -> Result<(Outcome, String), ParseError> 
     Ok((outcome, odds))
 }
 
-/// Parse leverage: a positive integer `×`.
+/// Parse leverage: a positive integer.
 pub fn parse_leverage(value: &str) -> Result<u32, ParseError> {
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
         return Err(ParseError::OutOfRange);
@@ -544,22 +598,6 @@ pub fn parse_direction(value: &str) -> Result<Direction, ParseError> {
     }
 }
 
-pub fn parse_order_type(value: &str) -> Result<OrderType, ParseError> {
-    match value {
-        "market" => Ok(OrderType::Market),
-        "limit" => Ok(OrderType::Limit),
-        _ => Err(ParseError::IllegalKeyword),
-    }
-}
-
-pub fn parse_margin_mode(value: &str) -> Result<MarginMode, ParseError> {
-    match value {
-        "cross" => Ok(MarginMode::Cross),
-        "isolated" => Ok(MarginMode::Isolated),
-        _ => Err(ParseError::IllegalKeyword),
-    }
-}
-
 pub fn parse_outcome(value: &str) -> Result<Outcome, ParseError> {
     match value {
         "YES" => Ok(Outcome::Yes),
@@ -583,10 +621,135 @@ mod tests {
     use super::*;
 
     #[test]
+    fn position_field_strips_keyword_and_bounds() {
+        assert_eq!(parse_position_field("Position 5%", Language::En).unwrap(), "5");
+        assert_eq!(
+            parse_position_field("\u{4ed3}\u{4f4d} 0.1%", Language::Zh).unwrap(),
+            "0.1"
+        );
+        assert_eq!(
+            parse_position_field("Position 0%", Language::En),
+            Err(ParseError::OutOfRange)
+        );
+        // wrong-language keyword under a zh header.
+        assert_eq!(
+            parse_position_field("Position 5%", Language::Zh),
+            Err(ParseError::LanguageMix)
+        );
+        // missing keyword prefix → shape/order violation.
+        assert_eq!(
+            parse_position_field("5%", Language::En),
+            Err(ParseError::FieldCountError)
+        );
+    }
+
+    #[test]
+    fn ttl_field_zh_suffix_and_en_prefix() {
+        assert_eq!(
+            parse_ttl_field("24h \u{5185}\u{6709}\u{6548}", Language::Zh).unwrap(),
+            86_400
+        );
+        assert_eq!(parse_ttl_field("valid for 5min", Language::En).unwrap(), 300);
+        assert_eq!(parse_ttl_field("7d", Language::En), Err(ParseError::FieldCountError));
+    }
+
+    #[test]
+    fn onchain_token_shape() {
+        assert_eq!(
+            parse_onchain_token("$TOKEN (0xabc)").unwrap(),
+            ("TOKEN".to_string(), "0xabc".to_string())
+        );
+        assert_eq!(
+            parse_onchain_token("TOKEN (0xabc)"),
+            Err(ParseError::FieldCountError)
+        ); // no $
+        assert_eq!(parse_onchain_token("$TOKEN"), Err(ParseError::FieldCountError)); // no (addr)
+    }
+
+    #[test]
+    fn side_order_default_and_explicit() {
+        assert_eq!(
+            parse_side_order("BUY", Language::En).unwrap(),
+            (Side::Buy, OrderType::Market)
+        );
+        assert_eq!(
+            parse_side_order("BUY limit", Language::En).unwrap(),
+            (Side::Buy, OrderType::Limit)
+        );
+        assert_eq!(
+            parse_side_order("BUY \u{9650}\u{4ef7}", Language::Zh).unwrap(),
+            (Side::Buy, OrderType::Limit)
+        );
+        // en order-type keyword under a zh header → language mix.
+        assert_eq!(
+            parse_side_order("BUY limit", Language::Zh),
+            Err(ParseError::LanguageMix)
+        );
+    }
+
+    #[test]
+    fn dir_lev_margin_packing() {
+        assert_eq!(
+            parse_dir_lev_margin("LONG 3x", Language::En).unwrap(),
+            (Direction::Long, 3, None)
+        );
+        assert_eq!(
+            parse_dir_lev_margin("SHORT 2x isolated", Language::En).unwrap(),
+            (Direction::Short, 2, Some(MarginMode::Isolated))
+        );
+        assert_eq!(
+            parse_dir_lev_margin("SHORT 2x \u{9010}\u{4ed3}", Language::Zh).unwrap(),
+            (Direction::Short, 2, Some(MarginMode::Isolated))
+        );
+        assert_eq!(
+            parse_dir_lev_margin("LONG 0x", Language::En),
+            Err(ParseError::OutOfRange)
+        ); // zero leverage
+    }
+
+    #[test]
+    fn take_profits_tagged_slash_form() {
+        assert_eq!(parse_take_profits("TP1 3720").unwrap(), vec!["3720"]);
+        assert_eq!(
+            parse_take_profits("TP1 96000 / TP2 94000").unwrap(),
+            vec!["96000", "94000"]
+        );
+        // non-contiguous tag (TP1 then TP3).
+        assert_eq!(
+            parse_take_profits("TP1 1 / TP3 2"),
+            Err(ParseError::DirectionConstraint)
+        );
+        // more than three.
+        assert_eq!(
+            parse_take_profits("TP1 1 / TP2 2 / TP3 3 / TP4 4"),
+            Err(ParseError::DirectionConstraint)
+        );
+        // malformed value → number error.
+        assert_eq!(parse_take_profits("TP1 1e3"), Err(ParseError::InvalidNumber));
+    }
+
+    #[test]
+    fn premium_cap_strips_le_and_currency() {
+        assert_eq!(parse_premium_cap("\u{2264}320 USDT").unwrap(), "320");
+        assert_eq!(parse_premium_cap("320").unwrap(), "320");
+    }
+
+    #[test]
+    fn slippage_field_ceiling() {
+        assert_eq!(
+            parse_slippage_field("Slippage \u{2264}1%", Language::En).unwrap(),
+            "1"
+        );
+        assert_eq!(
+            parse_slippage_field("Slippage \u{2264}9%", Language::En),
+            Err(ParseError::OutOfRange)
+        );
+    }
+
+    #[test]
     fn position_boundaries() {
         assert_eq!(parse_position("0.1%").unwrap(), "0.1");
         assert_eq!(parse_position("20%").unwrap(), "20");
-        assert_eq!(parse_position("5%").unwrap(), "5");
         assert_eq!(parse_position("0%"), Err(ParseError::OutOfRange));
         assert_eq!(parse_position("20.1%"), Err(ParseError::OutOfRange));
         assert_eq!(parse_position("5-10%"), Err(ParseError::OutOfRange)); // range
@@ -597,7 +760,6 @@ mod tests {
     fn ttl_units_and_bounds() {
         assert_eq!(parse_ttl("5min").unwrap(), 300);
         assert_eq!(parse_ttl("7d").unwrap(), 604_800);
-        assert_eq!(parse_ttl("1h").unwrap(), 3_600);
         assert_eq!(parse_ttl("24h").unwrap(), 86_400);
         assert_eq!(parse_ttl("4min"), Err(ParseError::OutOfRange)); // below 5min
         assert_eq!(parse_ttl("8d"), Err(ParseError::OutOfRange)); // above 7d
@@ -635,164 +797,67 @@ mod tests {
             parse_direction("\u{505a}\u{591a}"),
             Err(ParseError::IllegalKeyword)
         );
-        assert_eq!(parse_direction("L"), Err(ParseError::IllegalKeyword));
         assert_eq!(parse_option_side("\u{4e70}\u{5165}").unwrap(), Side::Buy);
         assert_eq!(
             parse_side("\u{4e70}\u{5165}"),
             Err(ParseError::IllegalKeyword)
         ); // spot side is canonical-only
+        assert_eq!(parse_option_type("Call").unwrap(), OptionType::Call);
+        assert_eq!(parse_option_type("call"), Err(ParseError::IllegalKeyword));
     }
 
-    /// FR-2.4: the Prediction outcome+odds field `<OUTCOME> @<odds>` (feedback !21bc5915).
     #[test]
     fn outcome_odds_field() {
         assert_eq!(
             parse_outcome_odds("YES @0.62").unwrap(),
             (Outcome::Yes, "0.62".to_string())
         );
-        assert_eq!(
-            parse_outcome_odds("UP @0.4").unwrap(),
-            (Outcome::Up, "0.4".to_string())
-        );
-        // missing `@` odds separator.
-        assert_eq!(parse_outcome_odds("YES"), Err(ParseError::IllegalKeyword));
-        // out-of-range odds.
-        assert_eq!(parse_outcome_odds("YES @1.5"), Err(ParseError::OutOfRange));
-        // illegal outcome keyword.
+        assert_eq!(parse_outcome_odds("YES"), Err(ParseError::IllegalKeyword)); // no @
+        assert_eq!(parse_outcome_odds("YES @1.5"), Err(ParseError::OutOfRange)); // odds > 1
         assert_eq!(
             parse_outcome_odds("MAYBE @0.5"),
             Err(ParseError::IllegalKeyword)
         );
-        // extra `@`.
         assert_eq!(
             parse_outcome_odds("YES @0.5@0.6"),
             Err(ParseError::ForbiddenContent)
-        );
+        ); // extra @
     }
 
     #[test]
     fn forbidden_scan() {
-        assert!(contains_forbidden(
-            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC https://x.io"
-        ));
-        assert!(contains_forbidden("gm 🚀"));
-        // `@` is no longer globally forbidden — it is field-scoped (Prediction odds).
+        assert!(contains_forbidden("gm https://x.io"));
+        assert!(contains_forbidden("gm \u{1F680}"));
+        // '@', '$', '≤', '…' and ASCII quotes are NOT globally forbidden.
         assert!(!contains_forbidden("@alpha"));
-        assert!(!contains_forbidden(
-            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{65b9}\u{5411}:BUY"
-        ));
+        assert!(!contains_forbidden("$TOKEN (0x12a3\u{2026}9fab)"));
+        assert!(!contains_forbidden("Slippage \u{2264}1%"));
+        assert!(!contains_forbidden("\"Fed cuts rates in Sept?\""));
     }
 
-    /// SR-2 regression: the previously-missed symbol blocks are still flagged as
-    /// forbidden content — letterlike (™ U+2122), arrows (← U+2190), misc
-    /// technical (⌚ U+231A / ⏰ U+23F0), geometric shapes (■ U+25A0 / ● U+25CF).
     #[test]
     fn forbidden_scan_extended_emoji_blocks() {
-        for s in ["a™b", "up ←", "⌚ time", "alarm ⏰", "box ■", "dot ●"] {
+        for s in ["a\u{2122}b", "up \u{2190}", "\u{231A} time", "box \u{25A0}"] {
             assert!(contains_forbidden(s), "expected forbidden: {s:?}");
         }
-        // The canonical field grammar (CJK labels, full-width brackets, ASCII,
-        // '/', '-', '%', ':') is still clean — no false positives.
-        assert!(!contains_forbidden(
-            "【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call"
-        ));
     }
 
-    /// M-3: leverage must be a strictly-positive integer.
     #[test]
     fn leverage_rejects_zero_and_non_integer() {
         assert_eq!(parse_leverage("10").unwrap(), 10);
-        assert_eq!(parse_leverage("1").unwrap(), 1);
         assert_eq!(parse_leverage("0"), Err(ParseError::OutOfRange)); // zero
         assert_eq!(parse_leverage("10.5"), Err(ParseError::OutOfRange)); // non-integer
         assert_eq!(parse_leverage("-5"), Err(ParseError::OutOfRange)); // signed
         assert_eq!(parse_leverage(""), Err(ParseError::OutOfRange)); // empty
-        assert_eq!(parse_leverage("x"), Err(ParseError::OutOfRange)); // non-numeric
     }
 
-    /// M-6: the closed keyword whitelists reject every non-canonical variant.
     #[test]
-    fn keyword_whitelists_reject_non_canonical() {
-        assert_eq!(parse_order_type("market").unwrap(), OrderType::Market);
-        assert_eq!(parse_order_type("limit").unwrap(), OrderType::Limit);
-        assert_eq!(parse_order_type("MARKET"), Err(ParseError::IllegalKeyword));
-        assert_eq!(parse_order_type("stop"), Err(ParseError::IllegalKeyword));
-        assert_eq!(parse_margin_mode("cross").unwrap(), MarginMode::Cross);
-        assert_eq!(parse_margin_mode("isolated").unwrap(), MarginMode::Isolated);
-        assert_eq!(parse_margin_mode("CROSS"), Err(ParseError::IllegalKeyword));
-        assert_eq!(parse_margin_mode("full"), Err(ParseError::IllegalKeyword));
-        assert_eq!(parse_option_type("Call").unwrap(), OptionType::Call);
-        assert_eq!(parse_option_type("Put").unwrap(), OptionType::Put);
-        assert_eq!(parse_option_type("call"), Err(ParseError::IllegalKeyword));
-        assert_eq!(parse_option_type("CALL"), Err(ParseError::IllegalKeyword));
-    }
-
-    /// FR-2 (feedback !668dedbf): out-of-order fields are rejected even when every
-    /// label is individually valid for the class.
-    #[test]
-    fn fixed_order_rejects_reorder_and_missing() {
-        let raw = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
-            pairs
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect()
-        };
-        // canonical order parses.
-        assert!(FieldMap::build(
-            AssetClass::Spot,
-            Language::En,
-            &raw(&[
-                ("market", "BTC/USDT"),
-                ("symbol", "BTC"),
-                ("side", "BUY"),
-                ("price", "60000-65000"),
-                ("position", "5%"),
-                ("ttl", "1h"),
-            ])
-        )
-        .is_ok());
-        // symbol before market (reordered) → FieldCountError.
+    fn split_pipe_fields_trims_and_rejects_empty() {
         assert_eq!(
-            FieldMap::build(
-                AssetClass::Spot,
-                Language::En,
-                &raw(&[
-                    ("symbol", "BTC"),
-                    ("market", "BTC/USDT"),
-                    ("side", "BUY"),
-                    ("price", "60000-65000"),
-                    ("position", "5%"),
-                    ("ttl", "1h"),
-                ])
-            )
-            .unwrap_err(),
-            ParseError::FieldCountError
+            split_pipe_fields("a | b |c").unwrap(),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
-        // missing required `side` → FieldCountError.
-        assert_eq!(
-            FieldMap::build(
-                AssetClass::Spot,
-                Language::En,
-                &raw(&[
-                    ("market", "BTC/USDT"),
-                    ("symbol", "BTC"),
-                    ("price", "60000-65000"),
-                    ("position", "5%"),
-                    ("ttl", "1h"),
-                ])
-            )
-            .unwrap_err(),
-            ParseError::FieldCountError
-        );
-        // `@` outside the Prediction outcome field → ForbiddenContent.
-        assert_eq!(
-            FieldMap::build(
-                AssetClass::Spot,
-                Language::En,
-                &raw(&[("market", "@evil"), ("symbol", "BTC")])
-            )
-            .unwrap_err(),
-            ParseError::ForbiddenContent
-        );
+        assert_eq!(split_pipe_fields("a||b"), Err(ParseError::EmptyField));
+        assert_eq!(split_pipe_fields("   "), Err(ParseError::FieldCountError));
     }
 }

@@ -1,130 +1,162 @@
-//! FR-2.2 spot parser. Supports the CEX-pair form and the on-chain-token form
-//! (which requires both `tokenAddr` and `slippage`, slippage ≤ 5%). `orderType`
-//! defaults to `market` when absent; `priceRange.lo < hi`.
+//! FR-2.2 spot parser. Two positional forms, told apart by the SHAPE of the 2nd
+//! field (feedback !f00000ab — "on-chain Spot's subject spans chain | token(addr),
+//! don't mis-cut with one fixed index per class"):
+//!
+//! - on-chain (7 fields): `chain | $SYMBOL (ADDRESS) | side | lo-hi | slippage(zh) ≤N% | position(zh) N% | <ttl>`
+//! - CEX pair (5 fields): `BASE/QUOTE | side [orderType] | lo-hi | position(zh) N% | <ttl>`
+//!
+//! The on-chain form carries `tokenAddr` + `slippage` (≤5%) and is always a market
+//! order; the CEX form carries neither and may set `orderType` to `limit`.
 
 use super::super::error::ParseError;
-use super::super::fields::{self, FieldMap};
-use super::super::{OrderType, SpotParams};
+use super::super::fields;
+use super::super::{Language, OrderType, SignalParams, SpotParams};
+use super::ClassParse;
 
-pub fn parse(fm: &mut FieldMap) -> Result<SpotParams, ParseError> {
-    let market = fm.require(fields::ID_MARKET)?;
-    let symbol = fm.require(fields::ID_SYMBOL)?;
-    let side = fields::parse_side(&fm.require(fields::ID_SIDE)?)?;
-    let price_range = fields::parse_range(&fm.require(fields::ID_PRICE)?)?;
+pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError> {
+    // The on-chain subject is `$SYMBOL (ADDRESS)` — a `$` 2nd field selects it.
+    let onchain = fields.get(1).is_some_and(|f| f.starts_with('$'));
+    if onchain {
+        parse_onchain(fields, lang)
+    } else {
+        parse_cex(fields, lang)
+    }
+}
 
-    let order_type = match fm.take(fields::ID_ORDER_TYPE) {
-        Some(v) => fields::parse_order_type(&v)?,
-        None => OrderType::Market,
-    };
-
-    let token_addr = fm.take(fields::ID_TOKEN_ADDR);
-    let slippage = match fm.take(fields::ID_SLIPPAGE) {
-        Some(v) => Some(fields::parse_percent_max(&v, "5")?),
-        None => None,
-    };
-
-    // On-chain form requires BOTH tokenAddr and slippage (SR-6).
-    if token_addr.is_some() != slippage.is_some() {
+fn parse_onchain(fields: &[String], lang: Language) -> Result<ClassParse, ParseError> {
+    if fields.len() != 7 {
         return Err(ParseError::FieldCountError);
     }
+    let market = fields[0].clone(); // chain
+    let (symbol, token_addr) = fields::parse_onchain_token(&fields[1])?;
+    let side = fields::parse_side(&fields[2])?;
+    let price_range = fields::parse_range(&fields[3])?;
+    let slippage = fields::parse_slippage_field(&fields[4], lang)?;
+    let position_pct = fields::parse_position_field(&fields[5], lang)?;
+    let ttl_sec = fields::parse_ttl_field(&fields[6], lang)?;
 
-    Ok(SpotParams {
-        market,
-        symbol,
-        side,
-        price_range,
-        order_type,
-        token_addr,
-        slippage,
-    })
+    Ok((
+        SignalParams::Spot(SpotParams {
+            market,
+            symbol,
+            side,
+            price_range,
+            order_type: OrderType::Market,
+            token_addr: Some(token_addr),
+            slippage: Some(slippage),
+        }),
+        position_pct,
+        ttl_sec,
+    ))
+}
+
+fn parse_cex(fields: &[String], lang: Language) -> Result<ClassParse, ParseError> {
+    if fields.len() != 5 {
+        return Err(ParseError::FieldCountError);
+    }
+    let (symbol, market) = fields::split_pair(&fields[0]);
+    let (side, order_type) = fields::parse_side_order(&fields[1], lang)?;
+    let price_range = fields::parse_range(&fields[2])?;
+    let position_pct = fields::parse_position_field(&fields[3], lang)?;
+    let ttl_sec = fields::parse_ttl_field(&fields[4], lang)?;
+
+    Ok((
+        SignalParams::Spot(SpotParams {
+            market,
+            symbol,
+            side,
+            price_range,
+            order_type,
+            token_addr: None,
+            slippage: None,
+        }),
+        position_pct,
+        ttl_sec,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset_class::AssetClass;
-    use crate::trade_signal::Language;
+    use super::super::super::Side;
 
-    /// Build a spot `FieldMap` from raw en `(label, value)` pairs (en labels are
-    /// identical to the canonical field ids, so this exercises the real path).
-    /// The required trailing `position`/`ttl` slots are appended automatically so
-    /// the fixed-order build succeeds; `spot::parse` leaves them for the caller.
-    fn spot_fm(pairs: &[(&str, &str)]) -> FieldMap {
-        let mut raw: Vec<(String, String)> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        raw.push(("position".to_string(), "5%".to_string()));
-        raw.push(("ttl".to_string(), "1h".to_string()));
-        FieldMap::build(AssetClass::Spot, Language::En, &raw).expect("field map builds")
+    fn f(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
     }
 
-    /// M-5 / SR-6: the on-chain form's slippage carries a hard 5% ceiling.
     #[test]
-    fn slippage_above_five_percent_is_out_of_range() {
-        let mut fm = spot_fm(&[
-            ("market", "base"),
-            ("symbol", "DEGEN"),
-            ("side", "BUY"),
-            ("price", "1-2"),
-            ("tokenAddr", "0xabc"),
-            ("slippage", "9%"),
-        ]);
-        assert_eq!(parse(&mut fm).unwrap_err(), ParseError::OutOfRange);
+    fn onchain_form_parses_token_addr_and_slippage() {
+        let (params, pos, ttl) = parse(
+            &f(&[
+                "base",
+                "$DEGEN (0xabc123)",
+                "BUY",
+                "0.01-0.02",
+                "Slippage \u{2264}5%",
+                "Position 20%",
+                "valid for 7d",
+            ]),
+            Language::En,
+        )
+        .unwrap();
+        assert_eq!(pos, "20");
+        assert_eq!(ttl, 604_800);
+        match params {
+            SignalParams::Spot(s) => {
+                assert_eq!(s.symbol, "DEGEN");
+                assert_eq!(s.token_addr.as_deref(), Some("0xabc123"));
+                assert_eq!(s.slippage.as_deref(), Some("5"));
+                assert_eq!(s.order_type, OrderType::Market);
+            }
+            _ => panic!("expected spot"),
+        }
     }
 
-    /// Control: slippage exactly at the 5% ceiling parses.
     #[test]
-    fn slippage_at_ceiling_parses() {
-        let mut fm = spot_fm(&[
-            ("market", "base"),
-            ("symbol", "DEGEN"),
-            ("side", "BUY"),
-            ("price", "1-2"),
-            ("tokenAddr", "0xabc"),
-            ("slippage", "5%"),
-        ]);
-        let out = parse(&mut fm).expect("parses");
-        assert_eq!(out.slippage.as_deref(), Some("5"));
-        assert_eq!(out.token_addr.as_deref(), Some("0xabc"));
+    fn cex_form_defaults_market_and_splits_pair() {
+        let (params, _, _) = parse(
+            &f(&["BTC/USDT", "BUY", "60000-65000", "Position 5%", "valid for 1h"]),
+            Language::En,
+        )
+        .unwrap();
+        match params {
+            SignalParams::Spot(s) => {
+                assert_eq!(s.symbol, "BTC");
+                assert_eq!(s.market, "BTC/USDT");
+                assert_eq!(s.side, Side::Buy);
+                assert!(s.token_addr.is_none() && s.slippage.is_none());
+                assert_eq!(s.order_type, OrderType::Market);
+            }
+            _ => panic!("expected spot"),
+        }
     }
 
-    /// M-4: the on-chain form requires BOTH `tokenAddr` and `slippage` (SR-6);
-    /// presence of exactly one is a `FieldCountError`.
     #[test]
-    fn token_addr_xor_slippage_is_field_count_error() {
-        // tokenAddr without slippage.
-        let mut fm = spot_fm(&[
-            ("market", "base"),
-            ("symbol", "DEGEN"),
-            ("side", "BUY"),
-            ("price", "1-2"),
-            ("tokenAddr", "0xabc"),
-        ]);
-        assert_eq!(parse(&mut fm).unwrap_err(), ParseError::FieldCountError);
-
-        // slippage without tokenAddr.
-        let mut fm = spot_fm(&[
-            ("market", "BTC/USDT"),
-            ("symbol", "BTC"),
-            ("side", "BUY"),
-            ("price", "1-2"),
-            ("slippage", "3%"),
-        ]);
-        assert_eq!(parse(&mut fm).unwrap_err(), ParseError::FieldCountError);
+    fn onchain_slippage_above_ceiling_is_out_of_range() {
+        assert_eq!(
+            parse(
+                &f(&[
+                    "base",
+                    "$DEGEN (0xabc)",
+                    "BUY",
+                    "1-2",
+                    "Slippage \u{2264}9%",
+                    "Position 5%",
+                    "valid for 1h",
+                ]),
+                Language::En,
+            )
+            .unwrap_err(),
+            ParseError::OutOfRange
+        );
     }
 
-    /// Control: the CEX form (neither key) parses and defaults `orderType`.
     #[test]
-    fn cex_form_without_onchain_keys_parses() {
-        let mut fm = spot_fm(&[
-            ("market", "BTC/USDT"),
-            ("symbol", "BTC"),
-            ("side", "BUY"),
-            ("price", "1-2"),
-        ]);
-        let out = parse(&mut fm).expect("parses");
-        assert!(out.token_addr.is_none() && out.slippage.is_none());
-        assert_eq!(out.order_type, OrderType::Market);
+    fn wrong_field_count_is_field_count_error() {
+        assert_eq!(
+            parse(&f(&["BTC/USDT", "BUY", "60000-65000", "Position 5%"]), Language::En)
+                .unwrap_err(),
+            ParseError::FieldCountError
+        );
     }
 }

@@ -8,9 +8,13 @@
 //! - [`parse_envelope`] — validate a V2 wire envelope then delegate (FR-3).
 //!
 //! ## Input grammar
-//! The authoritative wire grammar is Lark spec v1.1. Each asset class is a
-//! FIXED-ORDER sequence of `|`-separated `label:value` fields behind a full-title
-//! header (a full-title header); see [`header`] and [`fields`].
+//! The authoritative wire grammar is Lark spec v1.1 (feedback !f00000ab / note
+//! 9916440). Each asset class is a FIXED, POSITIONAL sequence of `|`-separated
+//! fields behind a full-title header; a field's meaning comes from its position,
+//! its shape, and a small set of reserved keywords embedded IN the value (e.g.
+//! `LONG 3x`, `SL 3300`, `position(zh) 5%`) — NOT a reorderable `label:value` map. The
+//! byte-exact bilingual acceptance corpus is in `corpus_v1_1.txt`; see [`header`]
+//! and [`fields`].
 //!
 //! The [`ParsedSignal`] result is an **internal** parser model, NOT a second
 //! frozen public trading-signal contract. Its field naming follows the runtime
@@ -209,7 +213,7 @@ pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     if input.chars().count() > 200 {
         return Err(ParseError::TooLong);
     }
-    // SR-2: no injected content (emoji / link / @mention) anywhere in the input.
+    // SR-2: no injected content (emoji / link) anywhere in the input.
     if fields::contains_forbidden(input) {
         return Err(ParseError::ForbiddenContent);
     }
@@ -217,21 +221,21 @@ pub fn parse_signal_text(input: &str) -> Result<ParsedSignal, ParseError> {
     // 2-3. exact header → (asset class, language) + remainder.
     let (asset_class, language, remainder) = header::parse_header(input)?;
 
-    // 4. split on '|', trim, reject empties → ordered (label, value) pairs.
-    let raw_fields = fields::split_fields(remainder)?;
+    // 4. split on '|', trim, reject empties → ordered positional fields.
+    let raw_fields = fields::split_pipe_fields(remainder)?;
 
-    // 5-6. translate labels → canonical ids with a same-language check.
-    let mut field_map = fields::FieldMap::build(asset_class, language, &raw_fields)?;
+    // SR-2: '@' is legal ONLY inside the Prediction outcome field (index 1, the
+    // `<OUTCOME> @<odds>` odds separator). Anywhere else it is injected content.
+    for (i, f) in raw_fields.iter().enumerate() {
+        let at_ok = asset_class == AssetClass::Prediction && i == 1;
+        if !at_ok && f.contains('@') {
+            return Err(ParseError::ForbiddenContent);
+        }
+    }
 
-    // 7-8. common (position/ttl) + per-class field parse & range/date/constraints.
-    let position_pct = fields::parse_position(&field_map.require(fields::ID_POSITION)?)?;
-    let ttl_sec = fields::parse_ttl(&field_map.require(fields::ID_TTL)?)?;
-    let params = params::dispatch(asset_class, &mut field_map)?;
+    // 5-9. per-class positional parse (incl. the class-placed position/ttl).
+    let (params, position_pct, ttl_sec) = params::dispatch(asset_class, language, &raw_fields)?;
 
-    // Any label valid for the class but unconsumed by its form is an extra field.
-    field_map.ensure_consumed()?;
-
-    // 9. build the typed result.
     Ok(ParsedSignal {
         asset_class,
         language,

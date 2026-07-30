@@ -1,41 +1,29 @@
-//! FR-2.3 perp parser with SL/TP direction integrity (SR-5).
+//! FR-2.3 perp parser (positional V1.1 grammar). 7 fields:
 //!
-//! `leverage` is a positive integer; exactly one `stopLoss`; 1..=3 take-profits.
-//! Per V1.1/TD review alignment (feedback !1a4cebc6) TPs may be given as either
-//! form:
-//! - separate fields `tp1|tp2|tp3` with contiguous numbering, or
-//! - one combined `takeProfit` field carrying `v1/v2/v3` slash-separated prices.
+//! `pair | <DIR> <LEV>x [marginMode] | entry(zh) lo-hi | SL <sl> | TP1 v1 [/ TP2 v2 [/ TP3 v3]] | position(zh) N% | <ttl>`
 //!
-//! Direction rules (the ONLY ordering constraint the protocol defines):
+//! `leverage` is a positive integer (the `x` suffix is stripped); exactly one
+//! `stopLoss`; 1..=3 tagged take-profits with contiguous numbering. Direction
+//! rules (the ONLY ordering constraint the protocol defines):
 //! - LONG:  stopLoss < entryLo; every TP > entryLo.
 //! - SHORT: stopLoss > entryHi; every TP < entryHi.
-//!
-//! The previous extra strict-monotonic TP ordering constraint is removed — it was
-//! not required by the spec and rejected valid direction-correct signals. A
-//! duplicate/zero/four TP, a numbering gap, or a wrong-side SL/TP → `DirectionConstraint`.
 
 use super::super::error::ParseError;
-use super::super::fields::{self, FieldMap};
-use super::super::{Direction, PerpParams};
+use super::super::fields;
+use super::super::{Direction, Language, PerpParams, SignalParams};
+use super::ClassParse;
 
-pub fn parse(fm: &mut FieldMap) -> Result<PerpParams, ParseError> {
-    let pair = fm.require(fields::ID_PAIR)?;
-    let direction = fields::parse_direction(&fm.require(fields::ID_DIRECTION)?)?;
-    let leverage = fields::parse_leverage(&fm.require(fields::ID_LEVERAGE)?)?;
-    let entry_range = fields::parse_range(&fm.require(fields::ID_ENTRY)?)?;
-    let stop_loss = fields::parse_decimal(&fm.require(fields::ID_STOP_LOSS)?)?;
-
-    // Two accepted TP forms: a combined slash field, OR separate tp1..tp3.
-    let tp_combined = fm.take(fields::ID_TP);
-    let tp1 = fm.take(fields::ID_TP1);
-    let tp2 = fm.take(fields::ID_TP2);
-    let tp3 = fm.take(fields::ID_TP3);
-    let take_profit = collect_take_profit(tp_combined, tp1, tp2, tp3)?;
-
-    let margin_mode = match fm.take(fields::ID_MARGIN_MODE) {
-        Some(v) => Some(fields::parse_margin_mode(&v)?),
-        None => None,
-    };
+pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError> {
+    if fields.len() != 7 {
+        return Err(ParseError::FieldCountError);
+    }
+    let pair = fields[0].clone();
+    let (direction, leverage, margin_mode) = fields::parse_dir_lev_margin(&fields[1], lang)?;
+    let entry_range = fields::parse_range(&fields::strip_entry(&fields[2], lang)?)?;
+    let stop_loss = fields::parse_decimal(&fields::strip_stop_loss(&fields[3], lang)?)?;
+    let take_profit = fields::parse_take_profits(&fields[4])?;
+    let position_pct = fields::parse_position_field(&fields[5], lang)?;
+    let ttl_sec = fields::parse_ttl_field(&fields[6], lang)?;
 
     check_direction(
         direction,
@@ -45,67 +33,23 @@ pub fn parse(fm: &mut FieldMap) -> Result<PerpParams, ParseError> {
         &take_profit,
     )?;
 
-    Ok(PerpParams {
-        pair,
-        direction,
-        leverage,
-        entry_range,
-        stop_loss,
-        take_profit,
-        margin_mode,
-    })
-}
-
-/// Collect the take-profit prices from whichever form was used. The two forms are
-/// mutually exclusive; 1..=3 prices; separate fields must be contiguously numbered.
-fn collect_take_profit(
-    tp_combined: Option<String>,
-    tp1: Option<String>,
-    tp2: Option<String>,
-    tp3: Option<String>,
-) -> Result<Vec<String>, ParseError> {
-    let has_separate = tp1.is_some() || tp2.is_some() || tp3.is_some();
-    match tp_combined {
-        Some(combined) => {
-            // Mixing the combined and separate forms is a constraint violation.
-            if has_separate {
-                return Err(ParseError::DirectionConstraint);
-            }
-            let mut out = Vec::new();
-            for part in combined.split('/') {
-                let part = part.trim();
-                if part.is_empty() {
-                    return Err(ParseError::DirectionConstraint);
-                }
-                // A malformed TP price is a number error, not a direction error.
-                out.push(fields::parse_decimal(part)?);
-            }
-            if out.is_empty() || out.len() > 3 {
-                return Err(ParseError::DirectionConstraint);
-            }
-            Ok(out)
-        }
-        None => {
-            // Separate fields: contiguous numbering starting at tp1, 1..=3 present.
-            let present = [tp1.is_some(), tp2.is_some(), tp3.is_some()];
-            let valid = matches!(
-                present,
-                [true, false, false] | [true, true, false] | [true, true, true]
-            );
-            if !valid {
-                return Err(ParseError::DirectionConstraint);
-            }
-            let mut out = Vec::new();
-            for tp in [tp1, tp2, tp3].into_iter().flatten() {
-                out.push(fields::parse_decimal(&tp)?);
-            }
-            Ok(out)
-        }
-    }
+    Ok((
+        SignalParams::Perp(PerpParams {
+            pair,
+            direction,
+            leverage,
+            entry_range,
+            stop_loss,
+            take_profit,
+            margin_mode,
+        }),
+        position_pct,
+        ttl_sec,
+    ))
 }
 
 /// SL/TP direction integrity — the correct side of the entry range. No monotonic
-/// ordering constraint (removed per feedback !1a4cebc6).
+/// ordering constraint (feedback !1a4cebc6).
 fn check_direction(
     direction: Direction,
     entry_lo: &str,
@@ -138,80 +82,96 @@ fn check_direction(
 mod tests {
     use super::*;
 
-    /// feedback !1a4cebc6: TPs on the correct side of entry but NOT strictly
-    /// monotonic (equal, or out-of-order) are now ACCEPTED — the extra monotonic
-    /// constraint was removed. Only the side check applies.
+    fn f(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
-    fn long_tps_correct_side_non_monotonic_now_accepted() {
-        // All TPs > entryLo (60000) and SL < entryLo → side checks pass.
-        let equal = vec!["62000".to_string(), "62000".to_string()];
-        assert!(check_direction(Direction::Long, "60000", "61000", "59000", &equal).is_ok());
-        let descending = vec!["63000".to_string(), "62000".to_string()];
-        assert!(check_direction(Direction::Long, "60000", "61000", "59000", &descending).is_ok());
-        // Wrong side is still rejected.
-        let wrong_side = vec!["59500".to_string()];
+    fn long_single_tp_no_margin_parses() {
+        let (params, pos, ttl) = parse(
+            &f(&[
+                "ETH-PERP",
+                "LONG 3x",
+                "Entry 3420-3450",
+                "SL 3300",
+                "TP1 3720",
+                "Position 10%",
+                "valid for 4h",
+            ]),
+            Language::En,
+        )
+        .unwrap();
+        assert_eq!(pos, "10");
+        assert_eq!(ttl, 14_400);
+        match params {
+            SignalParams::Perp(p) => {
+                assert_eq!(p.leverage, 3);
+                assert_eq!(p.take_profit, vec!["3720"]);
+                assert!(p.margin_mode.is_none());
+            }
+            _ => panic!("expected perp"),
+        }
+    }
+
+    #[test]
+    fn short_isolated_slash_tps_parses() {
+        let (params, _, _) = parse(
+            &f(&[
+                "BTC-USDT-SWAP",
+                "SHORT 2x isolated",
+                "Entry 97800-98200",
+                "SL 99500",
+                "TP1 96000 / TP2 94000",
+                "Position 8%",
+                "valid for 8h",
+            ]),
+            Language::En,
+        )
+        .unwrap();
+        match params {
+            SignalParams::Perp(p) => {
+                assert_eq!(p.take_profit, vec!["96000", "94000"]);
+                assert!(p.margin_mode.is_some());
+            }
+            _ => panic!("expected perp"),
+        }
+    }
+
+    #[test]
+    fn wrong_side_stop_loss_rejected() {
+        // LONG with SL above entry-low → direction_constraint.
         assert_eq!(
-            check_direction(Direction::Long, "60000", "61000", "59000", &wrong_side).unwrap_err(),
+            parse(
+                &f(&[
+                    "ETH-PERP",
+                    "LONG 3x",
+                    "Entry 3420-3450",
+                    "SL 3500",
+                    "TP1 3720",
+                    "Position 10%",
+                    "valid for 4h",
+                ]),
+                Language::En,
+            )
+            .unwrap_err(),
             ParseError::DirectionConstraint
         );
     }
 
     #[test]
-    fn short_tps_correct_side_non_monotonic_now_accepted() {
-        // All TPs < entryHi (610) and SL > entryHi → side checks pass.
-        let equal = vec!["590".to_string(), "590".to_string()];
-        assert!(check_direction(Direction::Short, "600", "610", "620", &equal).is_ok());
-        let ascending = vec!["580".to_string(), "590".to_string()];
-        assert!(check_direction(Direction::Short, "600", "610", "620", &ascending).is_ok());
-    }
-
-    /// feedback !1a4cebc6: the combined slash form `v1/v2/v3` and the separate
-    /// `tp1..tp3` form yield the same take-profit vector; mixing the two forms is
-    /// a constraint violation.
-    #[test]
-    fn tp_slash_form_and_separate_form() {
-        // combined slash form.
-        assert_eq!(
-            collect_take_profit(Some("62000/63000/64000".to_string()), None, None, None).unwrap(),
-            vec!["62000", "63000", "64000"]
-        );
-        // separate form.
-        assert_eq!(
-            collect_take_profit(
-                None,
-                Some("62000".to_string()),
-                Some("63000".to_string()),
-                None
-            )
-            .unwrap(),
-            vec!["62000", "63000"]
-        );
-        // mixing the two forms → DirectionConstraint.
-        assert_eq!(
-            collect_take_profit(
-                Some("62000".to_string()),
-                Some("63000".to_string()),
-                None,
-                None
-            )
-            .unwrap_err(),
-            ParseError::DirectionConstraint
-        );
-        // more than three combined TPs → DirectionConstraint.
-        assert_eq!(
-            collect_take_profit(Some("1/2/3/4".to_string()), None, None, None).unwrap_err(),
-            ParseError::DirectionConstraint
-        );
-        // numbering gap in the separate form (tp1 + tp3, no tp2) → DirectionConstraint.
-        assert_eq!(
-            collect_take_profit(
-                None,
-                Some("62000".to_string()),
-                None,
-                Some("64000".to_string())
-            )
-            .unwrap_err(),
-            ParseError::DirectionConstraint
-        );
+    fn non_monotonic_tps_accepted_if_correct_side() {
+        assert!(parse(
+            &f(&[
+                "ETH-PERP",
+                "LONG 3x",
+                "Entry 3420-3450",
+                "SL 3300",
+                "TP1 4000 / TP2 3800",
+                "Position 10%",
+                "valid for 4h",
+            ]),
+            Language::En,
+        )
+        .is_ok());
     }
 }

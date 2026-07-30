@@ -52,7 +52,7 @@ mod tests {
     use super::*;
 
     const VALID_TEXT: &str =
-        "【Spot Signal】market:BTC/USDT|symbol:BTC|side:BUY|price:60000-65000|position:5%|ttl:1h";
+        "\u{3010}Spot Signal\u{3011}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for 1h";
 
     fn envelope(schema: u32, delivery: &str, time: u64) -> String {
         format!(

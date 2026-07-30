@@ -1,42 +1,31 @@
-//! Corpus + invariant tests for the trade-signal parser (AC-1 … AC-24).
+//! Acceptance corpus + invariant tests for the trade-signal parser.
 //!
-//! Per V1.1/TD review alignment (feedback !ee926d82) the previous self-authored
-//! corpus is replaced with examples in the authoritative V1.1 grammar: the full
-//! titles (the full zh/en signal headers), the fixed-order `|` fields per
-//! asset class, the Prediction `<OUTCOME> @<odds>` form, and both perp TP forms
-//! (separate tp1..3 and the combined slash takeProfit form).
+//! The positives are driven by the AUTHORITATIVE V1.1 corpus in `corpus_v1_1.txt`,
+//! copied byte-for-byte from the human review corpus on MR !196 (discussion
+//! f00000ab / note 9916440, "[P0][round5][authoritative-v1.1-corpus]"). The
+//! corpus lives in a `.txt` fixture — not inline in this `.rs` file — so it stays
+//! literally verbatim (no `\u{}` escaping, no reconstruction) while the
+//! onchainos_check "no CJK in Rust source" lint (which scans only `cli/**.rs`)
+//! stays satisfied. `all_fourteen_normative_examples_parse` is the headline gate:
+//! 14/14 of the normative examples MUST parse.
 //!
-//! NOTE (see notes.md A1): the byte-exact sample strings in the Lark v1.1 doc were
-//! not reachable from the implementation stage (no Lark tool; KB empty for this
-//! repo; not committed). These 14 examples are faithful reconstructions of the
-//! spec's structure per the reviewer feedback and should be confirmed against the
-//! Lark doc's verbatim strings before the MR is flipped to Ready.
-//!
-//! Positives assert the output model; negatives assert the exact stable snake_case
-//! `errorCode`.
+//! The negatives assert the stable snake_case `errorCode` and keep every TD
+//! rejection failing closed. They are written in the en grammar (ASCII) where
+//! possible; the few zh-specific cases use `\u{}` escapes (byte-identical to the
+//! glyphs, lint-safe).
 
 use super::{parse_envelope, parse_signal_text, SignalParams};
 
-/// The 14 canonical bilingual examples (7 zh + 7 en): spot×2, perp×2,
-/// prediction×1, option×1, defi×1 per language (AC-1).
-const CANONICAL: &[&str] = &[
-    // ── zh ──
-    "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{7c7b}\u{578b}:limit|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h",
-    "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:Solana|\u{5e01}\u{79cd}:WIF|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:1.5-2.0|\u{5408}\u{7ea6}\u{5730}\u{5740}:EKpQ6uzn|\u{6ed1}\u{70b9}:3%|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:30min",
-    "【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{76c8}1:62000|\u{6b62}\u{76c8}2:63000|\u{6b62}\u{76c8}3:64000|\u{4fdd}\u{8bc1}\u{91d1}:cross|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:2h",
-    "【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:ETH-PERP|\u{65b9}\u{5411}:SHORT|\u{6760}\u{6746}:5|\u{5165}\u{573a}:3000-3100|\u{6b62}\u{635f}:3200|\u{6b62}\u{76c8}:2900/2800|\u{4fdd}\u{8bc1}\u{91d1}:isolated|\u{4ed3}\u{4f4d}:8%|\u{6709}\u{6548}\u{671f}:1d",
-    "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:\u{7f8e}\u{8054}\u{50a8}12\u{6708}\u{964d}\u{606f}|\u{7ed3}\u{679c}:YES @0.65|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:3d",
-    "【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d",
-    "【DeFi \u{4fe1}\u{53f7}】\u{94fe}:Ethereum|\u{534f}\u{8bae}:AaveV3|\u{5e74}\u{5316}:5.5%|\u{9501}\u{4ed3}:1.2B|\u{5e01}\u{79cd}:USDC|\u{8d4e}\u{56de}:\u{6d3b}\u{671f}|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:7d",
-    // ── en ──
-    "【Spot Signal】market:ETH/USDT|symbol:ETH|side:SELL|price:3000-3200|orderType:market|position:0.1%|ttl:5min",
-    "【Spot Signal】market:base|symbol:DEGEN|side:BUY|price:0.01-0.02|tokenAddr:0xabc123|slippage:5%|position:20%|ttl:7d",
-    "【Futures Signal】pair:SOL-PERP|direction:LONG|leverage:20|entry:150-155|stopLoss:145|tp1:160|position:3%|ttl:6h",
-    "【Futures Signal】pair:BNB-PERP|direction:SHORT|leverage:3|entry:600-610|stopLoss:620|takeProfit:590/580/570|marginMode:cross|position:12%|ttl:12h",
-    "【Prediction Signal】event:BTC above 100k by EOY|outcome:UP @0.4|settleDate:2024-02-29|position:2%|ttl:7d",
-    "【Options Signal】contractCode:ETH-250630-3000-P|side:Sell|optionType:Put|strike:3000|expiry:2025-06-30|premiumCap:200|position:4%|ttl:2d",
-    "【DeFi Signal】chain:Solana|protocolPool:Kamino|apy:8%|tvl:500M|token:USDC|redeemTerms:flexible|position:15%|ttl:1d",
-];
+/// The verbatim bilingual corpus (7 zh + 7 en), loaded from the fixture. Comment
+/// (`#`) and blank lines are skipped; the remaining lines are the 14 examples in
+/// the fixed order documented in the fixture header.
+fn corpus() -> Vec<&'static str> {
+    include_str!("corpus_v1_1.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+}
 
 fn code(text: &str) -> &'static str {
     parse_signal_text(text).unwrap_err().code()
@@ -44,13 +33,16 @@ fn code(text: &str) -> &'static str {
 
 // ── Positives ─────────────────────────────────────────────────────────────────
 
-/// AC-1 / AC-2: every canonical example parses successfully (14/14 target).
+/// AC-1 (headline): every one of the 14 authoritative V1.1 examples parses.
+/// This is the completion gate from note 9916440 — 14/14 original positives pass.
 #[test]
-fn ac1_all_canonical_examples_parse() {
-    for (i, text) in CANONICAL.iter().enumerate() {
+fn all_fourteen_normative_examples_parse() {
+    let corpus = corpus();
+    assert_eq!(corpus.len(), 14, "expected exactly 14 normative examples");
+    for (i, text) in corpus.iter().enumerate() {
         assert!(
             parse_signal_text(text).is_ok(),
-            "canonical example {i} failed to parse: code={}",
+            "normative example {i} failed to parse: code={}",
             parse_signal_text(text)
                 .map(|_| "ok")
                 .unwrap_or_else(|e| e.code())
@@ -58,10 +50,17 @@ fn ac1_all_canonical_examples_parse() {
     }
 }
 
-/// AC-9: `assetClass` (top) always equals `params.kind`.
+/// AC-9: `assetClass` (top) always equals `params.kind`, for the fixed corpus order.
 #[test]
-fn ac9_asset_class_matches_params_kind() {
-    for text in CANONICAL {
+fn asset_class_matches_params_kind_in_fixed_order() {
+    // Fixture order: spot,spot, spot,spot, perp,perp, perp,perp, pred,pred,
+    // option,option, defi,defi (2 lines per group: zh then en).
+    let expected = [
+        "spot", "spot", "spot", "spot", "perp", "perp", "perp", "perp", "prediction",
+        "prediction", "option", "option", "defi", "defi",
+    ];
+    let corpus = corpus();
+    for (i, text) in corpus.iter().enumerate() {
         let p = parse_signal_text(text).unwrap();
         let kind = match p.params {
             SignalParams::Spot(_) => "spot",
@@ -70,325 +69,299 @@ fn ac9_asset_class_matches_params_kind() {
             SignalParams::Option(_) => "option",
             SignalParams::Defi(_) => "defi",
         };
-        assert_eq!(p.asset_class.as_str(), kind);
+        assert_eq!(p.asset_class.as_str(), kind, "line {i}");
+        assert_eq!(kind, expected[i], "line {i} class");
     }
 }
 
-/// AC-3: spot CEX (no tokenAddr) + on-chain (tokenAddr + slippage) forms.
+/// AC-3: the two spot forms — on-chain (chain + token/address + slippage) and CEX
+/// pair — both parse from the verbatim corpus (lines 0 zh / 1 en on-chain; 2/3 CEX).
 #[test]
-fn ac3_spot_cex_and_onchain() {
-    let cex = parse_signal_text(CANONICAL[0]).unwrap();
+fn spot_onchain_and_cex_forms() {
+    let onchain = parse_signal_text(corpus()[1]).unwrap(); // en on-chain
+    match onchain.params {
+        SignalParams::Spot(s) => {
+            assert_eq!(s.symbol, "TOKEN");
+            assert_eq!(s.token_addr.as_deref(), Some("0x12a3\u{2026}9fab"));
+            assert_eq!(s.slippage.as_deref(), Some("1"));
+            assert_eq!(s.price_range.lo, "0.042");
+            assert_eq!(s.price_range.hi, "0.045");
+        }
+        _ => panic!("expected spot"),
+    }
+    let cex = parse_signal_text(corpus()[3]).unwrap(); // en CEX
     match cex.params {
         SignalParams::Spot(s) => {
             assert!(s.token_addr.is_none() && s.slippage.is_none());
-            assert_eq!(s.price_range.lo, "60000");
-            assert_eq!(s.price_range.hi, "65000");
-        }
-        _ => panic!("expected spot"),
-    }
-    let onchain = parse_signal_text(CANONICAL[1]).unwrap();
-    match onchain.params {
-        SignalParams::Spot(s) => {
-            assert_eq!(s.token_addr.as_deref(), Some("EKpQ6uzn"));
-            assert_eq!(s.slippage.as_deref(), Some("3"));
-            assert_eq!(s.price_range.hi, "2"); // 2.0 normalized
+            assert_eq!(s.symbol, "BTC");
+            assert_eq!(s.market, "BTC/USDT");
         }
         _ => panic!("expected spot"),
     }
 }
 
-/// AC-4: perp LONG (separate tp1..3) & SHORT (combined slash TP), cross & isolated.
+/// AC-4: perp LONG single-TP (line 5) & SHORT isolated slash-TP1/TP2 (line 7).
 #[test]
-fn ac4_perp_directions_and_tp_forms() {
-    let long = parse_signal_text(CANONICAL[2]).unwrap();
+fn perp_directions_and_tp_forms() {
+    let long = parse_signal_text(corpus()[5]).unwrap(); // en LONG
     match long.params {
         SignalParams::Perp(p) => {
-            assert_eq!(p.leverage, 10);
-            assert_eq!(p.take_profit, vec!["62000", "63000", "64000"]);
-            assert_eq!(p.stop_loss, "59000");
+            assert_eq!(p.leverage, 3);
+            assert_eq!(p.stop_loss, "3300");
+            assert_eq!(p.take_profit, vec!["3720"]);
+            assert!(p.margin_mode.is_none());
         }
         _ => panic!("expected perp"),
     }
-    // SHORT with the combined slash TP form.
-    let short = parse_signal_text(CANONICAL[3]).unwrap();
+    let short = parse_signal_text(corpus()[7]).unwrap(); // en SHORT isolated
     match short.params {
-        SignalParams::Perp(p) => assert_eq!(p.take_profit, vec!["2900", "2800"]),
-        _ => panic!("expected perp"),
-    }
-    // en SHORT with a 3-item combined slash TP.
-    let short_en = parse_signal_text(CANONICAL[10]).unwrap();
-    match short_en.params {
-        SignalParams::Perp(p) => assert_eq!(p.take_profit, vec!["590", "580", "570"]),
+        SignalParams::Perp(p) => {
+            assert_eq!(p.leverage, 2);
+            assert_eq!(p.take_profit, vec!["96000", "94000"]);
+            assert!(p.margin_mode.is_some());
+        }
         _ => panic!("expected perp"),
     }
 }
 
-/// AC-8: TTL 5min & 7d boundaries; position 0.1% & 20% boundaries; leap-year date.
+/// AC-5/6/8: prediction outcome+odds+settle (line 9), option consistency (line 11),
+/// DeFi compact TVL + position/ttl boundaries (line 13).
 #[test]
-fn ac8_boundaries() {
-    let p = parse_signal_text(CANONICAL[7]).unwrap(); // en spot CEX
-    assert_eq!(p.ttl_sec, 300); // 5min
-    assert_eq!(p.position_pct, "0.1");
-    let p = parse_signal_text(CANONICAL[8]).unwrap(); // en spot on-chain
-    assert_eq!(p.ttl_sec, 604_800); // 7d
-    assert_eq!(p.position_pct, "20");
-    let p = parse_signal_text(CANONICAL[11]).unwrap(); // en prediction (leap year)
-    match p.params {
-        SignalParams::Prediction(pr) => {
-            assert_eq!(pr.settle_date, "2024-02-29");
-            assert_eq!(pr.odds, "0.4");
+fn prediction_option_defi_shapes() {
+    let pred = parse_signal_text(corpus()[9]).unwrap(); // en prediction
+    match pred.params {
+        SignalParams::Prediction(p) => {
+            assert_eq!(p.event, "Fed cuts rates in Sept?");
+            assert_eq!(p.odds, "0.62");
+            assert_eq!(p.settle_date, "2026-09-18");
         }
         _ => panic!("expected prediction"),
     }
-}
-
-/// AC-5 / AC-6: outcomes (with the `@odds` form) and option side/type coverage.
-#[test]
-fn ac5_ac6_outcome_and_option() {
-    for (text, ok) in [
-        (
-            "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:NO @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d",
-            true,
-        ),
-        (
-            "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:DOWN @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d",
-            true,
-        ),
-    ] {
-        assert_eq!(parse_signal_text(text).is_ok(), ok);
-    }
-    // Option Buy/Call (zh) already covered by CANONICAL[5]; Sell/Put (en) by CANONICAL[12].
-    let opt = parse_signal_text(CANONICAL[12]).unwrap();
+    let opt = parse_signal_text(corpus()[11]).unwrap(); // en option
     match opt.params {
         SignalParams::Option(o) => {
-            assert_eq!(o.expiry, "2025-06-30");
-            assert_eq!(o.strike, "3000");
+            assert_eq!(o.strike, "100000");
+            assert_eq!(o.expiry, "2026-03-27");
+            assert_eq!(o.premium_cap, "320");
         }
         _ => panic!("expected option"),
     }
+    let defi = parse_signal_text(corpus()[13]).unwrap(); // en defi
+    assert_eq!(defi.position_pct, "5");
+    assert_eq!(defi.ttl_sec, 172_800); // 48h
+    match defi.params {
+        SignalParams::Defi(d) => {
+            assert_eq!(d.apy, "18.6");
+            assert_eq!(d.tvl, "$2.4M");
+            assert_eq!(d.token, "USDT");
+        }
+        _ => panic!("expected defi"),
+    }
 }
 
-// ── Negatives (AC-10 … AC-20) ──────────────────────────────────────────────────
+// ── Negatives (fail-closed; assert the stable snake_case errorCode) ────────────
 
-/// AC-10: header preceded by space / unknown / half-width `[` / old short header.
+const H_SPOT: &str = "\u{3010}Spot Signal\u{3011}";
+const H_PERP: &str = "\u{3010}Futures Signal\u{3011}";
+const H_PRED: &str = "\u{3010}Prediction Signal\u{3011}";
+const H_OPT: &str = "\u{3010}Options Signal\u{3011}";
+const H_DEFI: &str = "\u{3010}DeFi Signal\u{3011}";
+
+/// AC-10: header preceded by space / unknown / half-width `[`.
 #[test]
-fn ac10_header() {
+fn header_faults() {
     assert_eq!(
-        code(" 【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT"),
+        code(&format!(" {H_SPOT}BTC/USDT | BUY | 1-2 | Position 5% | valid for 1h")),
         "unknown_header"
     );
-    assert_eq!(code("【unknown】\u{5e02}\u{573a}:BTC"), "unknown_header");
-    assert_eq!(
-        code("[\u{73b0}\u{8d27}\u{4fe1}\u{53f7}]\u{5e02}\u{573a}:BTC"),
-        "unknown_header"
-    );
-    // the self-authored short header is no longer accepted.
-    assert_eq!(
-        code("【\u{73b0}\u{8d27}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC"),
-        "unknown_header"
-    );
+    assert_eq!(code("\u{3010}Unknown\u{3011}x"), "unknown_header");
+    assert_eq!(code("[Spot Signal]x"), "unknown_header");
 }
 
-/// AC-11: mixed zh/en labels.
+/// AC-11: a zh header with an en keyword (position) is a language mix.
 #[test]
-fn ac11_language_mix() {
+fn language_mix() {
+    // zh spot CEX header + zh ttl suffix, but en `Position` keyword → language_mix.
+    let zh_spot = "\u{3010}\u{73b0}\u{8d27}\u{4fe1}\u{53f7}\u{3011}";
+    let ttl_zh = "24h \u{5185}\u{6709}\u{6548}";
     assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】market:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
+        code(&format!(
+            "{zh_spot}BTC/USDT | BUY | 96500-97200 | Position 10% | {ttl_zh}"
+        )),
         "language_mix"
     );
 }
 
-/// AC-12: multi-line, 201 chars, emoji, link, out-of-place @mention, extra field, empty field.
+/// AC-12: multi-line / too-long / emoji / link / misplaced `@` / wrong count / empty field.
 #[test]
-fn ac12_forbidden_and_shape() {
+fn forbidden_and_shape() {
     assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC\n\u{65b9}\u{5411}:BUY"),
+        code(&format!("{H_SPOT}BTC/USDT | BUY\n| Position 5%")),
         "multi_line"
     );
     assert_eq!(
-        code(&format!(
-            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:{}",
-            "A".repeat(210)
-        )),
+        code(&format!("{H_SPOT}{}", "A".repeat(210))),
         "too_long"
     );
     assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC🚀|\u{65b9}\u{5411}:BUY"),
+        code(&format!(
+            "{H_SPOT}BTC\u{1F680}/USDT | BUY | 1-2 | Position 5% | valid for 1h"
+        )),
         "forbidden_content"
     );
     assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:https://x.io|\u{65b9}\u{5411}:BUY"),
+        code(&format!(
+            "{H_SPOT}https://x.io | BUY | 1-2 | Position 5% | valid for 1h"
+        )),
         "forbidden_content"
     );
-    // `@` outside the Prediction outcome field is still forbidden.
+    // `@` outside the Prediction outcome field.
     assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:@btc|\u{65b9}\u{5411}:BUY"),
+        code(&format!(
+            "{H_SPOT}@btc | BUY | 1-2 | Position 5% | valid for 1h"
+        )),
         "forbidden_content"
     );
-    // extra (unrecognized) label.
+    // extra field (6 for a 5-field CEX form).
     assert_eq!(
-        code(
-            "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h|\u{989d}\u{5916}:1"
-        ),
-        "forbidden_content"
+        code(&format!(
+            "{H_SPOT}BTC/USDT | BUY | 1-2 | Position 5% | valid for 1h | EXTRA"
+        )),
+        "field_count_error"
     );
     // empty field (double pipe).
     assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT||\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
+        code(&format!(
+            "{H_SPOT}BTC/USDT || BUY | 1-2 | Position 5% | valid for 1h"
+        )),
         "empty_field"
     );
 }
 
-/// AC-12b (feedback !668dedbf): a fixed-order violation — every label valid but
-/// out of the canonical order — is rejected.
+/// AC-13: position 0 / 20.1 / range.
 #[test]
-fn ac12b_fixed_order_reorder_rejected() {
-    // symbol before market (reordered).
-    assert_eq!(
-        code("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e01}\u{79cd}:BTC|\u{5e02}\u{573a}:BTC/USDT|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
-        "field_count_error"
-    );
-}
-
-/// AC-13: position 0 / 20.1 / range / multi.
-#[test]
-fn ac13_position() {
-    let base = |pos: &str| {
-        format!("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:{pos}|\u{6709}\u{6548}\u{671f}:1h")
-    };
-    for pos in ["0%", "20.1%", "5-10%", "5%,10%"] {
-        assert_eq!(code(&base(pos)), "out_of_range", "position {pos}");
+fn position_bounds() {
+    for pos in ["0%", "20.1%", "5-10%"] {
+        assert_eq!(
+            code(&format!(
+                "{H_SPOT}BTC/USDT | BUY | 60000-65000 | Position {pos} | valid for 1h"
+            )),
+            "out_of_range",
+            "position {pos}"
+        );
     }
 }
 
 /// AC-14: TTL 4min / >7d / unknown unit.
 #[test]
-fn ac14_ttl() {
-    let base = |ttl: &str| {
-        format!("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:60000-65000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:{ttl}")
-    };
+fn ttl_bounds() {
     for ttl in ["4min", "8d", "30s"] {
-        assert_eq!(code(&base(ttl)), "out_of_range", "ttl {ttl}");
+        assert_eq!(
+            code(&format!(
+                "{H_SPOT}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for {ttl}"
+            )),
+            "out_of_range",
+            "ttl {ttl}"
+        );
     }
 }
 
-/// AC-15: sci-notation, thousands separator, %-price, inverted range.
+/// AC-15: sci-notation / thousands separator / %-price / inverted range.
 #[test]
-fn ac15_numbers() {
+fn numeric_faults() {
     let base = |price: &str| {
-        format!("【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:BTC/USDT|\u{5e01}\u{79cd}:BTC|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:{price}|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h")
+        format!("{H_SPOT}BTC/USDT | BUY | {price} | Position 5% | valid for 1h")
     };
-    assert_eq!(code(&base("1e3-2e3")), "invalid_number"); // sci-notation
-    assert_eq!(code(&base("1,000-2,000")), "invalid_number"); // thousands sep
-    assert_eq!(code(&base("5%-10%")), "invalid_number"); // %-price
-    assert_eq!(code(&base("65000-60000")), "out_of_range"); // inverted
+    assert_eq!(code(&base("1e3-2e3")), "invalid_number");
+    assert_eq!(code(&base("1,000-2,000")), "invalid_number");
+    assert_eq!(code(&base("5%-10%")), "invalid_number");
+    assert_eq!(code(&base("65000-60000")), "out_of_range");
 }
 
-/// AC-16: perp SL/TP wrong direction, duplicate SL, 0 TP, TP numbering gap.
-/// (monotonic ordering is no longer a constraint — feedback !1a4cebc6.)
+/// AC-16: perp SL/TP wrong direction, TP numbering gap.
 #[test]
-fn ac16_perp_direction() {
-    // wrong-direction SL (LONG, SL not below entry-low).
+fn perp_direction_faults() {
+    // wrong-direction SL (LONG, SL above entry-low).
     assert_eq!(
-        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:60500|\u{6b62}\u{76c8}1:62000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
+        code(&format!(
+            "{H_PERP}BTC-PERP | LONG 10x | Entry 60000-61000 | SL 60500 | TP1 62000 | Position 5% | valid for 1h"
+        )),
         "direction_constraint"
     );
     // wrong-direction TP (LONG, TP below entry-low).
     assert_eq!(
-        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{76c8}1:59500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
+        code(&format!(
+            "{H_PERP}BTC-PERP | LONG 10x | Entry 60000-61000 | SL 59000 | TP1 59500 | Position 5% | valid for 1h"
+        )),
         "direction_constraint"
     );
-    // duplicate stop-loss → a fixed-order violation.
+    // TP numbering gap (TP1 then TP3).
     assert_eq!(
-        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{635f}:58000|\u{6b62}\u{76c8}1:62000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
-        "field_count_error"
-    );
-    // 0 take-profit.
-    assert_eq!(
-        code("【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"),
+        code(&format!(
+            "{H_PERP}BTC-PERP | LONG 10x | Entry 60000-61000 | SL 59000 | TP1 62000 / TP3 64000 | Position 5% | valid for 1h"
+        )),
         "direction_constraint"
     );
-    // TP numbering gap (tp1 + tp3 without tp2).
-    assert_eq!(
-        code("【Futures Signal】pair:BTC-PERP|direction:LONG|leverage:10|entry:60000-61000|stopLoss:59000|tp1:62000|tp3:64000|position:5%|ttl:1h"),
-        "direction_constraint"
-    );
-}
-
-/// AC-16b (feedback !1a4cebc6): a LONG signal whose TPs are direction-correct but
-/// NOT strictly ascending now PARSES (the extra monotonic constraint was removed).
-#[test]
-fn ac16b_non_monotonic_tps_accepted() {
-    assert!(parse_signal_text(
-        "【\u{5408}\u{7ea6}\u{4fe1}\u{53f7}】\u{4ea4}\u{6613}\u{5bf9}:BTC-PERP|\u{65b9}\u{5411}:LONG|\u{6760}\u{6746}:10|\u{5165}\u{573a}:60000-61000|\u{6b62}\u{635f}:59000|\u{6b62}\u{76c8}1:64000|\u{6b62}\u{76c8}2:62000|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h"
-    )
-    .is_ok());
 }
 
 /// AC-17: prediction illegal outcome, odds out of [0,1], missing year, nonexistent date.
 #[test]
-fn ac17_prediction() {
+fn prediction_faults() {
     assert_eq!(
-        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:MAYBE @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
+        code(&format!(
+            "{H_PRED}x | MAYBE @0.5 | Position 5% | Settle 2025-12-31 | valid for 1d"
+        )),
         "illegal_keyword"
     );
     assert_eq!(
-        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:YES @1.5|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
+        code(&format!(
+            "{H_PRED}x | YES @1.5 | Position 5% | Settle 2025-12-31 | valid for 1d"
+        )),
         "out_of_range"
     );
     assert_eq!(
-        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:YES @0.5|\u{7ed3}\u{7b97}\u{65e5}:12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
+        code(&format!(
+            "{H_PRED}x | YES @0.5 | Position 5% | Settle 12-31 | valid for 1d"
+        )),
         "invalid_date"
     );
     assert_eq!(
-        code("【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:x|\u{7ed3}\u{679c}:YES @0.5|\u{7ed3}\u{7b97}\u{65e5}:2025-02-30|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d"),
+        code(&format!(
+            "{H_PRED}x | YES @0.5 | Position 5% | Settle 2025-02-30 | valid for 1d"
+        )),
         "invalid_date"
     );
 }
 
 /// AC-18: option contractCode inconsistent with Call/Put, strike, or expiry.
 #[test]
-fn ac18_option_mismatch() {
-    // C code but optionType Put.
-    assert_eq!(
-        code("【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Put|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d"),
-        "option_field_mismatch"
-    );
-    // strike mismatch.
-    assert_eq!(
-        code("【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call|\u{884c}\u{6743}\u{4ef7}:59000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d"),
-        "option_field_mismatch"
-    );
-    // expiry mismatch.
-    assert_eq!(
-        code("【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:BTC-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Call|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-30|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1500|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d"),
-        "option_field_mismatch"
-    );
+fn option_mismatch() {
+    let mk = |ot: &str, strike: &str, expiry: &str| {
+        format!(
+            "{H_OPT}BTC-251231-60000-C | Buy {ot} | Strike {strike} | Expiry {expiry} | Premium 1500 | Position 5% | valid for 5d"
+        )
+    };
+    assert_eq!(code(&mk("Put", "60000", "2025-12-31")), "option_field_mismatch");
+    assert_eq!(code(&mk("Call", "59000", "2025-12-31")), "option_field_mismatch");
+    assert_eq!(code(&mk("Call", "60000", "2025-12-30")), "option_field_mismatch");
 }
 
-/// AC-19: DeFi missing APY / redeem terms (fixed-order required field absent).
+/// AC-19: DeFi missing a required field (7 fields for an 8-field form).
 #[test]
-fn ac19_defi_missing_field() {
-    // missing apy.
+fn defi_missing_field() {
     assert_eq!(
-        code(
-            "【DeFi \u{4fe1}\u{53f7}】\u{94fe}:Ethereum|\u{534f}\u{8bae}:AaveV3|\u{9501}\u{4ed3}:1.2B|\u{5e01}\u{79cd}:USDC|\u{8d4e}\u{56de}:\u{6d3b}\u{671f}|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:7d"
-        ),
-        "field_count_error"
-    );
-    // missing redeemTerms.
-    assert_eq!(
-        code("【DeFi \u{4fe1}\u{53f7}】\u{94fe}:Ethereum|\u{534f}\u{8bae}:AaveV3|\u{5e74}\u{5316}:5%|\u{9501}\u{4ed3}:1.2B|\u{5e01}\u{79cd}:USDC|\u{4ed3}\u{4f4d}:10%|\u{6709}\u{6548}\u{671f}:7d"),
+        code(&format!(
+            "{H_DEFI}Ethereum | AaveV3 | TVL 1.2B | USDC | flexible | Position 10% | valid for 7d"
+        )),
         "field_count_error"
     );
 }
 
-/// AC-20: envelope schemaVersion ≠ 2 / signalTime = 0 / illegal deliveryId — each
-/// a distinct fine-grained code (feedback !92ea45d6 / !42eef591).
+/// AC-20: envelope schemaVersion ≠ 2 / signalTime = 0 / illegal deliveryId — each a
+/// distinct fine-grained code (feedback !92ea45d6 / !42eef591).
 #[test]
-fn ac20_envelope() {
-    let text =
-        "【Spot Signal】market:BTC/USDT|symbol:BTC|side:BUY|price:60000-65000|position:5%|ttl:1h";
+fn envelope_faults() {
+    let text = "\u{3010}Spot Signal\u{3011}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for 1h";
     let mk = |schema: u32, delivery: &str, time: u64| {
         format!("{{\"schemaVersion\":{schema},\"deliveryId\":\"{delivery}\",\"signalTime\":{time},\"signalText\":\"{text}\"}}")
     };
@@ -411,17 +384,21 @@ fn ac20_envelope() {
 
 /// AC-24: no error path echoes the raw signal text / tokenAddr / event / contractCode.
 #[test]
-fn ac24_errors_never_leak_input() {
+fn errors_never_leak_input() {
     let leaky_inputs = [
-        // tokenAddr in an otherwise-bad on-chain spot (bad slippage).
-        "【\u{73b0}\u{8d27}\u{4fe1}\u{53f7}】\u{5e02}\u{573a}:base|\u{5e01}\u{79cd}:X|\u{65b9}\u{5411}:BUY|\u{4ef7}\u{683c}:1-2|\u{5408}\u{7ea6}\u{5730}\u{5740}:0xSECRETADDR|\u{6ed1}\u{70b9}:9%|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1h",
+        // tokenAddr in an otherwise-bad on-chain spot (slippage over the ceiling).
+        format!(
+            "{H_SPOT}base | $X (0xSECRETADDR) | BUY | 1-2 | Slippage \u{2264}9% | Position 5% | valid for 1h"
+        ),
         // event free text in a bad prediction (odds out of range).
-        "【\u{9884}\u{6d4b}\u{5e02}\u{573a}\u{4fe1}\u{53f7}】\u{4e8b}\u{4ef6}:SECRETEVENTTEXT|\u{7ed3}\u{679c}:YES @9|\u{7ed3}\u{7b97}\u{65e5}:2025-12-31|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:1d",
+        format!("{H_PRED}SECRETEVENTTEXT | YES @9 | Position 5% | Settle 2025-12-31 | valid for 1d"),
         // contractCode in a mismatched option.
-        "【\u{671f}\u{6743}\u{4fe1}\u{53f7}】\u{5408}\u{7ea6}\u{4ee3}\u{7801}:SECRETCODE-251231-60000-C|\u{65b9}\u{5411}:\u{4e70}\u{5165}|\u{7c7b}\u{578b}:Put|\u{884c}\u{6743}\u{4ef7}:60000|\u{5230}\u{671f}\u{65e5}:2025-12-31|\u{6743}\u{5229}\u{91d1}\u{4e0a}\u{9650}:1|\u{4ed3}\u{4f4d}:5%|\u{6709}\u{6548}\u{671f}:5d",
+        format!(
+            "{H_OPT}SECRETCODE-251231-60000-C | Buy Put | Strike 60000 | Expiry 2025-12-31 | Premium 1 | Position 5% | valid for 5d"
+        ),
     ];
     let secrets = ["0xSECRETADDR", "SECRETEVENTTEXT", "SECRETCODE"];
-    for input in leaky_inputs {
+    for input in &leaky_inputs {
         let e = parse_signal_text(input).unwrap_err();
         let rendered = format!("{} {} {:?}", e.code(), e.message(), e.field());
         for secret in secrets {
@@ -435,10 +412,9 @@ fn ac24_errors_never_leak_input() {
 }
 
 /// AC-23: exactly one `AssetClass` type is referenced crate-wide (the crate-root
-/// module). This compiles only against `crate::asset_class::AssetClass`; a second
-/// definition would be a duplicate flagged at review / by `onchainos_check`.
+/// module). A second definition would be a duplicate flagged by review / onchainos_check.
 #[test]
-fn ac23_single_asset_class_type() {
+fn single_asset_class_type() {
     let c: crate::asset_class::AssetClass = crate::asset_class::AssetClass::Spot;
     assert_eq!(c.as_str(), "spot");
 }

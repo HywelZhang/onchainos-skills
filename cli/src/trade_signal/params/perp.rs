@@ -1,11 +1,18 @@
 //! FR-2.3 perp parser with SL/TP direction integrity (SR-5).
 //!
-//! `leverage` is a positive integer; exactly one `stopLoss`; 1..=3 take-profits
-//! labelled tp1..tp3 with no gap. Direction rules:
-//! - LONG:  stopLoss < entryLo; every TP > entryLo; TPs strictly ascending.
-//! - SHORT: stopLoss > entryHi; every TP < entryHi; TPs strictly descending.
+//! `leverage` is a positive integer; exactly one `stopLoss`; 1..=3 take-profits.
+//! Per V1.1/TD review alignment (feedback !1a4cebc6) TPs may be given as either
+//! form:
+//! - separate fields `止盈1|止盈2|止盈3` (`tp1|tp2|tp3`) with contiguous numbering, or
+//! - one combined `止盈`/`takeProfit` field carrying `v1/v2/v3` slash-separated prices.
 //!
-//! Any violation, a duplicate/zero/four TP, or a TP numbering gap → `DirectionConstraint`.
+//! Direction rules (the ONLY ordering constraint the protocol defines):
+//! - LONG:  stopLoss < entryLo; every TP > entryLo.
+//! - SHORT: stopLoss > entryHi; every TP < entryHi.
+//!
+//! The previous extra strict-monotonic TP ordering constraint is removed — it was
+//! not required by the spec and rejected valid direction-correct signals. A
+//! duplicate/zero/four TP, a numbering gap, or a wrong-side SL/TP → `DirectionConstraint`.
 
 use super::super::error::ParseError;
 use super::super::fields::{self, FieldMap};
@@ -18,11 +25,12 @@ pub fn parse(fm: &mut FieldMap) -> Result<PerpParams, ParseError> {
     let entry_range = fields::parse_range(&fm.require(fields::ID_ENTRY)?)?;
     let stop_loss = fields::parse_decimal(&fm.require(fields::ID_STOP_LOSS)?)?;
 
-    // Collect tp1..tp3; enforce contiguous numbering (no gap, must start at tp1).
+    // Two accepted TP forms: a combined slash field, OR separate tp1..tp3.
+    let tp_combined = fm.take(fields::ID_TP);
     let tp1 = fm.take(fields::ID_TP1);
     let tp2 = fm.take(fields::ID_TP2);
     let tp3 = fm.take(fields::ID_TP3);
-    let take_profit = collect_take_profit(tp1, tp2, tp3)?;
+    let take_profit = collect_take_profit(tp_combined, tp1, tp2, tp3)?;
 
     let margin_mode = match fm.take(fields::ID_MARGIN_MODE) {
         Some(v) => Some(fields::parse_margin_mode(&v)?),
@@ -48,29 +56,56 @@ pub fn parse(fm: &mut FieldMap) -> Result<PerpParams, ParseError> {
     })
 }
 
-/// Enforce contiguous tp1..tp3 numbering and parse each as a decimal price.
+/// Collect the take-profit prices from whichever form was used. The two forms are
+/// mutually exclusive; 1..=3 prices; separate fields must be contiguously numbered.
 fn collect_take_profit(
+    tp_combined: Option<String>,
     tp1: Option<String>,
     tp2: Option<String>,
     tp3: Option<String>,
 ) -> Result<Vec<String>, ParseError> {
-    let present = [tp1.is_some(), tp2.is_some(), tp3.is_some()];
-    let valid = matches!(
-        present,
-        [true, false, false] | [true, true, false] | [true, true, true]
-    );
-    if !valid {
-        return Err(ParseError::DirectionConstraint);
+    let has_separate = tp1.is_some() || tp2.is_some() || tp3.is_some();
+    match tp_combined {
+        Some(combined) => {
+            // Mixing the combined and separate forms is a constraint violation.
+            if has_separate {
+                return Err(ParseError::DirectionConstraint);
+            }
+            let mut out = Vec::new();
+            for part in combined.split('/') {
+                let part = part.trim();
+                if part.is_empty() {
+                    return Err(ParseError::DirectionConstraint);
+                }
+                // A malformed TP price is a number error, not a direction error.
+                out.push(fields::parse_decimal(part)?);
+            }
+            if out.is_empty() || out.len() > 3 {
+                return Err(ParseError::DirectionConstraint);
+            }
+            Ok(out)
+        }
+        None => {
+            // Separate fields: contiguous numbering starting at tp1, 1..=3 present.
+            let present = [tp1.is_some(), tp2.is_some(), tp3.is_some()];
+            let valid = matches!(
+                present,
+                [true, false, false] | [true, true, false] | [true, true, true]
+            );
+            if !valid {
+                return Err(ParseError::DirectionConstraint);
+            }
+            let mut out = Vec::new();
+            for tp in [tp1, tp2, tp3].into_iter().flatten() {
+                out.push(fields::parse_decimal(&tp)?);
+            }
+            Ok(out)
+        }
     }
-    let mut out = Vec::new();
-    for tp in [tp1, tp2, tp3].into_iter().flatten() {
-        // A malformed TP price is a number error, not a direction error.
-        out.push(fields::parse_decimal(&tp)?);
-    }
-    Ok(out)
 }
 
-/// SL/TP direction integrity + strict monotonic TP ordering.
+/// SL/TP direction integrity — the correct side of the entry range. No monotonic
+/// ordering constraint (removed per feedback !1a4cebc6).
 fn check_direction(
     direction: Direction,
     entry_lo: &str,
@@ -86,12 +121,6 @@ fn check_direction(
             if tps.iter().any(|tp| !fields::greater_than(tp, entry_lo)) {
                 return Err(ParseError::DirectionConstraint);
             }
-            // strictly ascending
-            for w in tps.windows(2) {
-                if !fields::less_than(&w[0], &w[1]) {
-                    return Err(ParseError::DirectionConstraint);
-                }
-            }
         }
         Direction::Short => {
             if !fields::greater_than(stop_loss, entry_hi) {
@@ -99,12 +128,6 @@ fn check_direction(
             }
             if tps.iter().any(|tp| !fields::less_than(tp, entry_hi)) {
                 return Err(ParseError::DirectionConstraint);
-            }
-            // strictly descending
-            for w in tps.windows(2) {
-                if !fields::greater_than(&w[0], &w[1]) {
-                    return Err(ParseError::DirectionConstraint);
-                }
             }
         }
     }
@@ -115,43 +138,80 @@ fn check_direction(
 mod tests {
     use super::*;
 
-    /// M-2: TPs on the correct side of entry but NOT strictly monotonic
-    /// (equal or out-of-order) are a `DirectionConstraint`, distinct from the
-    /// wrong-side / gap cases already covered by the AC-16 corpus.
+    /// feedback !1a4cebc6: TPs on the correct side of entry but NOT strictly
+    /// monotonic (equal, or out-of-order) are now ACCEPTED — the extra monotonic
+    /// constraint was removed. Only the side check applies.
     #[test]
-    fn long_tps_correct_side_but_not_strictly_ascending() {
-        // All TPs > entryLo (60000) and SL < entryLo, so the side checks pass;
-        // the only violation is the non-strict ordering.
+    fn long_tps_correct_side_non_monotonic_now_accepted() {
+        // All TPs > entryLo (60000) and SL < entryLo → side checks pass.
         let equal = vec!["62000".to_string(), "62000".to_string()];
-        assert_eq!(
-            check_direction(Direction::Long, "60000", "61000", "59000", &equal).unwrap_err(),
-            ParseError::DirectionConstraint
-        );
+        assert!(check_direction(Direction::Long, "60000", "61000", "59000", &equal).is_ok());
         let descending = vec!["63000".to_string(), "62000".to_string()];
+        assert!(check_direction(Direction::Long, "60000", "61000", "59000", &descending).is_ok());
+        // Wrong side is still rejected.
+        let wrong_side = vec!["59500".to_string()];
         assert_eq!(
-            check_direction(Direction::Long, "60000", "61000", "59000", &descending).unwrap_err(),
+            check_direction(Direction::Long, "60000", "61000", "59000", &wrong_side).unwrap_err(),
             ParseError::DirectionConstraint
         );
-        // Control: a strictly-ascending, correct-side set passes.
-        let ok = vec!["62000".to_string(), "63000".to_string()];
-        assert!(check_direction(Direction::Long, "60000", "61000", "59000", &ok).is_ok());
     }
 
     #[test]
-    fn short_tps_correct_side_but_not_strictly_descending() {
-        // All TPs < entryHi (610) and SL > entryHi, so the side checks pass.
+    fn short_tps_correct_side_non_monotonic_now_accepted() {
+        // All TPs < entryHi (610) and SL > entryHi → side checks pass.
         let equal = vec!["590".to_string(), "590".to_string()];
-        assert_eq!(
-            check_direction(Direction::Short, "600", "610", "620", &equal).unwrap_err(),
-            ParseError::DirectionConstraint
-        );
+        assert!(check_direction(Direction::Short, "600", "610", "620", &equal).is_ok());
         let ascending = vec!["580".to_string(), "590".to_string()];
+        assert!(check_direction(Direction::Short, "600", "610", "620", &ascending).is_ok());
+    }
+
+    /// feedback !1a4cebc6: the combined slash form `v1/v2/v3` and the separate
+    /// `tp1..tp3` form yield the same take-profit vector; mixing the two forms is
+    /// a constraint violation.
+    #[test]
+    fn tp_slash_form_and_separate_form() {
+        // combined slash form.
         assert_eq!(
-            check_direction(Direction::Short, "600", "610", "620", &ascending).unwrap_err(),
+            collect_take_profit(Some("62000/63000/64000".to_string()), None, None, None).unwrap(),
+            vec!["62000", "63000", "64000"]
+        );
+        // separate form.
+        assert_eq!(
+            collect_take_profit(
+                None,
+                Some("62000".to_string()),
+                Some("63000".to_string()),
+                None
+            )
+            .unwrap(),
+            vec!["62000", "63000"]
+        );
+        // mixing the two forms → DirectionConstraint.
+        assert_eq!(
+            collect_take_profit(
+                Some("62000".to_string()),
+                Some("63000".to_string()),
+                None,
+                None
+            )
+            .unwrap_err(),
             ParseError::DirectionConstraint
         );
-        // Control: a strictly-descending, correct-side set passes.
-        let ok = vec!["590".to_string(), "580".to_string()];
-        assert!(check_direction(Direction::Short, "600", "610", "620", &ok).is_ok());
+        // more than three combined TPs → DirectionConstraint.
+        assert_eq!(
+            collect_take_profit(Some("1/2/3/4".to_string()), None, None, None).unwrap_err(),
+            ParseError::DirectionConstraint
+        );
+        // numbering gap in the separate form (tp1 + tp3, no tp2) → DirectionConstraint.
+        assert_eq!(
+            collect_take_profit(
+                None,
+                Some("62000".to_string()),
+                None,
+                Some("64000".to_string())
+            )
+            .unwrap_err(),
+            ParseError::DirectionConstraint
+        );
     }
 }

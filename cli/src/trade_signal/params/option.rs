@@ -17,8 +17,8 @@ pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
     }
     let contract_code = fields[0].clone();
     let (side, option_type) = fields::parse_side_type(&fields[1], lang)?;
-    let strike = fields::parse_decimal(&fields::strip_strike(&fields[2], lang)?)?;
-    let expiry = fields::parse_date(&fields::strip_expiry(&fields[3], lang)?)?;
+    let strike = fields::parse_decimal(&fields::strip_strike(&fields[2], lang)?, "strike")?;
+    let expiry = fields::parse_date(&fields::strip_expiry(&fields[3], lang)?, "expiry")?;
     let premium_cap = fields::parse_premium_cap(&fields::strip_premium(&fields[4], lang)?)?;
     let position_pct = fields::parse_position_field(&fields[5], lang)?;
     let ttl_sec = fields::parse_ttl_field(&fields[6], lang)?;

@@ -56,8 +56,20 @@ fn asset_class_matches_params_kind_in_fixed_order() {
     // Fixture order: spot,spot, spot,spot, perp,perp, perp,perp, pred,pred,
     // option,option, defi,defi (2 lines per group: zh then en).
     let expected = [
-        "spot", "spot", "spot", "spot", "perp", "perp", "perp", "perp", "prediction",
-        "prediction", "option", "option", "defi", "defi",
+        "spot",
+        "spot",
+        "spot",
+        "spot",
+        "perp",
+        "perp",
+        "perp",
+        "perp",
+        "prediction",
+        "prediction",
+        "option",
+        "option",
+        "defi",
+        "defi",
     ];
     let corpus = corpus();
     for (i, text) in corpus.iter().enumerate() {
@@ -171,7 +183,9 @@ const H_DEFI: &str = "\u{3010}DeFi Signal\u{3011}";
 #[test]
 fn header_faults() {
     assert_eq!(
-        code(&format!(" {H_SPOT}BTC/USDT | BUY | 1-2 | Position 5% | valid for 1h")),
+        code(&format!(
+            " {H_SPOT}BTC/USDT | BUY | 1-2 | Position 5% | valid for 1h"
+        )),
         "unknown_header"
     );
     assert_eq!(code("\u{3010}Unknown\u{3011}x"), "unknown_header");
@@ -199,10 +213,7 @@ fn forbidden_and_shape() {
         code(&format!("{H_SPOT}BTC/USDT | BUY\n| Position 5%")),
         "multi_line"
     );
-    assert_eq!(
-        code(&format!("{H_SPOT}{}", "A".repeat(210))),
-        "too_long"
-    );
+    assert_eq!(code(&format!("{H_SPOT}{}", "A".repeat(210))), "too_long");
     assert_eq!(
         code(&format!(
             "{H_SPOT}BTC\u{1F680}/USDT | BUY | 1-2 | Position 5% | valid for 1h"
@@ -269,9 +280,8 @@ fn ttl_bounds() {
 /// AC-15: sci-notation / thousands separator / %-price / inverted range.
 #[test]
 fn numeric_faults() {
-    let base = |price: &str| {
-        format!("{H_SPOT}BTC/USDT | BUY | {price} | Position 5% | valid for 1h")
-    };
+    let base =
+        |price: &str| format!("{H_SPOT}BTC/USDT | BUY | {price} | Position 5% | valid for 1h");
     assert_eq!(code(&base("1e3-2e3")), "invalid_number");
     assert_eq!(code(&base("1,000-2,000")), "invalid_number");
     assert_eq!(code(&base("5%-10%")), "invalid_number");
@@ -341,9 +351,18 @@ fn option_mismatch() {
             "{H_OPT}BTC-251231-60000-C | Buy {ot} | Strike {strike} | Expiry {expiry} | Premium 1500 | Position 5% | valid for 5d"
         )
     };
-    assert_eq!(code(&mk("Put", "60000", "2025-12-31")), "option_field_mismatch");
-    assert_eq!(code(&mk("Call", "59000", "2025-12-31")), "option_field_mismatch");
-    assert_eq!(code(&mk("Call", "60000", "2025-12-30")), "option_field_mismatch");
+    assert_eq!(
+        code(&mk("Put", "60000", "2025-12-31")),
+        "option_field_mismatch"
+    );
+    assert_eq!(
+        code(&mk("Call", "59000", "2025-12-31")),
+        "option_field_mismatch"
+    );
+    assert_eq!(
+        code(&mk("Call", "60000", "2025-12-30")),
+        "option_field_mismatch"
+    );
 }
 
 /// AC-19: DeFi missing a required field (7 fields for an 8-field form).
@@ -361,7 +380,8 @@ fn defi_missing_field() {
 /// distinct fine-grained code (feedback !92ea45d6 / !42eef591).
 #[test]
 fn envelope_faults() {
-    let text = "\u{3010}Spot Signal\u{3011}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for 1h";
+    let text =
+        "\u{3010}Spot Signal\u{3011}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for 1h";
     let mk = |schema: u32, delivery: &str, time: u64| {
         format!("{{\"schemaVersion\":{schema},\"deliveryId\":\"{delivery}\",\"signalTime\":{time},\"signalText\":\"{text}\"}}")
     };
@@ -409,6 +429,74 @@ fn errors_never_leak_input() {
             );
         }
     }
+}
+
+/// feedback !f338b753 §2: a rejected signal's error carries the REAL canonical
+/// field (not a `number`/`range`/`date` placeholder, and `stopLoss` vs
+/// `takeProfit` correctly distinguished).
+#[test]
+fn errors_carry_canonical_field() {
+    let field = |text: &str| parse_signal_text(text).unwrap_err().field();
+    // perp: SL on the wrong side → stopLoss (NOT the old always-takeProfit).
+    assert_eq!(
+        field(&format!(
+            "{H_PERP}BTC-PERP | LONG 10x | Entry 60000-61000 | SL 60500 | TP1 62000 | Position 5% | valid for 1h"
+        )),
+        Some("stopLoss")
+    );
+    // perp: TP on the wrong side → takeProfit.
+    assert_eq!(
+        field(&format!(
+            "{H_PERP}BTC-PERP | LONG 10x | Entry 60000-61000 | SL 59000 | TP1 59500 | Position 5% | valid for 1h"
+        )),
+        Some("takeProfit")
+    );
+    // prediction: bad settle date → settleDate.
+    assert_eq!(
+        field(&format!(
+            "{H_PRED}x | YES @0.5 | Position 5% | Settle 2025-02-30 | valid for 1d"
+        )),
+        Some("settleDate")
+    );
+    // option: bad expiry date → expiry.
+    assert_eq!(
+        field(&format!(
+            "{H_OPT}BTC-251231-60000-C | Buy Call | Strike 60000 | Expiry 2025-13-40 | Premium 1 | Position 5% | valid for 5d"
+        )),
+        Some("expiry")
+    );
+    // defi: non-canonical tvl → tvl.
+    assert_eq!(
+        field(&format!(
+            "{H_DEFI}Ethereum | AaveV3 | APY 5% | TVL lots | USDC | flexible | Position 10% | valid for 7d"
+        )),
+        Some("tvl")
+    );
+    // common scalar fields.
+    assert_eq!(
+        field(&format!(
+            "{H_SPOT}BTC/USDT | BUY | 60000-65000 | Position 0% | valid for 1h"
+        )),
+        Some("position")
+    );
+    assert_eq!(
+        field(&format!(
+            "{H_SPOT}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for 8d"
+        )),
+        Some("ttl")
+    );
+    assert_eq!(
+        field(&format!(
+            "{H_PRED}x | YES @1.5 | Position 5% | Settle 2025-12-31 | valid for 1d"
+        )),
+        Some("odds")
+    );
+    assert_eq!(
+        field(&format!(
+            "{H_SPOT}base | $X (0xabc) | BUY | 1-2 | Slippage \u{2264}9% | Position 5% | valid for 1h"
+        )),
+        Some("slippage")
+    );
 }
 
 /// AC-23: exactly one `AssetClass` type is referenced crate-wide (the crate-root

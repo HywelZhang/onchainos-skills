@@ -18,9 +18,10 @@ pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
     }
     let chain = fields[0].clone();
     let protocol_pool = fields[1].clone();
-    let apy = fields::parse_percent_nonneg(&fields::strip_apy(&fields[2], lang)?)?;
-    // TVL keyword is stripped; the compact amount is captured as the raw string.
-    let tvl = fields::strip_tvl(&fields[3], lang)?;
+    let apy = fields::parse_percent_nonneg(&fields::strip_apy(&fields[2], lang)?, "apy")?;
+    // TVL keyword is stripped, then validated as a canonical compact amount
+    // (no float, feedback !f338b753 §1) — `$2.4M` / `500M` / `1.2B` / a bare int.
+    let tvl = fields::parse_compact_amount(&fields::strip_tvl(&fields[3], lang)?, "tvl")?;
     let token = fields[4].clone();
     let redeem_terms = fields[5].clone();
     let position_pct = fields::parse_position_field(&fields[6], lang)?;
@@ -95,5 +96,37 @@ mod tests {
             .unwrap_err(),
             ParseError::FieldCountError
         );
+    }
+
+    /// feedback !f338b753 §1: a non-canonical TVL (free text, not a compact
+    /// amount) is now rejected as `invalid_number` attributed to `tvl` — the old
+    /// non-empty `require` accepted any text.
+    #[test]
+    fn non_canonical_tvl_is_rejected() {
+        let mk = |tvl: &str| {
+            f(&[
+                "X Layer",
+                "ProtocolX USDT-USDG LP",
+                "APY 18.6%",
+                tvl,
+                "USDT",
+                "withdraw anytime",
+                "Position 5%",
+                "valid for 48h",
+            ])
+        };
+        for tvl in ["TVL lots", "TVL 2.4X", "TVL 1,000M"] {
+            assert_eq!(
+                parse(&mk(tvl), Language::En).unwrap_err(),
+                ParseError::InvalidNumber("tvl"),
+                "expected tvl invalid_number for {tvl:?}"
+            );
+        }
+        // control: a legal compact amount without `$` still parses.
+        let ok = parse(&mk("TVL 500M"), Language::En).unwrap();
+        match ok.0 {
+            SignalParams::Defi(d) => assert_eq!(d.tvl, "500M"),
+            _ => panic!("expected defi"),
+        }
     }
 }

@@ -119,12 +119,7 @@ fn strip_leading(field: &str, kw: &str) -> Option<String> {
 /// the value. If the field instead carries the OTHER language's keyword →
 /// [`ParseError::LanguageMix`]; if it matches neither → [`ParseError::FieldCountError`]
 /// (a shape/order violation for this position).
-pub fn strip_kw(
-    field: &str,
-    zh: &str,
-    en: &str,
-    lang: Language,
-) -> Result<String, ParseError> {
+pub fn strip_kw(field: &str, zh: &str, en: &str, lang: Language) -> Result<String, ParseError> {
     let (want, other) = match lang {
         Language::Zh => (zh, en),
         Language::En => (en, zh),
@@ -222,7 +217,7 @@ pub fn parse_onchain_token(field: &str) -> Result<(String, String), ParseError> 
 pub fn parse_slippage_field(field: &str, lang: Language) -> Result<String, ParseError> {
     let v = strip_kw(field, KW_SLIPPAGE_ZH, KW_SLIPPAGE_EN, lang)?;
     let v = v.strip_prefix(LE).unwrap_or(&v).trim();
-    parse_percent_max(v, "5")
+    parse_percent_max(v, "5", "slippage")
 }
 
 /// Parse the spot CEX `<SIDE> [orderType]` field → `(Side, OrderType)`. A bare
@@ -280,21 +275,27 @@ pub fn parse_take_profits(field: &str) -> Result<Vec<String>, ParseError> {
         let entry = entry.trim();
         let rest = entry
             .strip_prefix(KW_TP)
-            .ok_or(ParseError::DirectionConstraint)?;
+            .ok_or(ParseError::DirectionConstraint("takeProfit"))?;
         let mut toks = rest.split_whitespace();
-        let tag = toks.next().ok_or(ParseError::DirectionConstraint)?;
-        let value = toks.next().ok_or(ParseError::DirectionConstraint)?;
+        let tag = toks
+            .next()
+            .ok_or(ParseError::DirectionConstraint("takeProfit"))?;
+        let value = toks
+            .next()
+            .ok_or(ParseError::DirectionConstraint("takeProfit"))?;
         if toks.next().is_some() {
-            return Err(ParseError::DirectionConstraint);
+            return Err(ParseError::DirectionConstraint("takeProfit"));
         }
-        let n: usize = tag.parse().map_err(|_| ParseError::DirectionConstraint)?;
+        let n: usize = tag
+            .parse()
+            .map_err(|_| ParseError::DirectionConstraint("takeProfit"))?;
         if n != i + 1 {
-            return Err(ParseError::DirectionConstraint);
+            return Err(ParseError::DirectionConstraint("takeProfit"));
         }
-        out.push(parse_decimal(value)?);
+        out.push(parse_decimal(value, "takeProfit")?);
     }
     if out.is_empty() || out.len() > 3 {
-        return Err(ParseError::DirectionConstraint);
+        return Err(ParseError::DirectionConstraint("takeProfit"));
     }
     Ok(out)
 }
@@ -316,8 +317,11 @@ pub fn parse_side_type(field: &str, _lang: Language) -> Result<(Side, OptionType
 /// accepted but not stored). No float; the number goes through [`Decimal`].
 pub fn parse_premium_cap(value: &str) -> Result<String, ParseError> {
     let v = value.strip_prefix(LE).unwrap_or(value).trim();
-    let num = v.split_whitespace().next().ok_or(ParseError::InvalidNumber)?;
-    parse_decimal(num)
+    let num = v
+        .split_whitespace()
+        .next()
+        .ok_or(ParseError::InvalidNumber("premiumCap"))?;
+    parse_decimal(num, "premiumCap")
 }
 
 // ── Keyword enums ───────────────────────────────────────────────────────────────
@@ -334,7 +338,7 @@ fn parse_order_type_kw(tok: &str, lang: Language) -> Result<OrderType, ParseErro
     } else if tok == other_limit || tok == other_market {
         Err(ParseError::LanguageMix)
     } else {
-        Err(ParseError::IllegalKeyword)
+        Err(ParseError::IllegalKeyword("orderType"))
     }
 }
 
@@ -350,7 +354,7 @@ fn parse_margin_mode_kw(tok: &str, lang: Language) -> Result<MarginMode, ParseEr
     } else if tok == other_iso || tok == other_cross {
         Err(ParseError::LanguageMix)
     } else {
-        Err(ParseError::IllegalKeyword)
+        Err(ParseError::IllegalKeyword("marginMode"))
     }
 }
 
@@ -409,22 +413,23 @@ pub fn equal(a: &str, b: &str) -> bool {
     }
 }
 
-/// Parse a plain absolute decimal price; malformed → [`ParseError::InvalidNumber`].
-pub fn parse_decimal(value: &str) -> Result<String, ParseError> {
-    let d = Decimal::parse(value).map_err(|_| ParseError::InvalidNumber)?;
+/// Parse a plain absolute decimal price; malformed → [`ParseError::InvalidNumber`]
+/// carrying `field`.
+pub fn parse_decimal(value: &str, field: &'static str) -> Result<String, ParseError> {
+    let d = Decimal::parse(value).map_err(|_| ParseError::InvalidNumber(field))?;
     Ok(d.to_plain_string())
 }
 
-/// Parse a `lo-hi` absolute price range; enforces `lo < hi`.
-pub fn parse_range(value: &str) -> Result<PriceRange, ParseError> {
+/// Parse a `lo-hi` absolute price range for `field`; enforces `lo < hi`.
+pub fn parse_range(value: &str, field: &'static str) -> Result<PriceRange, ParseError> {
     let parts: Vec<&str> = value.split('-').collect();
     if parts.len() != 2 {
-        return Err(ParseError::InvalidNumber);
+        return Err(ParseError::InvalidNumber(field));
     }
-    let lo = Decimal::parse(parts[0]).map_err(|_| ParseError::InvalidNumber)?;
-    let hi = Decimal::parse(parts[1]).map_err(|_| ParseError::InvalidNumber)?;
+    let lo = Decimal::parse(parts[0]).map_err(|_| ParseError::InvalidNumber(field))?;
+    let hi = Decimal::parse(parts[1]).map_err(|_| ParseError::InvalidNumber(field))?;
     if !decimal_lt(&lo, &hi) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange(field));
     }
     Ok(PriceRange {
         lo: lo.to_plain_string(),
@@ -432,45 +437,79 @@ pub fn parse_range(value: &str) -> Result<PriceRange, ParseError> {
     })
 }
 
+/// Parse a canonical compact amount `[$]<decimal>[K|M|B|T]` for `field` (e.g.
+/// `$2.4M`, `500M`, `1.2B`, `100000`). No float — the numeric core goes through
+/// [`Decimal`]. The `$` prefix and magnitude unit are preserved verbatim; any
+/// leftover garbage or a non-decimal core → [`ParseError::InvalidNumber`].
+pub fn parse_compact_amount(value: &str, field: &'static str) -> Result<String, ParseError> {
+    let (had_dollar, body) = match value.strip_prefix('$') {
+        Some(rest) => (true, rest),
+        None => (false, value),
+    };
+    let (num, unit) = match body.chars().last() {
+        Some(c @ ('K' | 'M' | 'B' | 'T')) => (&body[..body.len() - c.len_utf8()], Some(c)),
+        _ => (body, None),
+    };
+    if num.is_empty() {
+        return Err(ParseError::InvalidNumber(field));
+    }
+    let d = Decimal::parse(num).map_err(|_| ParseError::InvalidNumber(field))?;
+    let core = match unit {
+        Some(u) => format!("{}{u}", d.to_plain_string()),
+        None => d.to_plain_string(),
+    };
+    Ok(if had_dollar { format!("${core}") } else { core })
+}
+
 /// Parse `positionPct`: a single `N%` in `0.1 ..= 20`; normalized to a plain
-/// decimal string without the `%`. Range / multi-value / `0` → [`ParseError::OutOfRange`].
+/// decimal string without the `%`. Range / multi-value / `0` → out of range.
 pub fn parse_position(value: &str) -> Result<String, ParseError> {
-    let num = value.strip_suffix('%').ok_or(ParseError::OutOfRange)?;
-    let p = Decimal::parse(num).map_err(|_| ParseError::OutOfRange)?;
+    let num = value
+        .strip_suffix('%')
+        .ok_or(ParseError::OutOfRange("position"))?;
+    let p = Decimal::parse(num).map_err(|_| ParseError::OutOfRange("position"))?;
     let lo = Decimal::parse("0.1").expect("literal");
     let hi = Decimal::parse("20").expect("literal");
     // 0.1 <= p <= 20
     if decimal_lt(&p, &lo) || decimal_lt(&hi, &p) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange("position"));
     }
     Ok(p.to_plain_string())
 }
 
-/// Parse a percent value with an upper bound (e.g. slippage ≤ 5); strips `%`.
-pub fn parse_percent_max(value: &str, max: &str) -> Result<String, ParseError> {
-    let num = value.strip_suffix('%').ok_or(ParseError::InvalidNumber)?;
-    let p = Decimal::parse(num).map_err(|_| ParseError::InvalidNumber)?;
+/// Parse a percent value with an upper bound (e.g. slippage ≤ 5) for `field`; strips `%`.
+pub fn parse_percent_max(
+    value: &str,
+    max: &str,
+    field: &'static str,
+) -> Result<String, ParseError> {
+    let num = value
+        .strip_suffix('%')
+        .ok_or(ParseError::InvalidNumber(field))?;
+    let p = Decimal::parse(num).map_err(|_| ParseError::InvalidNumber(field))?;
     let cap = Decimal::parse(max).expect("literal");
     if !p.le(&cap) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange(field));
     }
     Ok(p.to_plain_string())
 }
 
-/// Parse a non-negative percent value (e.g. APY); strips `%`. `Decimal` is always
-/// non-negative, so this only rejects malformed numbers.
-pub fn parse_percent_nonneg(value: &str) -> Result<String, ParseError> {
-    let num = value.strip_suffix('%').ok_or(ParseError::InvalidNumber)?;
-    let p = Decimal::parse(num).map_err(|_| ParseError::InvalidNumber)?;
+/// Parse a non-negative percent value (e.g. APY) for `field`; strips `%`. `Decimal`
+/// is always non-negative, so this only rejects malformed numbers.
+pub fn parse_percent_nonneg(value: &str, field: &'static str) -> Result<String, ParseError> {
+    let num = value
+        .strip_suffix('%')
+        .ok_or(ParseError::InvalidNumber(field))?;
+    let p = Decimal::parse(num).map_err(|_| ParseError::InvalidNumber(field))?;
     Ok(p.to_plain_string())
 }
 
 /// Parse odds: an absolute decimal in `[0, 1]`.
 pub fn parse_odds(value: &str) -> Result<String, ParseError> {
-    let p = Decimal::parse(value).map_err(|_| ParseError::InvalidNumber)?;
+    let p = Decimal::parse(value).map_err(|_| ParseError::InvalidNumber("odds"))?;
     let one = Decimal::parse("1").expect("literal");
     if !p.le(&one) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange("odds"));
     }
     Ok(p.to_plain_string())
 }
@@ -478,7 +517,9 @@ pub fn parse_odds(value: &str) -> Result<String, ParseError> {
 /// Parse the Prediction `outcome` field `<OUTCOME> @<odds>`. Exactly one `@`: the
 /// head is an outcome keyword, the tail an odds decimal in `[0,1]`.
 pub fn parse_outcome_odds(value: &str) -> Result<(Outcome, String), ParseError> {
-    let (outcome_str, odds_str) = value.split_once('@').ok_or(ParseError::IllegalKeyword)?;
+    let (outcome_str, odds_str) = value
+        .split_once('@')
+        .ok_or(ParseError::IllegalKeyword("outcome"))?;
     if odds_str.contains('@') {
         return Err(ParseError::ForbiddenContent);
     }
@@ -490,11 +531,13 @@ pub fn parse_outcome_odds(value: &str) -> Result<(Outcome, String), ParseError> 
 /// Parse leverage: a positive integer.
 pub fn parse_leverage(value: &str) -> Result<u32, ParseError> {
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange("leverage"));
     }
-    let n: u32 = value.parse().map_err(|_| ParseError::OutOfRange)?;
+    let n: u32 = value
+        .parse()
+        .map_err(|_| ParseError::OutOfRange("leverage"))?;
     if n == 0 {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange("leverage"));
     }
     Ok(n)
 }
@@ -508,15 +551,15 @@ pub fn parse_ttl(value: &str) -> Result<u64, ParseError> {
     } else if let Some(n) = value.strip_suffix('d') {
         (n, 86_400u64)
     } else {
-        return Err(ParseError::OutOfRange); // unknown unit
+        return Err(ParseError::OutOfRange("ttl")); // unknown unit
     };
     if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange("ttl"));
     }
-    let n: u64 = num.parse().map_err(|_| ParseError::OutOfRange)?;
-    let secs = n.checked_mul(mult).ok_or(ParseError::OutOfRange)?;
+    let n: u64 = num.parse().map_err(|_| ParseError::OutOfRange("ttl"))?;
+    let secs = n.checked_mul(mult).ok_or(ParseError::OutOfRange("ttl"))?;
     if !(300..=604_800).contains(&secs) {
-        return Err(ParseError::OutOfRange);
+        return Err(ParseError::OutOfRange("ttl"));
     }
     Ok(secs)
 }
@@ -540,35 +583,35 @@ fn days_in_month(year: i64, month: u32) -> u32 {
     }
 }
 
-/// Validate a proleptic-Gregorian `YYYY-MM-DD` (leap-aware, no system clock);
-/// returns the zero-padded canonical form.
-pub fn parse_date(value: &str) -> Result<String, ParseError> {
+/// Validate a proleptic-Gregorian `YYYY-MM-DD` for `field` (leap-aware, no system
+/// clock); returns the zero-padded canonical form.
+pub fn parse_date(value: &str, field: &'static str) -> Result<String, ParseError> {
     let parts: Vec<&str> = value.split('-').collect();
     if parts.len() != 3 {
-        return Err(ParseError::InvalidDate);
+        return Err(ParseError::InvalidDate(field));
     }
     let (ys, ms, ds) = (parts[0], parts[1], parts[2]);
     if ys.len() != 4 || !ys.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(ParseError::InvalidDate); // missing / malformed year
+        return Err(ParseError::InvalidDate(field)); // missing / malformed year
     }
-    let year: i64 = ys.parse().map_err(|_| ParseError::InvalidDate)?;
-    let month: u32 = parse_date_component(ms)?;
-    let day: u32 = parse_date_component(ds)?;
+    let year: i64 = ys.parse().map_err(|_| ParseError::InvalidDate(field))?;
+    let month: u32 = parse_date_component(ms, field)?;
+    let day: u32 = parse_date_component(ds, field)?;
     if !(1..=12).contains(&month) {
-        return Err(ParseError::InvalidDate);
+        return Err(ParseError::InvalidDate(field));
     }
     let dim = days_in_month(year, month);
     if day < 1 || day > dim {
-        return Err(ParseError::InvalidDate);
+        return Err(ParseError::InvalidDate(field));
     }
     Ok(format!("{year:04}-{month:02}-{day:02}"))
 }
 
-fn parse_date_component(s: &str) -> Result<u32, ParseError> {
+fn parse_date_component(s: &str, field: &'static str) -> Result<u32, ParseError> {
     if s.is_empty() || s.len() > 2 || !s.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(ParseError::InvalidDate);
+        return Err(ParseError::InvalidDate(field));
     }
-    s.parse().map_err(|_| ParseError::InvalidDate)
+    s.parse().map_err(|_| ParseError::InvalidDate(field))
 }
 
 // ── Keyword whitelists (IllegalKeyword on any non-canonical variant) ──────────
@@ -577,7 +620,7 @@ pub fn parse_side(value: &str) -> Result<Side, ParseError> {
     match value {
         "BUY" => Ok(Side::Buy),
         "SELL" => Ok(Side::Sell),
-        _ => Err(ParseError::IllegalKeyword),
+        _ => Err(ParseError::IllegalKeyword("side")),
     }
 }
 
@@ -586,7 +629,7 @@ pub fn parse_option_side(value: &str) -> Result<Side, ParseError> {
     match value {
         "BUY" | "Buy" | "\u{4e70}\u{5165}" => Ok(Side::Buy),
         "SELL" | "Sell" | "\u{5356}\u{51fa}" => Ok(Side::Sell),
-        _ => Err(ParseError::IllegalKeyword),
+        _ => Err(ParseError::IllegalKeyword("side")),
     }
 }
 
@@ -594,7 +637,7 @@ pub fn parse_direction(value: &str) -> Result<Direction, ParseError> {
     match value {
         "LONG" => Ok(Direction::Long),
         "SHORT" => Ok(Direction::Short),
-        _ => Err(ParseError::IllegalKeyword),
+        _ => Err(ParseError::IllegalKeyword("direction")),
     }
 }
 
@@ -604,7 +647,7 @@ pub fn parse_outcome(value: &str) -> Result<Outcome, ParseError> {
         "NO" => Ok(Outcome::No),
         "UP" => Ok(Outcome::Up),
         "DOWN" => Ok(Outcome::Down),
-        _ => Err(ParseError::IllegalKeyword),
+        _ => Err(ParseError::IllegalKeyword("outcome")),
     }
 }
 
@@ -612,7 +655,7 @@ pub fn parse_option_type(value: &str) -> Result<OptionType, ParseError> {
     match value {
         "Call" => Ok(OptionType::Call),
         "Put" => Ok(OptionType::Put),
-        _ => Err(ParseError::IllegalKeyword),
+        _ => Err(ParseError::IllegalKeyword("optionType")),
     }
 }
 
@@ -622,14 +665,17 @@ mod tests {
 
     #[test]
     fn position_field_strips_keyword_and_bounds() {
-        assert_eq!(parse_position_field("Position 5%", Language::En).unwrap(), "5");
+        assert_eq!(
+            parse_position_field("Position 5%", Language::En).unwrap(),
+            "5"
+        );
         assert_eq!(
             parse_position_field("\u{4ed3}\u{4f4d} 0.1%", Language::Zh).unwrap(),
             "0.1"
         );
         assert_eq!(
             parse_position_field("Position 0%", Language::En),
-            Err(ParseError::OutOfRange)
+            Err(ParseError::OutOfRange("position"))
         );
         // wrong-language keyword under a zh header.
         assert_eq!(
@@ -649,8 +695,14 @@ mod tests {
             parse_ttl_field("24h \u{5185}\u{6709}\u{6548}", Language::Zh).unwrap(),
             86_400
         );
-        assert_eq!(parse_ttl_field("valid for 5min", Language::En).unwrap(), 300);
-        assert_eq!(parse_ttl_field("7d", Language::En), Err(ParseError::FieldCountError));
+        assert_eq!(
+            parse_ttl_field("valid for 5min", Language::En).unwrap(),
+            300
+        );
+        assert_eq!(
+            parse_ttl_field("7d", Language::En),
+            Err(ParseError::FieldCountError)
+        );
     }
 
     #[test]
@@ -663,7 +715,10 @@ mod tests {
             parse_onchain_token("TOKEN (0xabc)"),
             Err(ParseError::FieldCountError)
         ); // no $
-        assert_eq!(parse_onchain_token("$TOKEN"), Err(ParseError::FieldCountError)); // no (addr)
+        assert_eq!(
+            parse_onchain_token("$TOKEN"),
+            Err(ParseError::FieldCountError)
+        ); // no (addr)
     }
 
     #[test]
@@ -701,10 +756,11 @@ mod tests {
             parse_dir_lev_margin("SHORT 2x \u{9010}\u{4ed3}", Language::Zh).unwrap(),
             (Direction::Short, 2, Some(MarginMode::Isolated))
         );
+        // zero leverage → out of range, attributed to `leverage`.
         assert_eq!(
             parse_dir_lev_margin("LONG 0x", Language::En),
-            Err(ParseError::OutOfRange)
-        ); // zero leverage
+            Err(ParseError::OutOfRange("leverage"))
+        );
     }
 
     #[test]
@@ -717,15 +773,18 @@ mod tests {
         // non-contiguous tag (TP1 then TP3).
         assert_eq!(
             parse_take_profits("TP1 1 / TP3 2"),
-            Err(ParseError::DirectionConstraint)
+            Err(ParseError::DirectionConstraint("takeProfit"))
         );
         // more than three.
         assert_eq!(
             parse_take_profits("TP1 1 / TP2 2 / TP3 3 / TP4 4"),
-            Err(ParseError::DirectionConstraint)
+            Err(ParseError::DirectionConstraint("takeProfit"))
         );
-        // malformed value → number error.
-        assert_eq!(parse_take_profits("TP1 1e3"), Err(ParseError::InvalidNumber));
+        // malformed value → number error attributed to `takeProfit`.
+        assert_eq!(
+            parse_take_profits("TP1 1e3"),
+            Err(ParseError::InvalidNumber("takeProfit"))
+        );
     }
 
     #[test]
@@ -742,18 +801,48 @@ mod tests {
         );
         assert_eq!(
             parse_slippage_field("Slippage \u{2264}9%", Language::En),
-            Err(ParseError::OutOfRange)
+            Err(ParseError::OutOfRange("slippage"))
         );
+    }
+
+    /// feedback !f338b753 §1: `tvl` is validated as a canonical compact amount
+    /// (no float). Legal forms parse; illegal free text is rejected as
+    /// `invalid_number` attributed to `tvl`.
+    #[test]
+    fn compact_amount_legal_and_illegal() {
+        // legal: optional `$`, optional K/M/B/T magnitude, or a bare integer.
+        assert_eq!(parse_compact_amount("$2.4M", "tvl").unwrap(), "$2.4M");
+        assert_eq!(parse_compact_amount("500M", "tvl").unwrap(), "500M");
+        assert_eq!(parse_compact_amount("1.2B", "tvl").unwrap(), "1.2B");
+        assert_eq!(parse_compact_amount("100000", "tvl").unwrap(), "100000");
+        // illegal: garbage text, bad unit, thousands sep, lone `$`, sci-notation.
+        for bad in ["abc", "2.4X", "1,000M", "$", "1e3M", "2.4MM"] {
+            assert_eq!(
+                parse_compact_amount(bad, "tvl"),
+                Err(ParseError::InvalidNumber("tvl")),
+                "expected tvl invalid_number for {bad:?}"
+            );
+        }
     }
 
     #[test]
     fn position_boundaries() {
         assert_eq!(parse_position("0.1%").unwrap(), "0.1");
         assert_eq!(parse_position("20%").unwrap(), "20");
-        assert_eq!(parse_position("0%"), Err(ParseError::OutOfRange));
-        assert_eq!(parse_position("20.1%"), Err(ParseError::OutOfRange));
-        assert_eq!(parse_position("5-10%"), Err(ParseError::OutOfRange)); // range
-        assert_eq!(parse_position("5"), Err(ParseError::OutOfRange)); // missing %
+        assert_eq!(
+            parse_position("0%"),
+            Err(ParseError::OutOfRange("position"))
+        );
+        assert_eq!(
+            parse_position("20.1%"),
+            Err(ParseError::OutOfRange("position"))
+        );
+        assert_eq!(
+            parse_position("5-10%"),
+            Err(ParseError::OutOfRange("position"))
+        ); // range
+        assert_eq!(parse_position("5"), Err(ParseError::OutOfRange("position")));
+        // missing %
     }
 
     #[test]
@@ -761,33 +850,61 @@ mod tests {
         assert_eq!(parse_ttl("5min").unwrap(), 300);
         assert_eq!(parse_ttl("7d").unwrap(), 604_800);
         assert_eq!(parse_ttl("24h").unwrap(), 86_400);
-        assert_eq!(parse_ttl("4min"), Err(ParseError::OutOfRange)); // below 5min
-        assert_eq!(parse_ttl("8d"), Err(ParseError::OutOfRange)); // above 7d
-        assert_eq!(parse_ttl("30s"), Err(ParseError::OutOfRange)); // unknown unit
+        assert_eq!(parse_ttl("4min"), Err(ParseError::OutOfRange("ttl"))); // below 5min
+        assert_eq!(parse_ttl("8d"), Err(ParseError::OutOfRange("ttl"))); // above 7d
+        assert_eq!(parse_ttl("30s"), Err(ParseError::OutOfRange("ttl"))); // unknown unit
     }
 
     #[test]
     fn range_and_decimal() {
         assert_eq!(
-            parse_range("60000-65000").unwrap(),
+            parse_range("60000-65000", "price").unwrap(),
             PriceRange {
                 lo: "60000".into(),
                 hi: "65000".into()
             }
         );
-        assert_eq!(parse_range("65000-60000"), Err(ParseError::OutOfRange)); // inverted
-        assert_eq!(parse_decimal("1e3"), Err(ParseError::InvalidNumber)); // sci-notation
-        assert_eq!(parse_decimal("1,000"), Err(ParseError::InvalidNumber)); // thousands sep
-        assert_eq!(parse_decimal("5%"), Err(ParseError::InvalidNumber)); // %-price
+        // inverted range → out of range attributed to the passed field.
+        assert_eq!(
+            parse_range("65000-60000", "entry"),
+            Err(ParseError::OutOfRange("entry"))
+        );
+        assert_eq!(
+            parse_decimal("1e3", "stopLoss"),
+            Err(ParseError::InvalidNumber("stopLoss"))
+        ); // sci-notation
+        assert_eq!(
+            parse_decimal("1,000", "strike"),
+            Err(ParseError::InvalidNumber("strike"))
+        ); // thousands sep
+        assert_eq!(
+            parse_decimal("5%", "price"),
+            Err(ParseError::InvalidNumber("price"))
+        ); // %-price
     }
 
     #[test]
     fn calendar_dates() {
-        assert_eq!(parse_date("2024-02-29").unwrap(), "2024-02-29"); // leap
-        assert_eq!(parse_date("2025-02-29"), Err(ParseError::InvalidDate)); // non-leap
-        assert_eq!(parse_date("2025-13-01"), Err(ParseError::InvalidDate)); // month
-        assert_eq!(parse_date("12-31"), Err(ParseError::InvalidDate)); // missing year
-        assert_eq!(parse_date("2025-04-31"), Err(ParseError::InvalidDate)); // 30-day month
+        assert_eq!(
+            parse_date("2024-02-29", "settleDate").unwrap(),
+            "2024-02-29"
+        ); // leap
+        assert_eq!(
+            parse_date("2025-02-29", "settleDate"),
+            Err(ParseError::InvalidDate("settleDate"))
+        ); // non-leap
+        assert_eq!(
+            parse_date("2025-13-01", "expiry"),
+            Err(ParseError::InvalidDate("expiry"))
+        ); // month
+        assert_eq!(
+            parse_date("12-31", "settleDate"),
+            Err(ParseError::InvalidDate("settleDate"))
+        ); // missing year
+        assert_eq!(
+            parse_date("2025-04-31", "expiry"),
+            Err(ParseError::InvalidDate("expiry"))
+        ); // 30-day month
     }
 
     #[test]
@@ -795,15 +912,18 @@ mod tests {
         assert_eq!(parse_direction("LONG").unwrap(), Direction::Long);
         assert_eq!(
             parse_direction("\u{505a}\u{591a}"),
-            Err(ParseError::IllegalKeyword)
+            Err(ParseError::IllegalKeyword("direction"))
         );
         assert_eq!(parse_option_side("\u{4e70}\u{5165}").unwrap(), Side::Buy);
         assert_eq!(
             parse_side("\u{4e70}\u{5165}"),
-            Err(ParseError::IllegalKeyword)
+            Err(ParseError::IllegalKeyword("side"))
         ); // spot side is canonical-only
         assert_eq!(parse_option_type("Call").unwrap(), OptionType::Call);
-        assert_eq!(parse_option_type("call"), Err(ParseError::IllegalKeyword));
+        assert_eq!(
+            parse_option_type("call"),
+            Err(ParseError::IllegalKeyword("optionType"))
+        );
     }
 
     #[test]
@@ -812,11 +932,19 @@ mod tests {
             parse_outcome_odds("YES @0.62").unwrap(),
             (Outcome::Yes, "0.62".to_string())
         );
-        assert_eq!(parse_outcome_odds("YES"), Err(ParseError::IllegalKeyword)); // no @
-        assert_eq!(parse_outcome_odds("YES @1.5"), Err(ParseError::OutOfRange)); // odds > 1
+        // no `@` → illegal_keyword attributed to `outcome`.
+        assert_eq!(
+            parse_outcome_odds("YES"),
+            Err(ParseError::IllegalKeyword("outcome"))
+        );
+        // odds > 1 → out_of_range attributed to `odds`.
+        assert_eq!(
+            parse_outcome_odds("YES @1.5"),
+            Err(ParseError::OutOfRange("odds"))
+        );
         assert_eq!(
             parse_outcome_odds("MAYBE @0.5"),
-            Err(ParseError::IllegalKeyword)
+            Err(ParseError::IllegalKeyword("outcome"))
         );
         assert_eq!(
             parse_outcome_odds("YES @0.5@0.6"),
@@ -845,10 +973,17 @@ mod tests {
     #[test]
     fn leverage_rejects_zero_and_non_integer() {
         assert_eq!(parse_leverage("10").unwrap(), 10);
-        assert_eq!(parse_leverage("0"), Err(ParseError::OutOfRange)); // zero
-        assert_eq!(parse_leverage("10.5"), Err(ParseError::OutOfRange)); // non-integer
-        assert_eq!(parse_leverage("-5"), Err(ParseError::OutOfRange)); // signed
-        assert_eq!(parse_leverage(""), Err(ParseError::OutOfRange)); // empty
+        assert_eq!(parse_leverage("0"), Err(ParseError::OutOfRange("leverage"))); // zero
+        assert_eq!(
+            parse_leverage("10.5"),
+            Err(ParseError::OutOfRange("leverage"))
+        ); // non-integer
+        assert_eq!(
+            parse_leverage("-5"),
+            Err(ParseError::OutOfRange("leverage"))
+        ); // signed
+        assert_eq!(parse_leverage(""), Err(ParseError::OutOfRange("leverage")));
+        // empty
     }
 
     #[test]

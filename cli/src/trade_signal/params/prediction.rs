@@ -19,7 +19,7 @@ pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
     let event = strip_quotes(&fields[0]);
     let (outcome, odds) = fields::parse_outcome_odds(&fields[1])?;
     let position_pct = fields::parse_position_field(&fields[2], lang)?;
-    let settle_date = fields::parse_date(&fields::strip_settle(&fields[3], lang)?)?;
+    let settle_date = fields::parse_date(&fields::strip_settle(&fields[3], lang)?, "settleDate")?;
     let ttl_sec = fields::parse_ttl_field(&fields[4], lang)?;
 
     Ok((
@@ -46,8 +46,8 @@ fn strip_quotes(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::Outcome;
+    use super::*;
 
     fn f(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -93,7 +93,7 @@ mod tests {
                 Language::En,
             )
             .unwrap_err(),
-            ParseError::OutOfRange
+            ParseError::OutOfRange("odds")
         );
     }
 }

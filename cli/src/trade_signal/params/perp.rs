@@ -19,8 +19,8 @@ pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
     }
     let pair = fields[0].clone();
     let (direction, leverage, margin_mode) = fields::parse_dir_lev_margin(&fields[1], lang)?;
-    let entry_range = fields::parse_range(&fields::strip_entry(&fields[2], lang)?)?;
-    let stop_loss = fields::parse_decimal(&fields::strip_stop_loss(&fields[3], lang)?)?;
+    let entry_range = fields::parse_range(&fields::strip_entry(&fields[2], lang)?, "entry")?;
+    let stop_loss = fields::parse_decimal(&fields::strip_stop_loss(&fields[3], lang)?, "stopLoss")?;
     let take_profit = fields::parse_take_profits(&fields[4])?;
     let position_pct = fields::parse_position_field(&fields[5], lang)?;
     let ttl_sec = fields::parse_ttl_field(&fields[6], lang)?;
@@ -60,18 +60,18 @@ fn check_direction(
     match direction {
         Direction::Long => {
             if !fields::less_than(stop_loss, entry_lo) {
-                return Err(ParseError::DirectionConstraint);
+                return Err(ParseError::DirectionConstraint("stopLoss"));
             }
             if tps.iter().any(|tp| !fields::greater_than(tp, entry_lo)) {
-                return Err(ParseError::DirectionConstraint);
+                return Err(ParseError::DirectionConstraint("takeProfit"));
             }
         }
         Direction::Short => {
             if !fields::greater_than(stop_loss, entry_hi) {
-                return Err(ParseError::DirectionConstraint);
+                return Err(ParseError::DirectionConstraint("stopLoss"));
             }
             if tps.iter().any(|tp| !fields::less_than(tp, entry_hi)) {
-                return Err(ParseError::DirectionConstraint);
+                return Err(ParseError::DirectionConstraint("takeProfit"));
             }
         }
     }
@@ -154,7 +154,7 @@ mod tests {
                 Language::En,
             )
             .unwrap_err(),
-            ParseError::DirectionConstraint
+            ParseError::DirectionConstraint("stopLoss")
         );
     }
 

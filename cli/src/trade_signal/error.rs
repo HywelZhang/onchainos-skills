@@ -3,17 +3,19 @@
 //! deps"; mirrors `AmountError` / `StrategyError`).
 //!
 //! SR-3 hard requirement: `code()` / `field()` / `message()` carry ONLY a stable
-//! category + stable field name — NEVER the raw signal text, `tokenAddr`,
-//! `event`, `contractCode`, or any ASP-authored free text. Every return here is a
-//! value-free `&'static str`, which makes an input leak structurally impossible.
+//! category + stable field NAME — NEVER the raw signal text, `tokenAddr`,
+//! `event`, `contractCode` value, or any ASP-authored free text. The field-name
+//! payloads on the value/constraint variants are `&'static str` canonical names
+//! chosen by the parser (never derived from input), which keeps an input leak
+//! structurally impossible.
 
 /// The stable closed-set of parse/validation/envelope failures.
 ///
 /// The `code()` strings (not the Rust variant names) are the external stability
-/// contract. Per V1.1/TD review alignment (feedback !92ea45d6) they are stable
-/// **snake_case** codes, and the three envelope faults are kept as distinct,
-/// decidable errors (`invalid_schema_version` / `invalid_delivery_id` /
-/// `invalid_signal_time`) rather than collapsed onto one opaque code.
+/// contract and are UNCHANGED (feedback !92ea45d6). Per feedback !f338b753 the
+/// five value/constraint variants now carry the offending CANONICAL FIELD NAME so
+/// `field()` returns the real field (e.g. `stopLoss` vs `takeProfit`, `settleDate`
+/// vs `expiry`, `tvl`) instead of a `number`/`range`/`date` category placeholder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     /// Empty input string.
@@ -34,31 +36,33 @@ pub enum ParseError {
     MultiLine,
     /// Header not in the 10-item whitelist / preceded by whitespace / half-width `[`.
     UnknownHeader,
-    /// Wrong field count/order for the asset class (missing required label / extra / reordered / duplicate).
+    /// Wrong field count/order for the asset class (missing required / extra / reordered).
     FieldCountError,
     /// Any field empty after trim.
     EmptyField,
     /// Mixed zh/en labels in one signal.
     LanguageMix,
-    /// Non-whitelist token variant (e.g. `S`/`L`, or an unlisted direction/side word).
-    IllegalKeyword,
+    /// Non-whitelist token variant. Carries the offending canonical field name.
+    IllegalKeyword(&'static str),
     /// Sci-notation, thousands separator, %-price, or otherwise non-decimal number.
-    InvalidNumber,
-    /// Value out of the allowed range (position, TTL, odds, slippage, leverage, inverted range).
-    OutOfRange,
-    /// Missing year / nonexistent / malformed `YYYY-MM-DD`.
-    InvalidDate,
-    /// LONG/SHORT SL or TP on the wrong side; duplicate SL; 0 or 4 TP; TP numbering gap.
-    DirectionConstraint,
+    /// Carries the offending canonical field name.
+    InvalidNumber(&'static str),
+    /// Value out of the allowed range. Carries the offending canonical field name.
+    OutOfRange(&'static str),
+    /// Missing year / nonexistent / malformed `YYYY-MM-DD`. Carries the field name.
+    InvalidDate(&'static str),
+    /// LONG/SHORT SL or TP on the wrong side, or a bad TP set. Carries the field
+    /// name that actually failed (`stopLoss` vs `takeProfit`).
+    DirectionConstraint(&'static str),
     /// `contractCode` inconsistent with Call/Put, strike, or expiry.
     OptionFieldMismatch,
-    /// Emoji, link, out-of-place `@`-mention, extra field, analysis prose — content beyond the field grammar.
+    /// Emoji, link, out-of-place `@`-mention, or content beyond the field grammar.
     ForbiddenContent,
 }
 
 impl ParseError {
-    /// Stable machine code string (external contract). MUST NOT change after ship.
-    /// Stable snake_case per V1.1/TD alignment (feedback !92ea45d6).
+    /// Stable machine code string (external contract). MUST NOT change after ship
+    /// (feedback !92ea45d6) — the field-name payload does NOT affect the code.
     pub fn code(&self) -> &'static str {
         match self {
             ParseError::EmptyInput => "empty_input",
@@ -73,19 +77,31 @@ impl ParseError {
             ParseError::FieldCountError => "field_count_error",
             ParseError::EmptyField => "empty_field",
             ParseError::LanguageMix => "language_mix",
-            ParseError::IllegalKeyword => "illegal_keyword",
-            ParseError::InvalidNumber => "invalid_number",
-            ParseError::OutOfRange => "out_of_range",
-            ParseError::InvalidDate => "invalid_date",
-            ParseError::DirectionConstraint => "direction_constraint",
+            ParseError::IllegalKeyword(_) => "illegal_keyword",
+            ParseError::InvalidNumber(_) => "invalid_number",
+            ParseError::OutOfRange(_) => "out_of_range",
+            ParseError::InvalidDate(_) => "invalid_date",
+            ParseError::DirectionConstraint(_) => "direction_constraint",
             ParseError::OptionFieldMismatch => "option_field_mismatch",
             ParseError::ForbiddenContent => "forbidden_content",
         }
     }
 
-    /// Stable field name for the offending parameter, or `None`. NEVER the value.
+    /// Stable CANONICAL field name for the offending parameter, or `None`. NEVER
+    /// the value. The value/constraint variants return their carried field name;
+    /// the envelope faults and option mismatch return their fixed field.
     pub fn field(&self) -> Option<&'static str> {
         match self {
+            ParseError::InvalidEnvelope => Some("envelope"),
+            ParseError::InvalidSchemaVersion => Some("schemaVersion"),
+            ParseError::InvalidDeliveryId => Some("deliveryId"),
+            ParseError::InvalidSignalTime => Some("signalTime"),
+            ParseError::OptionFieldMismatch => Some("contractCode"),
+            ParseError::IllegalKeyword(f)
+            | ParseError::InvalidNumber(f)
+            | ParseError::OutOfRange(f)
+            | ParseError::InvalidDate(f)
+            | ParseError::DirectionConstraint(f) => Some(f),
             ParseError::EmptyInput
             | ParseError::UnsupportedFormat
             | ParseError::TooLong
@@ -95,16 +111,6 @@ impl ParseError {
             | ParseError::LanguageMix
             | ParseError::ForbiddenContent
             | ParseError::FieldCountError => None,
-            ParseError::InvalidEnvelope => Some("envelope"),
-            ParseError::InvalidSchemaVersion => Some("schemaVersion"),
-            ParseError::InvalidDeliveryId => Some("deliveryId"),
-            ParseError::InvalidSignalTime => Some("signalTime"),
-            ParseError::IllegalKeyword => Some("keyword"),
-            ParseError::InvalidNumber => Some("number"),
-            ParseError::OutOfRange => Some("range"),
-            ParseError::InvalidDate => Some("date"),
-            ParseError::DirectionConstraint => Some("takeProfit"),
-            ParseError::OptionFieldMismatch => Some("contractCode"),
         }
     }
 
@@ -123,11 +129,11 @@ impl ParseError {
             ParseError::FieldCountError => "wrong number or order of fields for the asset class",
             ParseError::EmptyField => "a field is empty after trimming",
             ParseError::LanguageMix => "mixed-language labels are not allowed",
-            ParseError::IllegalKeyword => "unrecognized keyword variant",
-            ParseError::InvalidNumber => "malformed number",
-            ParseError::OutOfRange => "value is out of the allowed range",
-            ParseError::InvalidDate => "invalid calendar date",
-            ParseError::DirectionConstraint => {
+            ParseError::IllegalKeyword(_) => "unrecognized keyword variant",
+            ParseError::InvalidNumber(_) => "malformed number",
+            ParseError::OutOfRange(_) => "value is out of the allowed range",
+            ParseError::InvalidDate(_) => "invalid calendar date",
+            ParseError::DirectionConstraint(_) => {
                 "stop-loss/take-profit direction constraint violated"
             }
             ParseError::OptionFieldMismatch => "contract code is inconsistent with its fields",
@@ -148,8 +154,8 @@ impl std::error::Error for ParseError {}
 mod tests {
     use super::*;
 
-    /// Every variant's `code()` is the stable snake_case external contract, and the
-    /// three envelope faults stay distinct (feedback !92ea45d6).
+    /// Every variant's `code()` is the stable snake_case external contract and is
+    /// unaffected by the field-name payload (feedback !92ea45d6 / !f338b753).
     #[test]
     fn code_matches_external_contract() {
         assert_eq!(ParseError::EmptyInput.code(), "empty_input");
@@ -167,12 +173,12 @@ mod tests {
         assert_eq!(ParseError::FieldCountError.code(), "field_count_error");
         assert_eq!(ParseError::EmptyField.code(), "empty_field");
         assert_eq!(ParseError::LanguageMix.code(), "language_mix");
-        assert_eq!(ParseError::IllegalKeyword.code(), "illegal_keyword");
-        assert_eq!(ParseError::InvalidNumber.code(), "invalid_number");
-        assert_eq!(ParseError::OutOfRange.code(), "out_of_range");
-        assert_eq!(ParseError::InvalidDate.code(), "invalid_date");
+        assert_eq!(ParseError::IllegalKeyword("side").code(), "illegal_keyword");
+        assert_eq!(ParseError::InvalidNumber("price").code(), "invalid_number");
+        assert_eq!(ParseError::OutOfRange("position").code(), "out_of_range");
+        assert_eq!(ParseError::InvalidDate("expiry").code(), "invalid_date");
         assert_eq!(
-            ParseError::DirectionConstraint.code(),
+            ParseError::DirectionConstraint("stopLoss").code(),
             "direction_constraint"
         );
         assert_eq!(
@@ -182,21 +188,39 @@ mod tests {
         assert_eq!(ParseError::ForbiddenContent.code(), "forbidden_content");
     }
 
-    /// The split envelope faults carry distinct, decidable field names.
+    /// The value/constraint variants surface the real canonical field name, and
+    /// the split envelope faults keep their distinct fields (feedback !f338b753).
     #[test]
-    fn envelope_faults_have_distinct_fields() {
+    fn field_carries_canonical_name() {
+        assert_eq!(ParseError::OutOfRange("position").field(), Some("position"));
+        assert_eq!(
+            ParseError::InvalidDate("settleDate").field(),
+            Some("settleDate")
+        );
+        assert_eq!(ParseError::InvalidDate("expiry").field(), Some("expiry"));
+        assert_eq!(
+            ParseError::DirectionConstraint("stopLoss").field(),
+            Some("stopLoss")
+        );
+        assert_eq!(
+            ParseError::DirectionConstraint("takeProfit").field(),
+            Some("takeProfit")
+        );
+        assert_eq!(ParseError::InvalidNumber("tvl").field(), Some("tvl"));
         assert_eq!(
             ParseError::InvalidSchemaVersion.field(),
             Some("schemaVersion")
         );
         assert_eq!(ParseError::InvalidDeliveryId.field(), Some("deliveryId"));
         assert_eq!(ParseError::InvalidSignalTime.field(), Some("signalTime"));
+        // structural errors carry no field.
+        assert_eq!(ParseError::FieldCountError.field(), None);
     }
 
     #[test]
     fn display_writes_value_free_message() {
         assert_eq!(
-            format!("{}", ParseError::OutOfRange),
+            format!("{}", ParseError::OutOfRange("position")),
             "value is out of the allowed range"
         );
     }

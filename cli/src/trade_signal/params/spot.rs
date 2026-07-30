@@ -30,7 +30,7 @@ fn parse_onchain(fields: &[String], lang: Language) -> Result<ClassParse, ParseE
     let market = fields[0].clone(); // chain
     let (symbol, token_addr) = fields::parse_onchain_token(&fields[1])?;
     let side = fields::parse_side(&fields[2])?;
-    let price_range = fields::parse_range(&fields[3])?;
+    let price_range = fields::parse_range(&fields[3], "price")?;
     let slippage = fields::parse_slippage_field(&fields[4], lang)?;
     let position_pct = fields::parse_position_field(&fields[5], lang)?;
     let ttl_sec = fields::parse_ttl_field(&fields[6], lang)?;
@@ -56,7 +56,7 @@ fn parse_cex(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
     }
     let (symbol, market) = fields::split_pair(&fields[0]);
     let (side, order_type) = fields::parse_side_order(&fields[1], lang)?;
-    let price_range = fields::parse_range(&fields[2])?;
+    let price_range = fields::parse_range(&fields[2], "price")?;
     let position_pct = fields::parse_position_field(&fields[3], lang)?;
     let ttl_sec = fields::parse_ttl_field(&fields[4], lang)?;
 
@@ -77,8 +77,8 @@ fn parse_cex(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::Side;
+    use super::*;
 
     fn f(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -115,7 +115,13 @@ mod tests {
     #[test]
     fn cex_form_defaults_market_and_splits_pair() {
         let (params, _, _) = parse(
-            &f(&["BTC/USDT", "BUY", "60000-65000", "Position 5%", "valid for 1h"]),
+            &f(&[
+                "BTC/USDT",
+                "BUY",
+                "60000-65000",
+                "Position 5%",
+                "valid for 1h",
+            ]),
             Language::En,
         )
         .unwrap();
@@ -147,15 +153,18 @@ mod tests {
                 Language::En,
             )
             .unwrap_err(),
-            ParseError::OutOfRange
+            ParseError::OutOfRange("slippage")
         );
     }
 
     #[test]
     fn wrong_field_count_is_field_count_error() {
         assert_eq!(
-            parse(&f(&["BTC/USDT", "BUY", "60000-65000", "Position 5%"]), Language::En)
-                .unwrap_err(),
+            parse(
+                &f(&["BTC/USDT", "BUY", "60000-65000", "Position 5%"]),
+                Language::En
+            )
+            .unwrap_err(),
             ParseError::FieldCountError
         );
     }

@@ -1657,7 +1657,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     match super::super::reject::handle_reject(&mut client, job_id, reason).await {
         Ok(()) => format!(
             "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The user cannot initiate arbitration.\n\
+             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (evaluation) or agree to a refund. The user cannot initiate evaluation.\n\
              Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
         ),
         Err(e) => format!(

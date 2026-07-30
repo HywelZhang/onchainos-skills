@@ -221,7 +221,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                      ```bash\n\
                      onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num {n}\n\
                      ```\n\n\
-                     Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why arbitration was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
+                     Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why evaluation was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
                      **Post-evidence hard constraints** (only the rules the agent could not infer on its own — tool choice / commands are the agent's call):\n\
                      - `files[]` items arrive **without extensions** by design; probe the type yourself (`file --mime-type`, hexdump, whatever) and use whatever tools you have to inspect each one. If you rename a file to give it an extension, **update the `localPath` you cite in the verdict**.\n\
                      - **Never vote blindly on an item you could not inspect.** If a file is unreadable for any reason (unsupported format, conversion failed, archive contents inaccessible, download error), cite it in the verdict as `<short reason> — contents unreviewable` and apply the rubric's evidence-missing rule for that item.\n\
@@ -568,7 +568,7 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          onchainos agent user-notify --content '<localized content>'\n\
          ```\n\n\
          Canonical English content (substitute placeholders first):\n\
-         \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
+         \x20\x20\x20\x20Evaluation aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
          - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
          → **Once Step 3's verdict text is produced, continue with Step 4 in this same turn.**\n\n\

@@ -1,19 +1,18 @@
-# Authoritative V1.1 trade-signal acceptance corpus (Task 2 TD, main-doc §14 examples).
+# V1.1 trade-signal acceptance corpus. These 14 bilingual examples define the
+# parser normative acceptance cases. Comment and blank lines are ignored; case
+# order is fixed.
 #
-# These 14 lines are copied VERBATIM from the human review corpus on MR !196
-# (discussion f00000abc5b18de19476ee0a7da58c32bfa1b5d1 / note 9916440,
-# "[P0][round5][authoritative-v1.1-corpus]"). They are the byte-exact bilingual
-# (7 zh + 7 en) normative examples the parser MUST accept 14/14.
+# The corpus is byte-exact bilingual (7 zh + 7 en); the parser MUST accept all 14.
 #
 # This lives in a .txt fixture (NOT a .rs source file) on purpose:
 #   * it keeps the corpus byte-for-byte verbatim — no \u{} escaping, no
-#     reconstruction — which is exactly what the reviewer required, and
-#   * the onchainos_check "no CJK in Rust source" lint scans only cli/**.rs,
-#     so a .txt fixture carries the literal Chinese without tripping it.
+#     reconstruction, and
+#   * the "no CJK in Rust source" lint scans only cli/**.rs, so a .txt fixture
+#     carries the literal Chinese without tripping it.
 # tests.rs pulls this in with include_str! and drives a table test over it.
 #
 # Lines beginning with '#' and blank lines are ignored by the test loader.
-# ORDER IS FIXED — the loader asserts the class/language/index of each line.
+# Case order is fixed — the loader asserts the class/language/index of each line.
 #
 # 1) Spot — on-chain (chain | $token(address) | side | range | slippage)
 【现货信号】X Layer | $TOKEN (0x12a3…9fab) | BUY | 0.042-0.045 | 滑点 ≤1% | 仓位 5% | 24h 内有效

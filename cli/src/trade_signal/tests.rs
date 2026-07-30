@@ -1,11 +1,10 @@
 //! Acceptance corpus + invariant tests for the trade-signal parser.
 //!
 //! The positives are driven by the AUTHORITATIVE V1.1 corpus in `corpus_v1_1.txt`,
-//! copied byte-for-byte from the human review corpus on MR !196 (discussion
-//! f00000ab / note 9916440, "[P0][round5][authoritative-v1.1-corpus]"). The
+//! copied byte-for-byte from the trade-signal specification v1.1 corpus. The
 //! corpus lives in a `.txt` fixture — not inline in this `.rs` file — so it stays
 //! literally verbatim (no `\u{}` escaping, no reconstruction) while the
-//! onchainos_check "no CJK in Rust source" lint (which scans only `cli/**.rs`)
+//! "no CJK in Rust source" lint (which scans only `cli/**.rs`)
 //! stays satisfied. `all_fourteen_normative_examples_parse` is the headline gate:
 //! 14/14 of the normative examples MUST parse.
 //!
@@ -34,7 +33,7 @@ fn code(text: &str) -> &'static str {
 // ── Positives ─────────────────────────────────────────────────────────────────
 
 /// AC-1 (headline): every one of the 14 authoritative V1.1 examples parses.
-/// This is the completion gate from note 9916440 — 14/14 original positives pass.
+/// This is the acceptance completion gate — 14/14 normative positives pass.
 #[test]
 fn all_fourteen_normative_examples_parse() {
     let corpus = corpus();
@@ -377,7 +376,7 @@ fn defi_missing_field() {
 }
 
 /// AC-20: envelope schemaVersion ≠ 2 / signalTime = 0 / illegal deliveryId — each a
-/// distinct fine-grained code (feedback !92ea45d6 / !42eef591).
+/// distinct fine-grained code.
 #[test]
 fn envelope_faults() {
     let text =
@@ -431,7 +430,7 @@ fn errors_never_leak_input() {
     }
 }
 
-/// feedback !f338b753 §2: a rejected signal's error carries the REAL canonical
+/// A rejected signal's error carries the REAL canonical
 /// field (not a `number`/`range`/`date` placeholder, and `stopLoss` vs
 /// `takeProfit` correctly distinguished).
 #[test]

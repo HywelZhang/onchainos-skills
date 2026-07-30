@@ -8,8 +8,8 @@
 //! - [`parse_envelope`] — validate a V2 wire envelope then delegate (FR-3).
 //!
 //! ## Input grammar
-//! The authoritative wire grammar is Lark spec v1.1 (feedback !f00000ab / note
-//! 9916440). Each asset class is a FIXED, POSITIONAL sequence of `|`-separated
+//! The authoritative wire grammar is trade-signal specification v1.1. Each
+//! asset class is a FIXED, POSITIONAL sequence of `|`-separated
 //! fields behind a full-title header; a field's meaning comes from its position,
 //! its shape, and a small set of reserved keywords embedded IN the value (e.g.
 //! `LONG 3x`, `SL 3300`, `position(zh) 5%`) — NOT a reorderable `label:value` map. The
@@ -19,7 +19,7 @@
 //! The [`ParsedSignal`] result is an **internal** parser model, NOT a second
 //! frozen public trading-signal contract. Its field naming follows the runtime
 //! autotrade conventions (`positionPct`, `ttlSec`) and it reuses the shared
-//! `Decimal` + [`AssetClass`] types (feedback !a15bed9d). Wiring this output into
+//! `Decimal` + [`AssetClass`] types. Wiring this output into
 //! the runtime `agent_commerce::task::common::autotrade` pipeline is a separate
 //! task (Task 3); this module only produces the parse result.
 

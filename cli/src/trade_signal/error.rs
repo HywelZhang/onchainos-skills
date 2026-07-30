@@ -12,7 +12,7 @@
 /// The stable closed-set of parse/validation/envelope failures.
 ///
 /// The `code()` strings (not the Rust variant names) are the external stability
-/// contract and are UNCHANGED (feedback !92ea45d6). Per feedback !f338b753 the
+/// contract and are UNCHANGED. Per the specification the
 /// five value/constraint variants now carry the offending CANONICAL FIELD NAME so
 /// `field()` returns the real field (e.g. `stopLoss` vs `takeProfit`, `settleDate`
 /// vs `expiry`, `tvl`) instead of a `number`/`range`/`date` category placeholder.
@@ -61,8 +61,8 @@ pub enum ParseError {
 }
 
 impl ParseError {
-    /// Stable machine code string (external contract). MUST NOT change after ship
-    /// (feedback !92ea45d6) — the field-name payload does NOT affect the code.
+    /// Stable machine code string (external contract). MUST NOT change after ship;
+    /// the field-name payload does NOT affect the code.
     pub fn code(&self) -> &'static str {
         match self {
             ParseError::EmptyInput => "empty_input",
@@ -155,7 +155,7 @@ mod tests {
     use super::*;
 
     /// Every variant's `code()` is the stable snake_case external contract and is
-    /// unaffected by the field-name payload (feedback !92ea45d6 / !f338b753).
+    /// unaffected by the field-name payload.
     #[test]
     fn code_matches_external_contract() {
         assert_eq!(ParseError::EmptyInput.code(), "empty_input");
@@ -189,7 +189,7 @@ mod tests {
     }
 
     /// The value/constraint variants surface the real canonical field name, and
-    /// the split envelope faults keep their distinct fields (feedback !f338b753).
+    /// the split envelope faults keep their distinct fields.
     #[test]
     fn field_carries_canonical_name() {
         assert_eq!(ParseError::OutOfRange("position").field(), Some("position"));

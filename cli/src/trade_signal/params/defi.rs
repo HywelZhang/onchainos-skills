@@ -20,7 +20,7 @@ pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
     let protocol_pool = fields[1].clone();
     let apy = fields::parse_percent_nonneg(&fields::strip_apy(&fields[2], lang)?, "apy")?;
     // TVL keyword is stripped, then validated as a canonical compact amount
-    // (no float, feedback !f338b753 §1) — `$2.4M` / `500M` / `1.2B` / a bare int.
+    // (no float) — `$2.4M` / `500M` / `1.2B` / a bare int.
     let tvl = fields::parse_compact_amount(&fields::strip_tvl(&fields[3], lang)?, "tvl")?;
     let token = fields[4].clone();
     let redeem_terms = fields[5].clone();
@@ -98,7 +98,7 @@ mod tests {
         );
     }
 
-    /// feedback !f338b753 §1: a non-canonical TVL (free text, not a compact
+    /// A non-canonical TVL (free text, not a compact
     /// amount) is now rejected as `invalid_number` attributed to `tvl` — the old
     /// non-empty `require` accepted any text.
     #[test]

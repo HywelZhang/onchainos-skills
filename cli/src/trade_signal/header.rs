@@ -5,7 +5,7 @@
 //! the full-width brackets `【…】` (U+3010/U+3011). A half-width `[` header, an
 //! unknown header, or a whitespace-preceded header → [`ParseError::UnknownHeader`].
 //!
-//! The whitelist is the **full V1.1 titles only** (feedback !dd1b3502): the
+//! The whitelist is the **full V1.1 titles only**: the
 //! self-authored short headers (the old 4-char forms) are no longer accepted,
 //! to keep the accepted protocol surface exactly the spec's 10 strings.
 
@@ -16,7 +16,7 @@ use super::Language;
 
 /// The 10-item header whitelist: `(header_literal, asset_class, language)`.
 ///
-/// The authoritative V1.1 full titles (feedback !dd1b3502): the Chinese set uses
+/// The authoritative V1.1 full titles: the Chinese set uses
 /// the zh signal suffix (DeFi keeps its Latin brand + a space), the English set uses
 /// the `… Signal` suffix; all use full-width brackets `【】`.
 const HEADERS: &[(&str, AssetClass, Language)] = &[

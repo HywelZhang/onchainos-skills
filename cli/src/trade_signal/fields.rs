@@ -1,5 +1,4 @@
-//! FR-2 field ingestion — the authoritative V1.1 grammar (feedback !f00000ab /
-//! note 9916440).
+//! FR-2 field ingestion — the authoritative V1.1 grammar.
 //!
 //! The wire format is NOT a reorderable `label:value` map. Each asset class is a
 //! FIXED, POSITIONAL sequence of `|`-separated fields; a field's meaning comes
@@ -805,7 +804,7 @@ mod tests {
         );
     }
 
-    /// feedback !f338b753 §1: `tvl` is validated as a canonical compact amount
+    /// `tvl` is validated as a canonical compact amount
     /// (no float). Legal forms parse; illegal free text is rejected as
     /// `invalid_number` attributed to `tvl`.
     #[test]

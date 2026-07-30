@@ -2,7 +2,7 @@
 //! FIRST (each mapped to its own decidable error), then delegate the inner
 //! `signalText` to [`super::parse_signal_text`].
 //!
-//! Per V1.1/TD review alignment (feedback !42eef591) the `deliveryId` check REUSES
+//! Per V1.1 specification alignment the `deliveryId` check REUSES
 //! the existing autotrade schema validator
 //! ([`crate::commands::agent_commerce::task::common::autotrade::schema::check_delivery_id`])
 //! rather than maintaining a second copy of the length/charset rules — so the
@@ -31,7 +31,7 @@ pub struct V2Envelope {
 }
 
 /// Validate a V2 envelope JSON string then parse its `signalText`. Each protocol
-/// field maps to its own fine-grained error (feedback !92ea45d6 / !42eef591).
+/// field maps to its own fine-grained error.
 pub fn parse_envelope(input: &str) -> Result<ParsedSignal, ParseError> {
     let env: V2Envelope = serde_json::from_str(input).map_err(|_| ParseError::InvalidEnvelope)?;
 

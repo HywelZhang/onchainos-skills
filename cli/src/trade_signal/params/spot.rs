@@ -1,6 +1,6 @@
 //! FR-2.2 spot parser. Two positional forms, told apart by the SHAPE of the 2nd
-//! field (feedback !f00000ab — "on-chain Spot's subject spans chain | token(addr),
-//! don't mis-cut with one fixed index per class"):
+//! field (on-chain Spot's subject spans chain | token(addr), don't mis-cut
+//! with one fixed index per class):
 //!
 //! - on-chain (7 fields): `chain | $SYMBOL (ADDRESS) | side | lo-hi | slippage(zh) ≤N% | position(zh) N% | <ttl>`
 //! - CEX pair (5 fields): `BASE/QUOTE | side [orderType] | lo-hi | position(zh) N% | <ttl>`

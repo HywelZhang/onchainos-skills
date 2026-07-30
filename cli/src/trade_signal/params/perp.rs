@@ -49,7 +49,7 @@ pub fn parse(fields: &[String], lang: Language) -> Result<ClassParse, ParseError
 }
 
 /// SL/TP direction integrity — the correct side of the entry range. No monotonic
-/// ordering constraint (feedback !1a4cebc6).
+/// ordering constraint.
 fn check_direction(
     direction: Direction,
     entry_lo: &str,

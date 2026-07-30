@@ -194,7 +194,7 @@ const REDACT_FULL: &[&str] = &[
     "--payload",
     "--param",
     // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
-    // JSON is meaningless, so redact wholesale (WBW-14118).
+    // JSON is meaningless, so redact wholesale.
     "--items",
 ];
 
@@ -206,7 +206,7 @@ const REDACT_ADDR: &[&str] = &[
     "--address",
     "--sub-id",
     "--new-sub-id",
-    // Subscription/job identifier — mask prefix+suffix like --sub-id (WBW-14118).
+    // Subscription/job identifier — mask prefix+suffix like --sub-id.
     "--job-id",
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
     "--tx-hash",
@@ -1110,7 +1110,7 @@ mod tests {
         assert_eq!(out, args);
     }
 
-    // ── device-routing redaction (WBW-14118) ─────────────────────────────
+    // ── device-routing redaction ─────────────────────────────────────────
 
     #[test]
     fn redact_subscribe_device_update_job_id_and_items() {

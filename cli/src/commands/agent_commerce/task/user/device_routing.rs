@@ -35,7 +35,7 @@ use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 
 /// Wallet device-list endpoint (userId resolved from JWT — never passed).
 const DEVICE_LIST_PATH: &str = "/priapi/v5/wallet/agentic/agent/device-list";
-/// Max subscriptions per batch update (client pre-validation, AC-01).
+/// Max subscriptions per batch update (client pre-validation).
 const MAX_UPDATE_ITEMS: usize = 100;
 /// Default page size when the caller passes `< 1`.
 const DEFAULT_PAGE_SIZE: i64 = 20;
@@ -46,7 +46,7 @@ const MAX_PAGES: i64 = 10_000;
 
 /// Format a Unix-**milliseconds** timestamp to a local wall-clock string for
 /// display. Mirrors `evaluator::my_stake::fmt_unix_seconds` but for ms — a
-/// seconds misread lands in the wrong year (AC-06). Three sentinel rules:
+/// seconds misread lands in the wrong year. Three sentinel rules:
 /// `0 → "0"`; parseable → `"%Y-%m-%d %H:%M:%S %Z"`; unparseable →
 /// `"{ts_ms} (unparseable)"`.
 fn fmt_unix_millis(ts_ms: i64) -> String {
@@ -112,22 +112,59 @@ fn decode_device_page(data: Value) -> Result<DevicePage> {
     }
 }
 
-/// Fetch and aggregate **all** pages. Normalizes `page < 1 → 1` and
-/// `page_size < 1 → 20`; `page_size > 100` is passed through (backend returns
-/// error `81001`). Loops until a page returns fewer rows than requested, an
-/// empty page, or the accumulated count reaches `total`.
-async fn fetch_all_devices(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-    page: i64,
-    page_size: i64,
-) -> Result<DevicePage> {
+/// Normalize request paging inputs: `page < 1 → 1`,
+/// `page_size < 1 → DEFAULT_PAGE_SIZE`. `page_size > 100` is passed through
+/// (the backend returns error `81001`).
+fn normalize_page_params(page: i64, page_size: i64) -> (i64, i64) {
     let start_page = if page < 1 { 1 } else { page };
     let norm_size = if page_size < 1 {
         DEFAULT_PAGE_SIZE
     } else {
         page_size
     };
+    (start_page, norm_size)
+}
+
+/// Pagination stop predicate: an empty page, a short (final) page, the
+/// accumulated count reaching `total`, or the hard safety cap all terminate the
+/// loop. Stopping early on a dropped page would misread as "device not
+/// receiving", so the caller keeps fetching until one of these holds.
+fn pagination_done(
+    got: i64,
+    norm_size: i64,
+    page_total: i64,
+    acc_len: i64,
+    cur: i64,
+    start_page: i64,
+) -> bool {
+    let reached_total = page_total > 0 && acc_len >= page_total;
+    got == 0 || got < norm_size || reached_total || cur - start_page >= MAX_PAGES
+}
+
+/// Display-only total: never report fewer than the rows actually aggregated (an
+/// empty terminal page can echo `total: 0` even after earlier pages returned rows).
+fn resolve_total(page_total: i64, acc_len: i64) -> i64 {
+    page_total.max(acc_len)
+}
+
+/// Non-empty device ids from a decoded page (empty ids are dropped — a blank id
+/// can never match this device and would pollute the routing set).
+fn device_ids(page: DevicePage) -> Vec<String> {
+    page.list
+        .into_iter()
+        .map(|r| r.device_id)
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
+/// Fetch and aggregate **all** pages, looping until `pagination_done`.
+async fn fetch_all_devices(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    page: i64,
+    page_size: i64,
+) -> Result<DevicePage> {
+    let (start_page, norm_size) = normalize_page_params(page, page_size);
 
     let mut acc: Vec<DeviceRow> = Vec::new();
     let total: i64;
@@ -140,11 +177,15 @@ async fn fetch_all_devices(
         let got = dpage.list.len() as i64;
         acc.extend(dpage.list);
 
-        // Stop on an empty page, a short (final) page, once the accumulated
-        // count reaches `total`, or at the hard safety cap.
-        let reached_total = page_total > 0 && (acc.len() as i64) >= page_total;
-        if got == 0 || got < norm_size || reached_total || cur - start_page >= MAX_PAGES {
-            total = page_total;
+        if pagination_done(
+            got,
+            norm_size,
+            page_total,
+            acc.len() as i64,
+            cur,
+            start_page,
+        ) {
+            total = resolve_total(page_total, acc.len() as i64);
             break;
         }
         cur += 1;
@@ -160,12 +201,7 @@ pub(crate) async fn fetch_all_device_ids(
     agent_id: &str,
 ) -> Result<Vec<String>> {
     let aggregated = fetch_all_devices(client, agent_id, 1, DEFAULT_PAGE_SIZE).await?;
-    Ok(aggregated
-        .list
-        .into_iter()
-        .map(|r| r.device_id)
-        .filter(|id| !id.is_empty())
-        .collect())
+    Ok(device_ids(aggregated))
 }
 
 /// Resolve `create-subscribe`'s `deviceList` + `deviceRoutingDegraded` flag:
@@ -173,7 +209,7 @@ pub(crate) async fn fetch_all_device_ids(
 /// - fetch failed (`None`) or returned no devices ⇒ **this device only**, degraded.
 ///
 /// An unresolved this-device id in the degrade branch yields an empty list (still
-/// degraded) — the create flow must not abort (§4.4).
+/// degraded) — the create flow must not abort.
 pub(crate) fn resolve_create_device_set(
     fetched: Option<Vec<String>>,
     excluded: &[String],
@@ -181,11 +217,22 @@ pub(crate) fn resolve_create_device_set(
 ) -> (Vec<String>, bool) {
     match fetched {
         Some(ids) if !ids.is_empty() => {
-            let kept = ids
+            let kept: Vec<String> = ids
                 .into_iter()
                 .filter(|id| !excluded.iter().any(|e| e == id))
                 .collect();
-            (kept, false)
+            if kept.is_empty() {
+                // Every fetched device was excluded → the subscription would
+                // receive nowhere. Degrade + flag rather than return a silent
+                // empty set; fall back to this device unless it too was excluded.
+                let fallback = this_device_id
+                    .filter(|id| !excluded.iter().any(|e| e == id))
+                    .map(|id| vec![id.to_string()])
+                    .unwrap_or_default();
+                (fallback, true)
+            } else {
+                (kept, false)
+            }
         }
         _ => (
             this_device_id
@@ -225,12 +272,7 @@ pub async fn handle_device_list(
         })
         .collect();
 
-    let echoed_page = if page < 1 { 1 } else { page };
-    let echoed_size = if page_size < 1 {
-        DEFAULT_PAGE_SIZE
-    } else {
-        page_size
-    };
+    let (echoed_page, echoed_size) = normalize_page_params(page, page_size);
 
     output::success(json!({
         "list": list,
@@ -278,6 +320,10 @@ fn normalize_items(
         let parsed: Vec<UpdateItem> = serde_json::from_str(items_json).map_err(|e| {
             anyhow!("--items must be a JSON array of {{jobId, deviceList}} objects: {e}")
         })?;
+        // Form B mirrors Form A: an empty jobId is rejected, never silently sent.
+        if parsed.iter().any(|it| it.job_id.is_empty()) {
+            bail!("--items entries must each carry a non-empty jobId");
+        }
         Ok(parsed)
     } else {
         let job_id = job_id
@@ -293,7 +339,7 @@ fn normalize_items(
 }
 
 /// Client pre-validation: the resolved `items` array must be non-empty and
-/// `len <= 100` (AC-01 boundaries 0 / 1 / 100 / 101).
+/// `len <= 100` (boundaries 0 / 1 / 100 / 101).
 fn validate_items_len(len: usize) -> Result<()> {
     if len == 0 {
         bail!("no subscriptions to update: provide --job-id or a non-empty --items array");
@@ -337,7 +383,7 @@ pub async fn handle_subscribe_device_update(
         );
     }
 
-    // Client pre-validation before any request (AC-01): resolve + bound-check.
+    // Client pre-validation before any request: resolve + bound-check.
     let normalized = normalize_items(job_id, device_list, items)?;
     validate_items_len(normalized.len())?;
 
@@ -370,7 +416,7 @@ pub async fn handle_subscribe_device_update(
 mod tests {
     use super::*;
 
-    // ── fmt_unix_millis (AC-06) ──────────────────────────────────────────
+    // ── fmt_unix_millis ──────────────────────────────────────────────────
     #[test]
     fn fmt_unix_millis_zero_sentinel() {
         assert_eq!(fmt_unix_millis(0), "0");
@@ -405,7 +451,7 @@ mod tests {
         }
     }
 
-    // ── decode_device_page: three envelope shapes (AC-06) ────────────────
+    // ── decode_device_page: three envelope shapes ───────────────────────
     #[test]
     fn decode_bare_object() {
         let obj = json!({
@@ -434,7 +480,7 @@ mod tests {
         assert_eq!(p.total, 0);
     }
 
-    // ── subscribe-device-update normalization + body (AC-01) ─────────────
+    // ── subscribe-device-update normalization + body ────────────────────
     #[test]
     fn normalize_form_a_csv() {
         let items = normalize_items(Some("0xjob"), Some("d1, d2 ,,d3"), None).unwrap();
@@ -505,7 +551,7 @@ mod tests {
         assert!(validate_items_len(items.len()).is_err());
     }
 
-    // ── create-subscribe device set resolution (AC-02) ───────────────────
+    // ── create-subscribe device set resolution ──────────────────────────
     #[test]
     fn create_device_set_default_all_devices() {
         let fetched = Some(vec!["d1".to_string(), "d2".to_string(), "d3".to_string()]);
@@ -544,5 +590,97 @@ mod tests {
         let (list, degraded) = resolve_create_device_set(None, &[], None);
         assert!(list.is_empty());
         assert!(degraded); // still degraded; create must not abort
+    }
+
+    #[test]
+    fn create_device_set_all_excluded_degrades_to_unexcluded_this_device() {
+        // Every fetched device is excluded, but this device is NOT in the
+        // exclusion list → degrade to this device (flagged), never a silent empty.
+        let fetched = Some(vec!["d1".to_string(), "d2".to_string()]);
+        let excluded = vec!["d1".to_string(), "d2".to_string()];
+        let (list, degraded) = resolve_create_device_set(fetched, &excluded, Some("dME"));
+        assert_eq!(list, vec!["dME"]);
+        assert!(degraded);
+    }
+
+    #[test]
+    fn create_device_set_all_excluded_incl_this_device_is_empty_but_flagged() {
+        // All fetched devices excluded AND this device is one of them → empty
+        // routing set, but degraded=true so it is never reported as a clean list.
+        let fetched = Some(vec!["d1".to_string(), "d2".to_string()]);
+        let excluded = vec!["d1".to_string(), "d2".to_string()];
+        let (list, degraded) = resolve_create_device_set(fetched, &excluded, Some("d1"));
+        assert!(list.is_empty());
+        assert!(
+            degraded,
+            "all-excluded must not be reported as not-degraded"
+        );
+    }
+
+    // ── pagination helpers ───────────────────────────────────────────────
+    #[test]
+    fn normalize_page_params_floors_below_one() {
+        assert_eq!(normalize_page_params(0, 0), (1, DEFAULT_PAGE_SIZE));
+        assert_eq!(normalize_page_params(-5, -1), (1, DEFAULT_PAGE_SIZE));
+    }
+
+    #[test]
+    fn normalize_page_params_passes_through_valid_and_oversize() {
+        assert_eq!(normalize_page_params(3, 50), (3, 50));
+        // page_size > 100 is passed through unchanged (backend rejects with 81001).
+        assert_eq!(normalize_page_params(1, 500), (1, 500));
+    }
+
+    #[test]
+    fn pagination_done_stops_on_empty_short_total_and_cap() {
+        assert!(pagination_done(0, 20, 0, 0, 1, 1)); // empty page → stop
+        assert!(pagination_done(5, 20, 0, 5, 1, 1)); // short (final) page → stop
+        assert!(pagination_done(20, 20, 40, 40, 2, 1)); // reached positive total → stop
+                                                        // hard safety cap reached → stop even on a full page below `total`.
+        assert!(pagination_done(20, 20, 0, 200_000, 1 + MAX_PAGES, 1));
+    }
+
+    #[test]
+    fn pagination_done_continues_on_full_page_below_total() {
+        // full page, total not yet reached, cap far away → keep going.
+        assert!(!pagination_done(20, 20, 100, 20, 1, 1));
+        // total unknown (0) but page is full → keep going (only empty/short stops).
+        assert!(!pagination_done(20, 20, 0, 20, 1, 1));
+    }
+
+    #[test]
+    fn resolve_total_never_under_reports_aggregated_rows() {
+        assert_eq!(resolve_total(0, 3), 3); // empty terminal page echoed total 0
+        assert_eq!(resolve_total(5, 3), 5); // backend total wins when larger
+        assert_eq!(resolve_total(2, 2), 2);
+    }
+
+    #[test]
+    fn device_ids_drops_empty_ids() {
+        let page = DevicePage {
+            list: vec![
+                DeviceRow {
+                    device_id: "d1".into(),
+                    ..Default::default()
+                },
+                DeviceRow {
+                    device_id: "".into(),
+                    ..Default::default()
+                },
+                DeviceRow {
+                    device_id: "d2".into(),
+                    ..Default::default()
+                },
+            ],
+            total: 3,
+        };
+        assert_eq!(device_ids(page), vec!["d1", "d2"]);
+    }
+
+    #[test]
+    fn normalize_form_b_rejects_empty_job_id() {
+        // Form B mirrors Form A: an empty jobId is rejected, not silently sent.
+        let err = normalize_items(None, None, Some(r#"[{"jobId":"","deviceList":["d1"]}]"#));
+        assert!(err.is_err());
     }
 }

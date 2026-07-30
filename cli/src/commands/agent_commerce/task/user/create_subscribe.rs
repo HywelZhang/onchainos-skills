@@ -71,6 +71,48 @@ impl CreateSubscribeParams {
     }
 }
 
+/// Assemble the `create` request body. `device_list` is ALWAYS embedded (even
+/// empty) so the created record never relies on server-default routing;
+/// `providerAgentId` is only present when a designated provider was requested.
+fn build_create_body(
+    params: &CreateSubscribeParams,
+    effective_use_trial: bool,
+    terms_for_create: serde_json::Value,
+    terms_sig: &str,
+    device_list: &[String],
+) -> serde_json::Value {
+    let mut create_body = serde_json::json!({
+        "serviceId": params.service_id,
+        "useTrial": effective_use_trial,
+        "serviceParams": params.service_params,
+        "serviceTokenAmount": params.service_token_amount,
+        "serviceTokenAddress": params.service_token_address,
+        "autoRenew": params.auto_renew,
+        "copyTrade": params.copy_trade,
+        "title": params.title,
+        "description": params.description,
+        "descriptionSummary": params.description_summary,
+        "serviceInterval": params.service_interval,
+        "terms": terms_for_create,
+        "termsSig": terms_sig,
+        "deviceList": device_list,
+    });
+    if let Some(ref pid) = params.provider_agent_id {
+        create_body["providerAgentId"] = serde_json::json!(pid);
+    }
+    create_body
+}
+
+/// The json-mode success envelope data — always carries the `deviceRoutingDegraded`
+/// marker so the skill can render the degraded notice without a second query.
+fn build_create_success(sub_id: &str, tx_hash: &str, degraded: bool) -> serde_json::Value {
+    serde_json::json!({
+        "subId": sub_id,
+        "txHash": tx_hash,
+        "deviceRoutingDegraded": degraded,
+    })
+}
+
 pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
@@ -151,7 +193,7 @@ pub async fn handle_create_subscribe(
     // Resolve the receive-device routing set: default = all logged-in devices
     // (device-list paged to completion) minus any --exclude-device. If that query
     // fails or returns empty, degrade to this device only and mark the result —
-    // never abort the create (§4.4). deviceList is ALWAYS sent explicitly so the
+    // never abort the create. deviceList is ALWAYS sent explicitly so the
     // created record never depends on server-default semantics.
     let excluded = params.exclude_device.clone().unwrap_or_default();
     let fetched = super::device_routing::fetch_all_device_ids(client, &user_agent_id)
@@ -166,25 +208,13 @@ pub async fn handle_create_subscribe(
         );
     }
 
-    let mut create_body = serde_json::json!({
-        "serviceId": params.service_id,
-        "useTrial": effective_use_trial,
-        "serviceParams": params.service_params,
-        "serviceTokenAmount": params.service_token_amount,
-        "serviceTokenAddress": params.service_token_address,
-        "autoRenew": params.auto_renew,
-        "copyTrade": params.copy_trade,
-        "title": params.title,
-        "description": params.description,
-        "descriptionSummary": params.description_summary,
-        "serviceInterval": params.service_interval,
-        "terms": terms_for_create,
-        "termsSig": terms_sig,
-        "deviceList": device_list,
-    });
-    if let Some(ref pid) = params.provider_agent_id {
-        create_body["providerAgentId"] = serde_json::json!(pid);
-    }
+    let create_body = build_create_body(
+        &params,
+        effective_use_trial,
+        terms_for_create,
+        &terms_sig,
+        &device_list,
+    );
 
     let create_resp = client
         .post_with_identity(
@@ -239,11 +269,7 @@ pub async fn handle_create_subscribe(
     }
 
     if json_mode {
-        crate::output::success(serde_json::json!({
-            "subId": sub_id,
-            "txHash": tx_hash,
-            "deviceRoutingDegraded": device_routing_degraded,
-        }));
+        crate::output::success(build_create_success(&sub_id, &tx_hash, device_routing_degraded));
         if super::content::is_cli_mode() {
             println!();
             println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
@@ -394,5 +420,56 @@ mod tests {
             "--description", "d",
             "--description-summary", "s",
         ]).is_err());
+    }
+
+    fn params_fixture(provider: Option<&str>) -> super::CreateSubscribeParams {
+        super::CreateSubscribeParams {
+            service_id: "svc".to_string(),
+            use_trial: false,
+            service_params: String::new(),
+            service_token_amount: "10".to_string(),
+            service_token_address: "0xtok".to_string(),
+            auto_renew: 1,
+            copy_trade: 0,
+            title: "t".to_string(),
+            description: "d".to_string(),
+            description_summary: "s".to_string(),
+            provider_agent_id: provider.map(str::to_string),
+            service_interval: "month".to_string(),
+            format: "json".to_string(),
+            exclude_device: None,
+        }
+    }
+
+    #[test]
+    fn create_body_always_embeds_device_list_even_when_empty() {
+        // Degrade / all-excluded resolves to an empty set — the body must still
+        // carry an explicit (empty) deviceList so routing never falls to a server default.
+        let p = params_fixture(None);
+        let body = super::build_create_body(&p, false, serde_json::json!({ "asp": "x" }), "0xsig", &[]);
+        assert_eq!(body["deviceList"], serde_json::json!([]));
+        assert!(body.get("deviceList").is_some());
+        assert_eq!(body["termsSig"], serde_json::json!("0xsig"));
+        assert!(body.get("providerAgentId").is_none());
+    }
+
+    #[test]
+    fn create_body_carries_devices_and_provider_when_present() {
+        let p = params_fixture(Some("agent-7"));
+        let devices = vec!["d1".to_string(), "d2".to_string()];
+        let body = super::build_create_body(&p, true, serde_json::json!({}), "0xsig", &devices);
+        assert_eq!(body["deviceList"], serde_json::json!(["d1", "d2"]));
+        assert_eq!(body["providerAgentId"], serde_json::json!("agent-7"));
+        assert_eq!(body["useTrial"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn create_success_envelope_carries_degrade_marker() {
+        let degraded = super::build_create_success("0xjob", "0xhash", true);
+        assert_eq!(degraded["deviceRoutingDegraded"], serde_json::json!(true));
+        assert_eq!(degraded["subId"], serde_json::json!("0xjob"));
+        assert_eq!(degraded["txHash"], serde_json::json!("0xhash"));
+        let ok = super::build_create_success("0xjob", "0xhash", false);
+        assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
     }
 }

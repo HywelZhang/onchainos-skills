@@ -301,7 +301,7 @@ pub async fn handle_subscribe_detail(
         if let Some(obj) = enriched.as_object_mut() {
             let code = obj.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
             obj.insert("statusName".to_string(), serde_json::Value::String(status_name(code)));
-            // Device-routing enrichment (WBW-14118): tolerant deviceList/categoryCodes
+            // Device-routing enrichment: tolerant deviceList/categoryCodes
             // normalized to [], plus the this-device receipt derivation. Subscribe time
             // fields stay Unix seconds — never run through the ms formatter.
             let device_list = normalize_str_array(obj.get("deviceList"));
@@ -450,14 +450,16 @@ pub struct SubscriptionInfo {
     pub payment_token_address: String,
     pub payment_token_amount: String,
     pub payment_currency_amount: String,
-    // ── Device routing (additive, WBW-14118) ──────────────────────────────
+    // ── Device routing (additive) ─────────────────────────────────────────
     // Receive-device list for this subscription. Tri-state on the wire:
     // missing | null | array — all tolerated (Option so an explicit `null` on
-    // historical rows does not fail deserialization); normalized to [] on emit.
-    #[serde(default)]
+    // historical rows does not fail deserialization); non-string array elements
+    // are dropped (tolerant), matching subscribe-detail's normalize_str_array;
+    // normalized to [] on emit.
+    #[serde(default, deserialize_with = "de_opt_str_array")]
     pub device_list: Option<Vec<String>>,
     // Sibling additive field from the same backend change; tolerate null the same way.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_str_array")]
     pub category_codes: Option<Vec<String>>,
     // Derived on the client after parse (device id lives only on the client).
     // Serialized out, never read from the wire (mirrors `status_name`).
@@ -521,6 +523,18 @@ fn normalize_str_array(v: Option<&serde_json::Value>) -> Vec<String> {
             .collect(),
         None => Vec::new(),
     }
+}
+
+/// Serde adapter for the struct (`my-subscriptions`) parse path so it tolerates
+/// the same shapes `normalize_str_array` does on the raw-Value (`subscribe-detail`)
+/// path: `null` → `None`; an array → `Some` with non-string elements dropped (a
+/// single non-string element must not fail the whole list parse).
+fn de_opt_str_array<'de, D>(de: D) -> std::result::Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<serde_json::Value>::deserialize(de)?;
+    Ok(opt.map(|v| normalize_str_array(Some(&v))))
 }
 
 /// This device receives the subscription iff its (client-resolved) device id is
@@ -891,7 +905,7 @@ mod tests {
         assert_eq!(trial_window(&json!({})), (0, 0));
     }
 
-    // ── Device routing enrichment (WBW-14118, AC-03 / AC-04) ─────────────
+    // ── Device routing enrichment ────────────────────────────────────────
 
     #[test]
     fn device_list_tri_state_deserializes_without_error() {
@@ -937,6 +951,27 @@ mod tests {
         assert_eq!(normalize_str_array(Some(&json!("notarray"))), Vec::<String>::new());
         // non-string array elements are dropped, not errored.
         assert_eq!(normalize_str_array(Some(&json!(["a", 1, null, "b"]))), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn my_subscriptions_struct_parse_tolerates_non_string_array_elements() {
+        // The struct (my-subscriptions) parse path must be as tolerant as the
+        // raw-Value (subscribe-detail) path: a non-string element drops, and one
+        // bad element must NOT fail the whole list parse.
+        let mut w = detail_fixture();
+        w["deviceList"] = json!(["d1", 2, null, "d2"]);
+        w["categoryCodes"] = json!([1, "c1"]);
+        let info: SubscriptionInfo = serde_json::from_value(w).unwrap();
+        assert_eq!(info.device_list.unwrap(), vec!["d1", "d2"]);
+        assert_eq!(info.category_codes.unwrap(), vec!["c1"]);
+
+        let mut w2 = detail_fixture();
+        w2["deviceList"] = json!(["dX", 7]);
+        let wrapper: SubscriptionList = serde_json::from_value(json!({ "list": [w2] })).unwrap();
+        assert_eq!(
+            wrapper.list[0].device_list.as_deref(),
+            Some(&["dX".to_string()][..])
+        );
     }
 
     #[test]

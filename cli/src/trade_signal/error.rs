@@ -21,6 +21,13 @@ pub enum ParseError {
     /// Empty input string.
     EmptyInput,
     /// First char is neither `{` nor `【`, or there is leading whitespace.
+    ///
+    /// RESERVED (MR !196 review LOW): `parse_signal_text` never returns this today —
+    /// it always reaches `header::parse_header`, which reports `UnknownHeader` for a
+    /// bad prefix. The variant is intentionally kept (not dead-removed) as the stable
+    /// code for a future format-gated entry point that short-circuits when
+    /// `detect_format` is not `V2Text` (Task 3 wiring). Its `code()` is part of the
+    /// external contract, so keeping it avoids a later breaking re-add.
     UnsupportedFormat,
     /// Envelope JSON is malformed / has an unknown or missing field.
     InvalidEnvelope,

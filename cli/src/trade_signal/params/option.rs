@@ -67,6 +67,9 @@ fn check_contract_consistency(
     if yymmdd.len() != 6 || !yymmdd.bytes().all(|b| b.is_ascii_digit()) {
         return Err(ParseError::OptionFieldMismatch);
     }
+    // The 2-digit contract-code year is interpreted in the 21st century (`20YY`,
+    // i.e. 2000-2099) — intentional and sufficient for tradeable option expiries.
+    // Widening to a full 4-digit code year is a spec change, not a bug fix.
     let code_date = format!("20{}-{}-{}", &yymmdd[0..2], &yymmdd[2..4], &yymmdd[4..6]);
     if code_date != expiry {
         return Err(ParseError::OptionFieldMismatch);

@@ -207,8 +207,7 @@ fn language_mix() {
 
 /// AC-12: multi-line / too-long / emoji / link / misplaced `@` / wrong count / empty field.
 #[test]
-fn forbidden_and_shape() {
-    assert_eq!(
+fn forbidden_and_shape() {    assert_eq!(
         code(&format!("{H_SPOT}BTC/USDT | BUY\n| Position 5%")),
         "multi_line"
     );
@@ -399,8 +398,31 @@ fn envelope_faults() {
     );
 }
 
-// ── Invariants ──────────────────────────────────────────────────────────────
+/// Empty-input integration case (MR !196 review LOW — test gap): the public
+/// `parse_signal_text` entry maps an empty string to the stable `empty_input`
+/// code (previously only covered at the guard level, never end-to-end).
+#[test]
+fn empty_input_integration() {
+    assert_eq!(parse_signal_text("").unwrap_err().code(), "empty_input");
+}
 
+/// Envelope `deny_unknown_fields` integration case (MR !196 review LOW — test
+/// gap): an otherwise-valid envelope carrying an unexpected top-level key is
+/// rejected as `invalid_envelope`, not silently accepted.
+#[test]
+fn envelope_rejects_unknown_field() {
+    let text =
+        "\u{3010}Spot Signal\u{3011}BTC/USDT | BUY | 60000-65000 | Position 5% | valid for 1h";
+    let with_extra = format!(
+        "{{\"schemaVersion\":2,\"deliveryId\":\"abc123\",\"signalTime\":1,\"signalText\":\"{text}\",\"unexpected\":true}}"
+    );
+    assert_eq!(
+        parse_envelope(&with_extra).unwrap_err().code(),
+        "invalid_envelope"
+    );
+}
+
+// ── Invariants ──────────────────────────────────────────────────────────────
 /// AC-24: no error path echoes the raw signal text / tokenAddr / event / contractCode.
 #[test]
 fn errors_never_leak_input() {

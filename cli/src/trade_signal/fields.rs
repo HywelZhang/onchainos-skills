@@ -76,6 +76,16 @@ const OT_LIMIT_ZH: &str = "\u{9650}\u{4ef7}";
 const OT_MARKET_ZH: &str = "\u{5e02}\u{4ef7}";
 /// The `≤` cap prefix on slippage / premium (`≤1%`, `≤320 USDT`).
 const LE: char = '\u{2264}';
+/// Hard upper bound for perp `leverage` (IO-IN-01, MR !196 review). It bounds the
+/// value that flows into the autotrade/payment path so it cannot reach `u32::MAX`,
+/// bringing leverage in line with every other economically-sensitive scalar in this
+/// module (position 0.1-20%, slippage ≤5%, odds [0,1], ttl 300..=604800s), all of
+/// which are range-checked. Set to 125 — the highest leverage any supported
+/// perpetual venue offers, so a value above it cannot correspond to a real
+/// executable position and is rejected fail-safe (tightening only ever rejects
+/// more, never permits more). A stricter per-venue policy, if product later defines
+/// one, is a one-constant edit (mirrors `MAX_SLIPPAGE_BPS` in autotrade `schema.rs`).
+const MAX_LEVERAGE: u32 = 125;
 
 // ── Field splitting ────────────────────────────────────────────────────────────
 
@@ -363,6 +373,13 @@ fn parse_margin_mode_kw(tok: &str, lang: Language) -> Result<MarginMode, ParseEr
 /// emoji. CJK glyphs, full-width brackets, `$`, `≤`, `…` and ASCII quotes are NOT
 /// flagged. `@` is handled per-field after header classification (the Prediction
 /// odds separator is legal), so it is deliberately NOT globally banned here.
+///
+/// NOTE (IO-IN-01 LOW): this is a deliberately NON-EXHAUSTIVE fail-closed injection
+/// guard, not a URL/emoji parser. The `www.` substring test is a heuristic that can
+/// false-positive on a legitimate Prediction `event` mentioning a bare `www.` host;
+/// that is acceptable because the field grammar never requires a URL, so rejecting
+/// one is safe. The emoji block list covers the common ranges, not every pictograph
+/// codepoint. Widening either is a data-only edit if a concrete gap is found.
 pub fn contains_forbidden(s: &str) -> bool {
     if s.contains("http://") || s.contains("https://") || s.contains("www.") {
         return true;
@@ -527,7 +544,8 @@ pub fn parse_outcome_odds(value: &str) -> Result<(Outcome, String), ParseError> 
     Ok((outcome, odds))
 }
 
-/// Parse leverage: a positive integer.
+/// Parse leverage: a positive integer in `1..=MAX_LEVERAGE`. Both a `0` and a
+/// value above the cap fail as `OutOfRange("leverage")` (IO-IN-01).
 pub fn parse_leverage(value: &str) -> Result<u32, ParseError> {
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
         return Err(ParseError::OutOfRange("leverage"));
@@ -535,7 +553,7 @@ pub fn parse_leverage(value: &str) -> Result<u32, ParseError> {
     let n: u32 = value
         .parse()
         .map_err(|_| ParseError::OutOfRange("leverage"))?;
-    if n == 0 {
+    if !(1..=MAX_LEVERAGE).contains(&n) {
         return Err(ParseError::OutOfRange("leverage"));
     }
     Ok(n)
@@ -983,6 +1001,18 @@ mod tests {
         ); // signed
         assert_eq!(parse_leverage(""), Err(ParseError::OutOfRange("leverage")));
         // empty
+        // IO-IN-01: the max leverage parses, one above the cap is out of range, and
+        // an astronomically large value (previously accepted up to u32::MAX) is now
+        // rejected instead of flowing into the autotrade/payment path.
+        assert_eq!(parse_leverage("125").unwrap(), 125);
+        assert_eq!(
+            parse_leverage("126"),
+            Err(ParseError::OutOfRange("leverage"))
+        );
+        assert_eq!(
+            parse_leverage("1000000"),
+            Err(ParseError::OutOfRange("leverage"))
+        );
     }
 
     #[test]

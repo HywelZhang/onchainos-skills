@@ -147,7 +147,7 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.
 - To open one row's full detail, pass that row's **`jobId`** to `subscribe-detail` (§订阅详情).
 
-## Post-login subscription display (S1 — login-flow-triggered)
+## Post-login subscription display (login-flow-triggered)
 
 **Trigger (entry layer):** the wallet login flow itself, NOT a user utterance. The single entry is the routing line in [`wallet.md`](../../okx-agentic-wallet/references/wallet.md) → Authentication step 3 ("After login"). Do **NOT** add any trigger words to `SKILL.md` for this display — the login flow is the only entry. Command: `onchainos agent my-subscriptions --role buyer`.
 
@@ -187,7 +187,7 @@ Trigger: user selects a row / asks about one subscription (`订阅详情` / `这
 - 金额字段（`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`）是**字符串**，原样展示，绝不转 float。
 - token 符号 CLI 不提供，仅有 `serviceTokenAddress`（展示短地址）。
 
-After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row is prefixed with 🌟 and gets the `（本设备）` marker (per PRD S4 example `🌟xxxxxxx（iphone 15）本设备`) — this 🌟 prefix is **exclusive to the §Subscription Detail table**.
+After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row is prefixed with 🌟 and gets the `（本设备）` marker (the product PRD renders e.g. `🌟xxxxxxx（iphone 15）本设备`) — this 🌟 prefix is **exclusive to the §Subscription Detail table**.
 
 | 已登陆设备 | 设备是否接收任务消息 |
 |---|---|

@@ -134,13 +134,13 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 
 | # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | 已登陆设备 | 设备是否接收任务消息 |
 |---|------|--------|------|------|---------|---------|------|------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本机）if this device} | {是/否} |
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本设备）if this device} | {是/否} |
 
 - **状态**: 直接展示 CLI 返回的 `statusName`（ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式改由「期数」列区分（`trialType==1` 显示"试用期"）。
 - **费用**: `serviceTokenAmount` 字符串原样展示（绝不转 float）；CLI 不提供 token 符号，仅 `serviceTokenAddress`。
 - **期数** (按状态分派): `trialType==1` → "试用期"; else `periodIndex` 为合法正整数(> 0) → `第{periodIndex}期`; else (`periodIndex` 为 null 或 ≤ 0) → "—"。
 - **下次扣款** (no CLI field — derive): `statusName != "ACTIVE"` → "—"; else `trialType==1` → 读 `trialEndTime`(正拼, 优先) 或 `trailEndTime`(`trail*` 旧拼, fallback) 双读(复用 AC-17)，渲染为日期(试用转正扣款日)，两者皆缺 → "日期暂缺"; else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
-- **已登陆设备 / 设备是否接收任务消息** (per-device expansion): a subscription logged in on N devices occupies **N rows** — the `#` and all leading subscription columns **repeat unchanged** across that subscription's rows. 已登陆设备 = that device's readable `deviceName` (join each id in the subscription's `deviceList` from `my-subscriptions` against the `device-list` rows to get names; the **this-device** row gets a prominent marker `（本机）`). 设备是否接收任务消息 = **是** when the device id ∈ this subscription's `deviceList`, else **否**; the this-device row's value comes directly from the CLI `thisDeviceReceives` flag — never recompute it. When a device name is unavailable, **degrade to a count / raw id — never fabricate a name**.
+- **已登陆设备 / 设备是否接收任务消息** (per-device expansion): a subscription logged in on N devices occupies **N rows** — the `#` and all leading subscription columns **repeat unchanged** across that subscription's rows. 已登陆设备 = that device's readable `deviceName` (join each id in the subscription's `deviceList` from `my-subscriptions` against the `device-list` rows to get names; the **this-device** row gets a prominent marker `（本设备）`). 设备是否接收任务消息 = **是** when the device id ∈ this subscription's `deviceList`, else **否**; the this-device row's value comes directly from the CLI `thisDeviceReceives` flag — never recompute it. When a device name is unavailable, **degrade to a count / raw id — never fabricate a name**.
 - **Degraded render (MANDATORY — device table unavailable):** when `device-list` fails or is empty, fall back to **one row per subscription** and **explicitly state that other devices' receipt status is temporarily unavailable** (e.g. 「其他设备的接收状态暂不可用」). It is forbidden to present the one known (this) device as the full picture. The this-device row still shows 是/否 from `thisDeviceReceives`; all other devices are shown as unavailable, not omitted silently.
 - **Display-only rule:** on any list render, do **not** proactively ask whether to turn on receipt (product retracted that prompt); turning on happens only on explicit user request.
 - All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
@@ -153,13 +153,13 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 
 **Zero-disturb (mandatory).** If the command errors (no OKX.AI identity, transport/auth failure) OR the subscription list is empty, output **nothing** OKX.AI-related — no table, no opening line, no 💡 hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
 
-**Non-empty render.** Reuse §My Subscriptions **as-is**: same per-device expansion (a subscription on N devices occupies N rows; the `#` and all leading subscription columns repeat unchanged), same `deviceList` × `device-list` name join, same pagination-to-completion, same `thisDeviceReceives` / `thisDeviceId` / `（本机）` handling, and the same **mandatory degraded render** when `device-list` fails/empty (fall back to one row per subscription and explicitly state 「其他设备的接收状态暂不可用」 — never present this device as the full picture). Only the two deltas below differ.
+**Non-empty render.** Reuse §My Subscriptions **as-is**: same per-device expansion (a subscription on N devices occupies N rows; the `#` and all leading subscription columns repeat unchanged), same `deviceList` × `device-list` name join, same pagination-to-completion, same `thisDeviceReceives` / `thisDeviceId` / `（本设备）` handling, and the same **mandatory degraded render** when `device-list` fails/empty (fall back to one row per subscription and explicitly state 「其他设备的接收状态暂不可用」 — never present this device as the full picture). Only the two deltas below differ.
 
 - **Delta (a) — column header:** the device-name column header is **「已登陆设备名称」** (the second device column keeps **「设备是否接收任务消息」**, identical to §My Subscriptions / §Subscription Detail). All other columns and their derivation rules are exactly those of §My Subscriptions:
 
 | # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | 已登陆设备名称 | 设备是否接收任务消息 |
 |---|------|--------|------|------|---------|---------|------|------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本机）if this device} | {是/否} |
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本设备）if this device} | {是/否} |
 
 - **Delta (b) — surrounding copy.** Precede the table with this VERBATIM opening line (English users: verbatim; non-English: translate faithfully, preserving meaning, per the §Localization banner):
 
@@ -187,11 +187,11 @@ Trigger: user selects a row / asks about one subscription (`订阅详情` / `这
 - 金额字段（`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`）是**字符串**，原样展示，绝不转 float。
 - token 符号 CLI 不提供，仅有 `serviceTokenAddress`（展示短地址）。
 
-After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row gets a prominent marker `（本机）`.
+After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row gets a prominent marker `（本设备）`.
 
 | 已登陆设备 | 设备是否接收任务消息 |
 |---|---|
-| {deviceName}{（本机）if this device} | {是/否 from `thisDeviceReceives` / membership} |
+| {deviceName}{（本设备）if this device} | {是/否 from `thisDeviceReceives` / membership} |
 
 - 已登陆设备 names come from joining the detail's `deviceList` ids against `device-list` rows; **degrade to a raw id / count when a name is unavailable — never fabricate a name**.
 - 设备是否接收任务消息 = 是 when the device id ∈ `deviceList`; the this-device row reads the CLI `thisDeviceReceives` flag directly.
@@ -204,9 +204,9 @@ Trigger: `设备列表` / `我登录了哪些设备` / `哪些设备在线` / `d
 
 | 设备 | 最后在线时间 | 接收的订阅任务消息 |
 |---|---|---|
-| {deviceName}{（本机）if `isThisDevice`} | {lastOnlineLocal} | {derived — see below} |
+| {deviceName}{（本设备）if `isThisDevice`} | {lastOnlineLocal} | {derived — see below} |
 
-- **设备**: readable `deviceName` (may be empty → show raw `deviceId` / a count, never fabricate); the `isThisDevice==true` row gets the `（本机）` marker.
+- **设备**: readable `deviceName` (may be empty → show raw `deviceId` / a count, never fabricate); the `isThisDevice==true` row gets the `（本设备）` marker.
 - **最后在线时间**: render `lastOnlineLocal` **verbatim** — it is already CLI-formatted local time; never re-convert or re-parse `lastOnlineTime`.
 - **接收的订阅任务消息**: derived by joining each `deviceId` against the subscriptions' `deviceList` (from `my-subscriptions`) — e.g. list which subscriptions that device receives, or 是/否 for a specific subscription in context.
 - Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), see the degraded render in §My Subscriptions / §Subscription Detail — state that device info is temporarily unavailable rather than presenting a partial picture as complete.

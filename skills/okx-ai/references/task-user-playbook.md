@@ -161,7 +161,7 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 |---|------|--------|------|------|---------|---------|------|------|------|
 | 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName}{（本设备）if this device} | {是/否} |
 
-- **Delta (b) — surrounding copy.** Precede the table with this VERBATIM opening line (English users: verbatim; non-English: translate faithfully, preserving meaning, per the §Localization banner):
+- **Delta (b) — surrounding copy.** Precede the table with this VERBATIM opening line (Chinese-language sessions: render verbatim; other languages: translate faithfully, preserving meaning, per the §Localization banner):
 
   > 这是你订阅的服务和每台设备的消息推送状态。想让某台设备开始或停止接收，随时告诉我就行。
 

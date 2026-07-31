@@ -213,6 +213,10 @@ Trigger: `设备列表` / `我登录了哪些设备` / `哪些设备在线` / `d
 
 ## Create-subscribe device preview
 
-Before creating a subscription, show the device table (设备 + 最后在线时间 from `device-list`) and tell the user the task's messages will **auto-push to all logged-in devices**, and any device can be disconnected later. On create, the CLI always sends `deviceList` explicitly (all logged-in devices minus any excluded).
+Before creating a subscription, show the device table (设备 + 最后在线时间 from `device-list`) and tell the user the task's messages will **auto-push to all logged-in devices**, and any device can be disconnected later. Precede the device table with this VERBATIM pre-create line (Chinese-language sessions: render verbatim; other languages: translate faithfully, preserving meaning, per the §Localization banner):
+
+> 您当前登录了以下设备，本任务消息会自动推送给所有已登陆设备。想让某台设备不再接收，随时告诉我。
+
+On create, the CLI always sends `deviceList` explicitly (all logged-in devices minus any excluded).
 
 - **Degrade:** if `device-list` fails/empty, the create still **proceeds with this device only**, the CLI returns `data.deviceRoutingDegraded: true`, and the skill tells the user only this device was set (do NOT abort). Surface this as a plain notice, not an error.

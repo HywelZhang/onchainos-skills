@@ -304,15 +304,26 @@ pub async fn handle_subscribe_detail(
             // Device-routing enrichment: tolerant deviceList/categoryCodes
             // normalized to [], plus the this-device receipt derivation. Subscribe time
             // fields stay Unix seconds — never run through the ms formatter.
-            let device_list = normalize_str_array(obj.get("deviceList"));
-            let category_codes = normalize_str_array(obj.get("categoryCodes"));
             let this_device_id = crate::device::id::get_cached_device_id();
-            let receives = device_receives(this_device_id, &device_list);
-            obj.insert("deviceList".to_string(), serde_json::json!(device_list));
-            obj.insert("categoryCodes".to_string(), serde_json::json!(category_codes));
-            obj.insert("thisDeviceReceives".to_string(), serde_json::Value::Bool(receives));
+            let enrichment = derive_device_enrichment(
+                Some(normalize_str_array(obj.get(FIELD_DEVICE_LIST))),
+                Some(normalize_str_array(obj.get(FIELD_CATEGORY_CODES))),
+                this_device_id,
+            );
             obj.insert(
-                "thisDeviceId".to_string(),
+                FIELD_DEVICE_LIST.to_string(),
+                serde_json::json!(enrichment.device_list),
+            );
+            obj.insert(
+                FIELD_CATEGORY_CODES.to_string(),
+                serde_json::json!(enrichment.category_codes),
+            );
+            obj.insert(
+                FIELD_THIS_DEVICE_RECEIVES.to_string(),
+                serde_json::Value::Bool(enrichment.this_device_receives),
+            );
+            obj.insert(
+                FIELD_THIS_DEVICE_ID.to_string(),
                 match this_device_id {
                     Some(id) => serde_json::Value::String(id.to_string()),
                     None => serde_json::Value::Null,
@@ -543,6 +554,51 @@ fn device_receives(this_device_id: Option<&str>, device_list: &[String]) -> bool
     this_device_id.is_some_and(|id| device_list.iter().any(|d| d == id))
 }
 
+// ── Device-routing enrichment seam (shared by both emitters) ──────────────
+//
+// The subscribe-detail (raw `serde_json::Value`) and my-subscriptions (typed
+// struct) paths carry identical wire field names and derive the same
+// this-device receipt. These constants + `derive_device_enrichment` are the
+// single source both emitters consume, so the two paths cannot drift. The
+// tolerant read itself stays single-sourced in `normalize_str_array` (the
+// raw path calls it directly; the struct path via the `de_opt_str_array`
+// serde adapter, which delegates to it).
+
+/// Wire field name: receive-device list for a subscription.
+const FIELD_DEVICE_LIST: &str = "deviceList";
+/// Wire field name: subscription category codes.
+const FIELD_CATEGORY_CODES: &str = "categoryCodes";
+/// Wire field name: derived "this device receives" flag.
+const FIELD_THIS_DEVICE_RECEIVES: &str = "thisDeviceReceives";
+/// Wire field name: the client-resolved this-device id.
+const FIELD_THIS_DEVICE_ID: &str = "thisDeviceId";
+
+/// Normalized device-routing enrichment for one subscription: both arrays
+/// defaulted to `[]` and the this-device receipt derived from the device list.
+struct DeviceEnrichment {
+    device_list: Vec<String>,
+    category_codes: Vec<String>,
+    this_device_receives: bool,
+}
+
+/// Derive the shared device-routing enrichment from the two (already tolerant-read)
+/// arrays and the client's this-device id. Pure: `None` normalizes to `[]`; the
+/// receipt is membership of `this_device_id` in the normalized device list.
+fn derive_device_enrichment(
+    device_list: Option<Vec<String>>,
+    category_codes: Option<Vec<String>>,
+    this_device_id: Option<&str>,
+) -> DeviceEnrichment {
+    let device_list = device_list.unwrap_or_default();
+    let category_codes = category_codes.unwrap_or_default();
+    let this_device_receives = device_receives(this_device_id, &device_list);
+    DeviceEnrichment {
+        device_list,
+        category_codes,
+        this_device_receives,
+    }
+}
+
 fn filter_subscriptions(
     list: Vec<SubscriptionInfo>,
     role: SubscriptionRole,
@@ -575,10 +631,16 @@ pub async fn handle_my_subscriptions(
     let this_device_id = crate::device::id::get_cached_device_id();
     for item in &mut list {
         item.status_name = status_name(item.status);
-        // Normalize both additive arrays to [] on emit; derive this-device receipt.
-        let devices = item.device_list.get_or_insert_with(Vec::new);
-        item.this_device_receives = device_receives(this_device_id, devices);
-        item.category_codes.get_or_insert_with(Vec::new);
+        // Normalize both additive arrays to [] on emit; derive this-device receipt
+        // via the shared enrichment seam (same policy as subscribe-detail).
+        let enrichment = derive_device_enrichment(
+            item.device_list.take(),
+            item.category_codes.take(),
+            this_device_id,
+        );
+        item.device_list = Some(enrichment.device_list);
+        item.category_codes = Some(enrichment.category_codes);
+        item.this_device_receives = enrichment.this_device_receives;
     }
     // Buyer listing their subscriptions on any device establishes the copy-trade provider
     // session for each active copy-trade sub (drains held signals cross-device).
@@ -594,7 +656,13 @@ pub async fn handle_my_subscriptions(
             }
         }
     }
-    crate::output::success(serde_json::json!({ "list": list, "thisDeviceId": this_device_id }));
+    let mut envelope = serde_json::Map::new();
+    envelope.insert("list".to_string(), serde_json::json!(list));
+    envelope.insert(
+        FIELD_THIS_DEVICE_ID.to_string(),
+        serde_json::json!(this_device_id),
+    );
+    crate::output::success(serde_json::Value::Object(envelope));
     Ok(())
 }
 
@@ -982,5 +1050,41 @@ mod tests {
         // deviceList serializes to null when the wire value was absent (normalized
         // to [] only on the my-subscriptions emit path, verified via the handler).
         assert!(out.get("deviceList").is_some());
+    }
+
+    #[test]
+    fn derive_device_enrichment_is_the_single_source() {
+        // The shared seam both emitters consume: None → [], receipt is membership.
+        let none = derive_device_enrichment(None, None, Some("d1"));
+        assert!(none.device_list.is_empty());
+        assert!(none.category_codes.is_empty());
+        assert!(!none.this_device_receives); // empty list → false
+
+        let members = derive_device_enrichment(
+            Some(vec!["d1".to_string(), "d2".to_string()]),
+            Some(vec!["c1".to_string()]),
+            Some("d2"),
+        );
+        assert_eq!(members.device_list, vec!["d1", "d2"]);
+        assert_eq!(members.category_codes, vec!["c1"]);
+        assert!(members.this_device_receives); // this-device in list → true
+
+        // Unresolved this-device id ⇒ false even with a populated list.
+        let unresolved = derive_device_enrichment(Some(vec!["d1".to_string()]), None, None);
+        assert!(!unresolved.this_device_receives);
+    }
+
+    #[test]
+    fn wire_field_name_constants_match_the_camelcase_struct_fields() {
+        // Constants are the single source for the four wire names used by both
+        // emitters; keep them aligned with the struct's serde(rename_all) output.
+        let mut info: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
+        info.device_list = Some(vec!["d1".to_string()]);
+        info.category_codes = Some(vec!["c1".to_string()]);
+        let out = serde_json::to_value(&info).unwrap();
+        assert!(out.get(FIELD_DEVICE_LIST).is_some());
+        assert!(out.get(FIELD_CATEGORY_CODES).is_some());
+        assert!(out.get(FIELD_THIS_DEVICE_RECEIVES).is_some());
+        assert_eq!(FIELD_THIS_DEVICE_ID, "thisDeviceId");
     }
 }

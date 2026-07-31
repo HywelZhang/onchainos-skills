@@ -187,11 +187,11 @@ Trigger: user selects a row / asks about one subscription (`订阅详情` / `这
 - 金额字段（`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`）是**字符串**，原样展示，绝不转 float。
 - token 符号 CLI 不提供，仅有 `serviceTokenAddress`（展示短地址）。
 
-After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row gets a prominent marker `（本设备）`.
+After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row is prefixed with 🌟 and gets the `（本设备）` marker (per PRD S4 example `🌟xxxxxxx（iphone 15）本设备`) — this 🌟 prefix is **exclusive to the §Subscription Detail table**.
 
 | 已登陆设备 | 设备是否接收任务消息 |
 |---|---|
-| {deviceName}{（本设备）if this device} | {是/否 from `thisDeviceReceives` / membership} |
+| {🌟 if this device}{deviceName}{（本设备）if this device} | {是/否 from `thisDeviceReceives` / membership} |
 
 - 已登陆设备 names come from joining the detail's `deviceList` ids against `device-list` rows; **degrade to a raw id / count when a name is unavailable — never fabricate a name**.
 - 设备是否接收任务消息 = 是 when the device id ∈ `deviceList`; the this-device row reads the CLI `thisDeviceReceives` flag directly.

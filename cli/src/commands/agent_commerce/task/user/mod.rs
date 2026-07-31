@@ -336,8 +336,11 @@ pub enum TaskCommand {
     /// Overwrite the receive-device list for one or more subscriptions (batch).
     #[command(name = "subscribe-device-update")]
     SubscribeDeviceUpdate {
+        #[arg(long = "job-id")]
         job_id: Option<String>,
+        #[arg(long = "device-list")]
         device_list: Option<String>,
+        #[arg(long, conflicts_with_all = ["job_id", "device_list"])]
         items: Option<String>,
     },
     /// List the devices this agent is logged in on (paginated to completion).

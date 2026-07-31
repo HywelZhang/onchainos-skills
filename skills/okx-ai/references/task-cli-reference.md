@@ -473,7 +473,7 @@ agent subscribe-device-update --items '[{"jobId":"0x..","deviceList":["d1"]}]'
 |---|---|---|---|
 | `--job-id` | form A | — | subscription jobId (single-item form) |
 | `--device-list` | No | *(clear)* | comma-separated device ids; empty/omitted clears the list |
-| `--items` | form B | — | JSON array of `{jobId, deviceList}`; non-empty, ≤100. Wins over form A if both given |
+| `--items` | form B | — | JSON array of `{jobId, deviceList}`; non-empty, ≤100. Mutually exclusive with `--job-id`/`--device-list` (clap rejects the combination at parse time) |
 
 Client pre-validates `items` non-empty and ≤100 (0 / >100 fail locally with **no request**). Output `data`: `{ "updated": [ { "jobId", "deviceList": [...] } ] }` (echoes what was written so the skill re-renders without a second fetch). Success iff backend `data == true`; any other shape echoes the raw body into the error. Exit 0 success · 1 error.
 

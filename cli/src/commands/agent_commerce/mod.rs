@@ -160,8 +160,8 @@ pub enum AgentCommand {
         #[arg(long = "job-id")] job_id: Option<String>,
         /// Comma-separated device ids (Form A); empty/omitted clears the list.
         #[arg(long = "device-list")] device_list: Option<String>,
-        /// JSON array of {jobId, deviceList} (Form B, batch). Wins over Form A if both are given.
-        #[arg(long)] items: Option<String>,
+        /// JSON array of {jobId, deviceList} (Form B, batch). Mutually exclusive with --job-id/--device-list.
+        #[arg(long, conflicts_with_all = ["job_id", "device_list"])] items: Option<String>,
     },
 
     /// List the devices this agent is logged in on (paginated to completion).

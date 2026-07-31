@@ -376,14 +376,9 @@ pub async fn handle_subscribe_device_update(
     device_list: Option<&str>,
     items: Option<&str>,
 ) -> Result<()> {
-    if items.is_some() && (job_id.is_some() || device_list.is_some()) {
-        eprintln!(
-            "[subscribe-device-update] both --items and --job-id/--device-list provided; \
-             --items (form B) takes precedence"
-        );
-    }
-
-    // Client pre-validation before any request: resolve + bound-check.
+    // Form A (--job-id/--device-list) and Form B (--items) are mutually exclusive
+    // at the clap layer, so the combination is unrepresentable here. normalize_items
+    // keeps its defensive either-or error for direct (non-clap) callers.
     let normalized = normalize_items(job_id, device_list, items)?;
     validate_items_len(normalized.len())?;
 
@@ -497,16 +492,50 @@ mod tests {
     }
 
     #[test]
-    fn normalize_form_b_wins_over_form_a() {
-        let items = normalize_items(
-            Some("0xA"),
-            Some("ignored"),
-            Some(r#"[{"jobId":"0xB","deviceList":["d9"]}]"#),
-        )
-        .unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].job_id, "0xB");
-        assert_eq!(items[0].device_list, vec!["d9"]);
+    fn subscribe_device_update_items_conflicts_with_form_a_at_parse_time() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct T {
+            #[command(subcommand)]
+            cmd: crate::commands::agent_commerce::task::user::TaskCommand,
+        }
+        // --items together with --job-id is unrepresentable (clap conflict → error).
+        assert!(T::try_parse_from([
+            "test",
+            "subscribe-device-update",
+            "--job-id",
+            "0xA",
+            "--items",
+            r#"[{"jobId":"0xB","deviceList":["d9"]}]"#,
+        ])
+        .is_err());
+        // --items together with --device-list also conflicts.
+        assert!(T::try_parse_from([
+            "test",
+            "subscribe-device-update",
+            "--device-list",
+            "d1,d2",
+            "--items",
+            r#"[{"jobId":"0xB","deviceList":["d9"]}]"#,
+        ])
+        .is_err());
+        // Each single form still parses cleanly.
+        assert!(T::try_parse_from([
+            "test",
+            "subscribe-device-update",
+            "--items",
+            r#"[{"jobId":"0xB","deviceList":["d9"]}]"#,
+        ])
+        .is_ok());
+        assert!(T::try_parse_from([
+            "test",
+            "subscribe-device-update",
+            "--job-id",
+            "0xA",
+            "--device-list",
+            "d1,d2",
+        ])
+        .is_ok());
     }
 
     #[test]

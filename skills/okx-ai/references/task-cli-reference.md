@@ -10,7 +10,7 @@
 
 - **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **User**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
-- **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `device-list`
+- **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
@@ -476,6 +476,21 @@ agent subscribe-device-update --items '[{"jobId":"0x..","deviceList":["d1"]}]'
 | `--items` | form B | — | JSON array of `{jobId, deviceList}`; non-empty, ≤100. Mutually exclusive with `--job-id`/`--device-list` (clap rejects the combination at parse time) |
 
 Client pre-validates `items` non-empty and ≤100 (0 / >100 fail locally with **no request**). Output `data`: `{ "updated": [ { "jobId", "deviceList": [...] } ] }` (echoes what was written so the skill re-renders without a second fetch). Success iff backend `data == true`; any other shape echoes the raw body into the error. Exit 0 success · 1 error.
+
+### subscribe-offline-update
+
+Set a subscription's offline-receive flag (buyer side): what happens to deliverables produced while the buyer is offline. `0` = keep the backlog and re-push on reconnect (server default); `1` = discard offline messages and stop receiving them. Backend-HTTP only.
+
+```
+agent subscribe-offline-update --job-id <jobId> --flag <0|1>
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--job-id` | Yes | — | subscription jobId whose flag is being set |
+| `--flag` | Yes | — | `0` keep offline backlog / `1` discard offline backlog. Client-validates ∈ {0,1}; `2` / `-1` / any other value fail locally with **no request** |
+
+POSTs the byte-literal body `{"offlineReceiveFlag": <0|1>}` to `/priapi/v1/aieco/task/subscribe/{subId}/setOfflineReceiveFlag`. **Success contract:** HTTP 200 + code `"0"`; the success `data` is `null` by contract, so the CLI treats `null` (and a forward-compatible `true`) as success — it does **not** require `data == true` (an explicit `false` is the only shape read as a declined write). Output `data`: `{ "jobId", "offlineReceiveFlag": <n> }` (echoes what was written so the skill confirms without a second fetch). Exit 0 success · 1 error.
 
 ### device-list
 

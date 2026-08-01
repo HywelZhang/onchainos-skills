@@ -64,6 +64,21 @@ The `create-subscribe` CLI command handles the full flow internally: providerCon
 
 See `task-user-actions-publish.md` **Appendix A2** for the subscription confirmation form template.
 
+### Post-creation: Offline-deliverables question
+
+AFTER a `create-subscribe` succeeds — in **both** the normal branch and the degraded branch (`deviceRoutingDegraded: true`) — render this question block so the user can decide what happens to deliverables produced while they are offline. Chinese-language sessions render it **VERBATIM**; other languages translate faithfully, preserving meaning, per the §Localization banner. `{任务名}` is the **just-created REAL subscription title** — never a hard-coded sample.
+
+> 「{任务名}」订阅任务已创建成功 ✅
+> 您离线期间，这个任务会持续产生交付物。重新上线后，这批交付物怎么处理？
+> · 补推给我（默认）—— 上线后补上，后台照常接收并处理
+> · 清理掉 —— 离线消息直接丢弃，后台不再接收，避免白白消耗算力
+> 💡 用 Codex / Claude Code 的话：选「补推」时，消息也是先到后台，要在对话里看到还需说一句「监听 {任务名}」。
+
+Branching on the user's reply:
+- **No choice made, OR explicit 补推 / keep** → do **NOT** write anything (the server default is already `0` = 补推). Take no action.
+- **清理 / discard** → run `onchainos agent subscribe-offline-update --job-id <this subscription's jobId> --flag 1`, then confirm with: 「好的，离线期间的消息会直接清理，不再补推。」
+- **Write failure** → do **NOT** roll back or retry the create (the subscription is already created and unaffected). Tell the user the offline-cleanup setting was not saved and stays at the 补推 default, and that they can change it later. Non-blocking — surface as a plain notice, not an error.
+
 ### Post-creation: Watch check (mandatory)
 
 After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
@@ -85,6 +100,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | 让本机开始接收某订阅消息 (start receiving on this device) | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail`/`my-subscriptions`); if this device is already present, tell the user & do NOT re-write; after write, re-read and mark ✅是（本次新增） |
 | 让某台/某几台指名设备开始接收某订阅 (start receiving on named device(s)) | `subscribe-device-update --job-id <id> --device-list <fresh list ∪ named device ids>` | **fresh-read first** (`subscribe-detail`/`my-subscriptions`); resolve device name→id via `device-list` — a name that cannot be resolved must **not** be fabricated (surface the raw id / count and ask the user to clarify); build the new `--device-list` as the **UNION** of the just-read list and the named ids; overwrite; re-read; confirm with this VERBATIM copy frame: 「好的，「Y」现在会同时推送到 X1 和 X2。」 where the device-name list enumerates the **complete post-write receiving set from the re-read** (readable names, not just the newly added devices; two devices joined by 和, three or more separated by 、 with 和 before the last) |
 | 停止向某设备推送某订阅 (stop pushing to a device) | `subscribe-device-update --job-id <id> --device-list <fresh list − device>` | resolve device name→id via `device-list`; after write, read back remaining receivers; copy: 「已停止向 X 推送「Y」。现在这个任务只会推到 Z。」（名称不可得时降级为数量，绝不编造名称） |
+| 改离线交付物处理方式 (change offline-deliverables handling later — 「离线消息别清了」/「改成补推」/「改成清理」/「离线消息帮我清理」) | `subscribe-offline-update --job-id <id> --flag <0\|1>` (0=补推, 1=清理) | **fresh-read first** (`subscribe-detail` → current `offlineReceiveFlag`); if it already equals the target value, tell the user no change is needed and do **NOT** re-write; otherwise write the target flag, then re-read `subscribe-detail` to confirm the new 离线交付物 value |
 | 列出登录设备 (list devices) | `device-list` | render §Device List; ms→local time is already CLI-derived (`lastOnlineLocal`) |
 | 监听任务/消息（未指定任务）(listen, no task specified) | — | confirm exactly one task（「一次只能监听一个」）→ turn on this-device receipt → enter the existing watch flow (`watch-core.md`) → tell the user new messages push live into this conversation |
 
@@ -184,9 +200,11 @@ Trigger: user selects a row / asks about one subscription (`订阅详情` / `这
 > 费用：{serviceTokenAmount}（token {serviceTokenAddress 前 6 位}…）/ 周期
 > 自动续费：{autoRenew==1 ? "已开启" : "未开启"}
 > 已订期数：第 {periodIndex} 期
+> 离线交付物：{offlineReceiveFlag==1 ? "清理掉" : "补推给我（默认）"}
 
 - 金额字段（`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`）是**字符串**，原样展示，绝不转 float。
 - token 符号 CLI 不提供，仅有 `serviceTokenAddress`（展示短地址）。
+- 离线交付物 = 详情响应的 `offlineReceiveFlag`：`1` → 清理掉；`0` 或字段缺失 → 补推给我（默认）。该字段仅在订阅详情响应中出现——任何地方都要容忍它不存在，缺失时一律按补推给我（默认）渲染，绝不因缺字段报错。
 
 After the card, append a **device table with only the two device columns** — subscription-level fields are already shown in the card above and are NOT repeated. One row per device; the **this-device** row is prefixed with 🌟 and gets the `（本设备）` marker (the product PRD renders e.g. `🌟xxxxxxx（iphone 15）本设备`) — this 🌟 prefix is **exclusive to the §Subscription Detail table**.
 

@@ -22,6 +22,7 @@ mod content;
 mod create;
 mod create_subscribe;
 mod device_routing;
+mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
@@ -343,6 +344,14 @@ pub enum TaskCommand {
         #[arg(long, conflicts_with_all = ["job_id", "device_list"])]
         items: Option<String>,
     },
+    /// Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog).
+    #[command(name = "subscribe-offline-update")]
+    SubscribeOfflineUpdate {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        flag: String,
+    },
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList {
@@ -435,6 +444,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
         TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
             device_routing::handle_subscribe_device_update(&mut client, job_id.as_deref(), device_list.as_deref(), items.as_deref()).await,
+        TaskCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await,
         TaskCommand::DeviceList { page, page_size } =>
             device_routing::handle_device_list(&mut client, page, page_size).await,
 

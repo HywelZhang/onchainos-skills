@@ -164,6 +164,15 @@ pub enum AgentCommand {
         #[arg(long, conflicts_with_all = ["job_id", "device_list"])] items: Option<String>,
     },
 
+    /// Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog).
+    #[command(name = "subscribe-offline-update")]
+    SubscribeOfflineUpdate {
+        /// Subscription jobId whose offline-receive flag is being set.
+        #[arg(long = "job-id")] job_id: String,
+        /// Offline-receive flag: `0` keeps the backlog, `1` discards it.
+        #[arg(long)] flag: String,
+    },
+
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList {
@@ -1023,6 +1032,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
             task::user::run_task(T::SubscribeDeviceUpdate { job_id, device_list, items }, ctx).await,
+        AgentCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await,
         AgentCommand::DeviceList { page, page_size } =>
             task::user::run_task(T::DeviceList { page, page_size }, ctx).await,
 

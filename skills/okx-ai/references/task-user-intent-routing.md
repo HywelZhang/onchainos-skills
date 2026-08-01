@@ -156,6 +156,7 @@ Triggers:
 | `订阅详情` / `这个订阅的详情` / `subscription detail` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
 | 查看/列出我登录的设备、`设备列表`、`device list`、`哪些设备在线` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
 | `让这个设备开始接收 X 订阅的消息`、`在本机接收 X`、`start receiving X on this device` | [`task-user-playbook.md` §Turn on receipt (this device)](task-user-playbook.md) — fresh-read → overwrite → re-read. |
+| `让 X 也收`、`同时给 X 和 Y 推`、`start receiving Y on device X` | [`task-user-playbook.md` §Turn on receipt (named devices)](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name) → UNION with the fresh-read list → overwrite → re-read → confirm enumerating the complete receiving set. |
 | `不要再把 X 推送到这个/某台设备`、`停止向 X 设备推送 Y`、`stop pushing Y to device` | [`task-user-playbook.md` §Turn off receipt](task-user-playbook.md) — fresh-read → remove → overwrite → read back remaining. |
 | `监听任务` / `监听消息` 未指定具体任务 | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task (“一次只能监听一个”) → turn on this-device receipt → enter watch flow. |
 

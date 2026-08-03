@@ -74,9 +74,17 @@ AFTER a `create-subscribe` succeeds — in **both** the normal branch and the de
 > · 清理掉 —— 离线消息直接丢弃，后台不再接收，避免白白消耗算力
 > 💡 用 Codex / Claude Code 的话：选「补推」时，消息也是先到后台，要在对话里看到还需说一句「监听 {任务名}」。
 
+**Old comm-package branch** — read the `create-subscribe` success envelope's `offlineReplaySupported` (the CLI already probed it; **never run `okx-a2a capabilities` yourself**). When it is `false`, append this VERBATIM line to the END of the question block above (the four-segment block + 💡 line itself stays byte-identical). Chinese sessions render it verbatim; other languages translate faithfully, preserving meaning, per the §Localization banner:
+
+> 💡 当前通信包版本暂不支持离线回放偏好。您现在的选择会保存，待通信包升级后生效（升级命令：{fixCommands}）；升级前，所有订阅消息仍会正常补推。
+
+`{fixCommands}` is rendered from the envelope's `offlineReplayFixCommands`, one command per line. When `offlineReplaySupported` is `true` (or the field is absent), add nothing — the question block stays exactly as above.
+
 Branching on the user's reply:
 - **No choice made, OR explicit 补推 / keep** → do **NOT** write anything (the server default is already `0` = 补推). Take no action.
-- **清理 / discard** → run `onchainos agent subscribe-offline-update --job-id <this subscription's jobId> --flag 1`, then confirm with: 「好的，离线期间的消息会直接清理，不再补推。」
+- **清理 / discard** → run `onchainos agent subscribe-offline-update --job-id <this subscription's jobId> --flag 1`. Then confirm based on that command's own success envelope `offlineReplaySupported`:
+  - `true` (or the field is absent) → 「好的，离线期间的消息会直接清理，不再补推。」
+  - `false` → 「好的，偏好已保存：通信包升级后，离线期间的消息会直接清理、不再补推；升级前仍会正常补推。」
 - **Write failure** → do **NOT** roll back or retry the create (the subscription is already created and unaffected). Tell the user the offline-cleanup setting was not saved and stays at the 补推 default, and that they can change it later. Non-blocking — surface as a plain notice, not an error.
 
 ### Post-creation: Watch check (mandatory)
@@ -100,7 +108,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | 让本机开始接收某订阅消息 (start receiving on this device) | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail`/`my-subscriptions`); if this device is already present, tell the user & do NOT re-write; after write, re-read and mark ✅是（本次新增） |
 | 让某台/某几台指名设备开始接收某订阅 (start receiving on named device(s)) | `subscribe-device-update --job-id <id> --device-list <fresh list ∪ named device ids>` | **fresh-read first** (`subscribe-detail`/`my-subscriptions`); resolve device name→id via `device-list` — a name that cannot be resolved must **not** be fabricated (surface the raw id / count and ask the user to clarify); build the new `--device-list` as the **UNION** of the just-read list and the named ids; overwrite; re-read; confirm with this VERBATIM copy frame: 「好的，「Y」现在会同时推送到 X1 和 X2。」 where the device-name list enumerates the **complete post-write receiving set from the re-read** (readable names, not just the newly added devices; two devices joined by 和, three or more separated by 、 with 和 before the last) |
 | 停止向某设备推送某订阅 (stop pushing to a device) | `subscribe-device-update --job-id <id> --device-list <fresh list − device>` | resolve device name→id via `device-list`; after write, read back remaining receivers; copy: 「已停止向 X 推送「Y」。现在这个任务只会推到 Z。」（名称不可得时降级为数量，绝不编造名称） |
-| 改离线交付物处理方式 (change offline-deliverables handling later — 「离线消息别清了」/「改成补推」/「改成清理」/「离线消息帮我清理」) | `subscribe-offline-update --job-id <id> --flag <0\|1>` (0=补推, 1=清理) | **fresh-read first** (`subscribe-detail` → current `offlineReceiveFlag`); if it already equals the target value, tell the user no change is needed and do **NOT** re-write; otherwise write the target flag, then re-read `subscribe-detail` to confirm the new 离线交付物 value |
+| 改离线交付物处理方式 (change offline-deliverables handling later — 「离线消息别清了」/「改成补推」/「改成清理」/「离线消息帮我清理」) | `subscribe-offline-update --job-id <id> --flag <0\|1>` (0=补推, 1=清理) | **fresh-read first** (`subscribe-detail` → current `offlineReceiveFlag`); if it already equals the target value, tell the user no change is needed and do **NOT** re-write; otherwise write the target flag, then re-read `subscribe-detail` to confirm the new 离线交付物 value. On a successful **`--flag 1`** write, branch the confirmation on the write envelope's `offlineReplaySupported` (read from the envelope; never run `okx-a2a capabilities`): `true`/absent → 「好的，离线期间的消息会直接清理，不再补推。」；`false` → 「好的，偏好已保存：通信包升级后，离线期间的消息会直接清理、不再补推；升级前仍会正常补推。」 The **`--flag 0`** direction keeps its current copy and behavior unchanged. |
 | 列出登录设备 (list devices) | `device-list` | render §Device List; ms→local time is already CLI-derived (`lastOnlineLocal`) |
 | 监听任务/消息（未指定任务）(listen, no task specified) | — | confirm exactly one task（「一次只能监听一个」）→ turn on this-device receipt → enter the existing watch flow (`watch-core.md`) → tell the user new messages push live into this conversation |
 

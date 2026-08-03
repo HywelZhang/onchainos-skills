@@ -396,6 +396,8 @@ agent create-subscribe \
 
 > **Device routing:** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
 
+> **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
+
 ### subscribe-detail
 
 Show subscription detail.
@@ -490,7 +492,7 @@ agent subscribe-offline-update --job-id <jobId> --flag <0|1>
 | `--job-id` | Yes | — | subscription jobId whose flag is being set |
 | `--flag` | Yes | — | `0` keep offline backlog / `1` discard offline backlog. Client-validates ∈ {0,1}; `2` / `-1` / any other value fail locally with **no request** |
 
-POSTs the byte-literal body `{"offlineReceiveFlag": <0|1>}` to `/priapi/v1/aieco/task/subscribe/{subId}/setOfflineReceiveFlag`. **Success contract:** HTTP 200 + code `"0"`; the success `data` is `null` by contract, so the CLI treats `null` (and a forward-compatible `true`) as success — it does **not** require `data == true` (an explicit `false` is the only shape read as a declined write). Output `data`: `{ "jobId", "offlineReceiveFlag": <n> }` (echoes what was written so the skill confirms without a second fetch). Exit 0 success · 1 error.
+POSTs the byte-literal body `{"offlineReceiveFlag": <0|1>}` to `/priapi/v1/aieco/task/subscribe/{subId}/setOfflineReceiveFlag`. **Success contract:** HTTP 200 + code `"0"`; the success `data` is `null` by contract, so the CLI treats `null` (and a forward-compatible `true`) as success — it does **not** require `data == true` (an explicit `false` is the only shape read as a declined write). Output `data`: `{ "jobId", "offlineReceiveFlag": <n> }` (echoes what was written so the skill confirms without a second fetch). The output `data` **always** also carries `offlineReplaySupported: <bool>` (whether the local comm package can honor an offline-replay preference — the CLI probes it locally; copy-only, never changes whether or how the write was performed or judged); when `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none), and when `true` that field is absent. Exit 0 success · 1 error.
 
 ### device-list
 

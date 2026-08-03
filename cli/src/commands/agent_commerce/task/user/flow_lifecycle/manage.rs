@@ -443,4 +443,3 @@ pub(crate) fn attachment_added_cli(
         }
     }
 }
-

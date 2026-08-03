@@ -899,6 +899,13 @@ pub enum AgentCommand {
         client_communication_address: String,
         #[arg(long)]
         provider_communication_address: String,
+        /// True only for messages recovered during communication-package startup.
+        #[arg(
+            long,
+            action = clap::ArgAction::Set,
+            value_parser = clap::builder::BoolishValueParser::new()
+        )]
+        is_offline_replay: Option<bool>,
     },
 
     /// Get XMTP system config (system account addresses)
@@ -1841,6 +1848,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             provider_security_rate,
             client_communication_address,
             provider_communication_address,
+            is_offline_replay,
         } => chat::run(
             chat::ChatCommand::MessageEligible {
                 agent_id,
@@ -1852,6 +1860,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 provider_security_rate,
                 client_communication_address,
                 provider_communication_address,
+                is_offline_replay,
             },
             ctx,
         ).await,

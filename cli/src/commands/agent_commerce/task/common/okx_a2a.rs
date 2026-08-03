@@ -41,6 +41,24 @@ fn run_silently(program: &str, args: &[&str]) -> Option<std::process::Output> {
     npm_cli_command(program, args).output().ok()
 }
 
+const OFFLINE_REPLAY_COMM_CAPABILITY: &str = "message-eligible-is-offline-replay";
+
+pub(crate) fn communication_help_supports_offline_replay(help: &str) -> bool {
+    help.lines()
+        .any(|line| line.trim() == OFFLINE_REPLAY_COMM_CAPABILITY)
+}
+
+/// New OnchainOS versions own detection when paired with an older
+/// communication package. The old package needs no cooperation: its help text
+/// simply lacks the capability marker.
+pub(crate) fn communication_supports_offline_replay() -> bool {
+    let Some(output) = run_silently("okx-a2a", &["--help"]) else {
+        return false;
+    };
+    output.status.success()
+        && communication_help_supports_offline_replay(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// Result of the read-only A2A readiness probe.
 enum CommReadiness {
     /// A definitive positive verdict (or the probe was skipped via env).
@@ -584,4 +602,19 @@ pub fn file_download(
         return Ok(json.to_string());
     }
     Ok(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::communication_help_supports_offline_replay;
+
+    #[test]
+    fn detects_offline_replay_capability_marker() {
+        assert!(communication_help_supports_offline_replay(
+            "Capabilities:\n  message-eligible-is-offline-replay\n"
+        ));
+        assert!(!communication_help_supports_offline_replay(
+            "okx-a2a 0.1.11\nUsage: okx-a2a <command>\n"
+        ));
+    }
 }

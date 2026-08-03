@@ -248,4 +248,5 @@ Before creating a subscription, show the device table (设备 + 最后在线时�
 
 On create, the CLI always sends `deviceList` explicitly (all logged-in devices minus any excluded).
 
+- **Excluding a device at creation time** (the user names one while reviewing the table — 「别推给 X」/「X 不用收」): pass `--exclude-device <deviceId>` on `create-subscribe`, **repeated once per excluded device**. Resolve each name to its id via the `device-list` rows; if a named device cannot be resolved, ask which row they meant rather than guessing or silently dropping the exclusion. Omitting the flag keeps the default all-devices set — there is no other way to honor an exclusion at creation time, so an exclusion the user asked for and that is not expressed as this flag is silently lost.
 - **Degrade:** if `device-list` fails/empty, the create still **proceeds with this device only**, the CLI returns `data.deviceRoutingDegraded: true`, and the skill tells the user only this device was set (do NOT abort). Surface this as a plain notice, not an error.

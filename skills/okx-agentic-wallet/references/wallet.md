@@ -6,7 +6,7 @@ Wallet lifecycle: authentication, balance, addresses, token transfers, transacti
 
 Commands that need auth (balance, send, contract-call, history, sign-message) require login. **Social login opens a browser login page where the user completes sign-in.**
 
-1. **Check state.** Run `wallet status`; if `data.loggedIn` is `true`, proceed. Otherwise (or on re-login request) continue.
+1. **Check state.** Run `wallet status`; if `data.loggedIn` is `true`, proceed. Exception: when the user's request this turn itself asks to log in, re-log-in, or check login status (including as one part of a compound request), first confirm the session to the user, then run `onchainos agent my-subscriptions --role buyer` and follow the §Post-login subscription display section in [task-user-playbook.md](../../okx-ai/references/task-user-playbook.md), and only then continue with the rest of the request. When `wallet status` runs only as an internal precondition for another action (balance, send, …) and the user did not mention logging in, plain proceed — never render the subscription display there. Otherwise (or on re-login request) continue.
 2. **Log in** — orchestrate `init` → auto-poll:
    a. **Get the link.** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened }` immediately and best-effort opens the browser. Keep `authSessionId` for the poll.
    b. **Show the link + reminder** (translate to the user's language; keep the structure, substitute `authSessionId` and `loginUrl`):

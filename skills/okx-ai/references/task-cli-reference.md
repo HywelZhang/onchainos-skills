@@ -925,7 +925,7 @@ Internal chat-module query endpoints (invoked by runtime; not needed in agent fl
 
 ```
 agent sensitive-words
-agent message-eligible --agent-id <id> --client-agent-id <id> --provider-agent-id <id> --job-id <id> --group-id <id> --direction <send|receive> [--provider-security-rate <rate>] --client-communication-address <addr> --provider-communication-address <addr>
+agent message-eligible --agent-id <id> --client-agent-id <id> --provider-agent-id <id> --job-id <id> --group-id <id> --direction <client_to_provider|provider_to_client> [--provider-security-rate <rate>] --client-communication-address <addr> --provider-communication-address <addr> [--is-offline-replay <true|false>]
 agent system-config
 ```
 

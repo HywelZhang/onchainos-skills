@@ -146,6 +146,9 @@ Do not say \"published\"/\"succeeded\" (only submitted). No other commands after
 }
 
 fn create_task_subscription() -> String {
+    let communication_upgrade_notice = communication_upgrade_notice(
+        super::super::super::common::okx_a2a::communication_supports_offline_replay(),
+    );
     format!("\
 [Current Operation] Publish task — subscription branch
 [Role] User Agent
@@ -234,10 +237,37 @@ onchainos agent create-subscribe \\
 ```
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 
+{communication_upgrade_notice}
 {attachments_stop}",
         service_params = service_params_inference(),
+        communication_upgrade_notice = communication_upgrade_notice,
         attachments_stop = attachments_and_stop(),
     )
+}
+
+fn communication_upgrade_notice(supports_offline_replay: bool) -> &'static str {
+    if supports_offline_replay {
+        ""
+    } else {
+        "\n[Compatibility notice — non-blocking]\n\
+         After the subscription is created, append this guidance to the offline-replay preference prompt (localize it to the user's language):\n\
+         \"Your communication package does not yet support offline-replay preferences. Subscription messages will continue to replay normally until it is upgraded. Run `npm i -g @okxweb3/a2a-node@latest`, then restart the communication service.\"\n\
+         Do not block task creation, preference configuration, or message delivery.\n"
+    }
+}
+
+#[cfg(test)]
+mod offline_replay_compatibility_tests {
+    use super::communication_upgrade_notice;
+
+    #[test]
+    fn only_old_communication_packages_receive_upgrade_guidance() {
+        assert!(communication_upgrade_notice(true).is_empty());
+        let notice = communication_upgrade_notice(false);
+        assert!(notice.contains("Subscription messages will continue to replay normally"));
+        assert!(notice.contains("npm i -g @okxweb3/a2a-node@latest"));
+        assert!(notice.contains("Do not block task creation"));
+    }
 }
 
 fn create_task_regular() -> String {

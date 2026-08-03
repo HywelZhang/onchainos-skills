@@ -20,6 +20,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 
@@ -59,6 +60,28 @@ fn is_offline_update_success(data: &Value) -> bool {
     data.is_null() || *data == Value::Bool(true)
 }
 
+/// Build the json success envelope. Always echoes `{ jobId, offlineReceiveFlag }`
+/// so the skill confirms without a second fetch, and always carries the
+/// `offlineReplaySupported` capability flag. When the comm package cannot honor an
+/// offline-replay preference, also carries `offlineReplayFixCommands` (upgrade
+/// commands). Those offline-replay fields are copy-only — they never change whether
+/// or how the write was performed or judged.
+fn build_offline_success(
+    job_id: &str,
+    flag: i32,
+    offline_replay: &OfflineReplayCapability,
+) -> Value {
+    let mut envelope = json!({
+        "jobId": job_id,
+        "offlineReceiveFlag": flag,
+        "offlineReplaySupported": offline_replay.supported,
+    });
+    if !offline_replay.supported {
+        envelope["offlineReplayFixCommands"] = json!(offline_replay.fix_commands_or_default());
+    }
+    envelope
+}
+
 /// `subscribe-offline-update` handler. Validates `--flag` locally (0/1 only)
 /// before any network call, then POSTs the byte-literal body and echoes
 /// `{ jobId, offlineReceiveFlag }` so the skill confirms without a second fetch.
@@ -85,7 +108,10 @@ pub async fn handle_subscribe_offline_update(
         .map_err(|e| anyhow!("subscribe-offline-update failed: {e}"))?;
 
     if is_offline_update_success(&resp) {
-        output::success(json!({ "jobId": job_id, "offlineReceiveFlag": flag }));
+        // Copy-only capability probe: read AFTER the write has succeeded so its
+        // result can never influence whether the write was sent or judged.
+        let offline_replay = okx_a2a::probe_offline_replay_capability();
+        output::success(build_offline_success(job_id, flag, &offline_replay));
         Ok(())
     } else {
         // HTTP 200 + code "0" but data explicitly denies the write — echo raw body.
@@ -138,5 +164,44 @@ mod tests {
         assert!(is_offline_update_success(&json!(true)));
         // An explicit false is the one shape that signals a declined write.
         assert!(!is_offline_update_success(&json!(false)));
+    }
+
+    #[test]
+    fn success_envelope_reports_offline_replay_supported_without_fix_commands() {
+        // Supported ⇒ offlineReplaySupported:true and NO fix-commands field.
+        let cap = OfflineReplayCapability {
+            supported: true,
+            fix_commands: Vec::new(),
+        };
+        let env = build_offline_success("0xSUB", 1, &cap);
+        assert_eq!(env["jobId"], json!("0xSUB"));
+        assert_eq!(env["offlineReceiveFlag"], json!(1));
+        assert_eq!(env["offlineReplaySupported"], json!(true));
+        assert!(env.get("offlineReplayFixCommands").is_none());
+    }
+
+    #[test]
+    fn success_envelope_includes_fix_commands_when_unsupported() {
+        // Unsupported + probe supplied fixCommands → passed through verbatim.
+        let cap = OfflineReplayCapability {
+            supported: false,
+            fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
+        };
+        let env = build_offline_success("0xSUB", 0, &cap);
+        assert_eq!(env["offlineReplaySupported"], json!(false));
+        assert_eq!(
+            env["offlineReplayFixCommands"],
+            json!(["npm i -g @okxweb3/a2a-node@1.2.3"])
+        );
+        // Unsupported + no probe fixCommands → packaged default.
+        let cap_default = OfflineReplayCapability {
+            supported: false,
+            fix_commands: Vec::new(),
+        };
+        let env2 = build_offline_success("0xSUB", 1, &cap_default);
+        assert_eq!(
+            env2["offlineReplayFixCommands"],
+            json!(["npm install -g @okxweb3/a2a-node@latest"])
+        );
     }
 }

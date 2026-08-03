@@ -201,6 +201,95 @@ pub fn refresh_agent_identities_silently() {
     }
 }
 
+// ── Offline-replay capability probe ─────────────────────────────────────────
+
+/// Upgrade command surfaced when the comm package cannot honor an offline-replay
+/// preference and offered no `fixCommands` of its own.
+pub const DEFAULT_OFFLINE_REPLAY_FIX_COMMAND: &str = "npm install -g @okxweb3/a2a-node@latest";
+
+/// Outcome of the offline-replay capability probe. Purely informational: it is
+/// copied into the json success envelope of the offline-preference commands and
+/// must never change whether a write request is sent or how its success is judged.
+pub struct OfflineReplayCapability {
+    /// Whether the local comm package can honor an offline-replay preference.
+    pub supported: bool,
+    /// Upgrade commands the comm package reported for the unsupported case.
+    /// Empty when the probe could read none (command missing / spawn failure /
+    /// unparsable output); callers substitute `DEFAULT_OFFLINE_REPLAY_FIX_COMMAND`.
+    pub fix_commands: Vec<String>,
+}
+
+impl OfflineReplayCapability {
+    /// The upgrade commands to surface, guaranteed non-empty: the probe's own
+    /// `fixCommands` when it returned any, else the packaged default.
+    pub fn fix_commands_or_default(&self) -> Vec<String> {
+        if self.fix_commands.is_empty() {
+            vec![DEFAULT_OFFLINE_REPLAY_FIX_COMMAND.to_string()]
+        } else {
+            self.fix_commands.clone()
+        }
+    }
+}
+
+/// Read-only probe of whether the local comm package supports the offline-replay
+/// preference: run `okx-a2a capabilities --json` and read `messageEligibleOfflineReplay`.
+/// The verdict is BINARY and fail-safe to unsupported — a missing command, a spawn
+/// failure, unparsable output, or an envelope whose `ok` is not `true` all mean
+/// unsupported (the `capabilities` command is not released yet, so a missing command
+/// is the expected common case). `ONCHAINOS_SKIP_A2A_PREFLIGHT=1` skips the spawn and
+/// treats the package as supported (tests / CI / power users). Reuses the module's
+/// `npm_cli_command` shim — no new spawn logic. COPY-ONLY: never gates a write.
+pub fn probe_offline_replay_capability() -> OfflineReplayCapability {
+    if std::env::var(SKIP_A2A_PREFLIGHT_ENV).ok().as_deref() == Some("1") {
+        return OfflineReplayCapability {
+            supported: true,
+            fix_commands: Vec::new(),
+        };
+    }
+    let stdout = run_silently("okx-a2a", &["capabilities", "--json"]).map(|o| o.stdout);
+    interpret_capabilities_output(stdout.as_deref())
+}
+
+/// Pure verdict logic for `okx-a2a capabilities --json`, split out so unit tests can
+/// inject fake output with no real binary. `None` models a missing command / spawn
+/// failure; `Some(bytes)` is the child's captured stdout.
+fn interpret_capabilities_output(stdout: Option<&[u8]>) -> OfflineReplayCapability {
+    let Some(bytes) = stdout else {
+        // command missing / spawn failure
+        return OfflineReplayCapability {
+            supported: false,
+            fix_commands: Vec::new(),
+        };
+    };
+    let Ok(report) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        // unparsable output
+        return OfflineReplayCapability {
+            supported: false,
+            fix_commands: Vec::new(),
+        };
+    };
+    let fix_commands = report
+        .get("fixCommands")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    // The probe itself must have succeeded (`ok == true`); only then is
+    // `messageEligibleOfflineReplay` a trustworthy capability signal.
+    let ok = report.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let eligible = report
+        .get("messageEligibleOfflineReplay")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    OfflineReplayCapability {
+        supported: ok && eligible,
+        fix_commands,
+    }
+}
+
 // ── User-facing notifications ──────────────────────────────────────────────
 
 /// Bridge equivalent: `xmtp_dispatch_user '{"content": "..."}'`
@@ -584,4 +673,67 @@ pub fn file_download(
         return Ok(json.to_string());
     }
     Ok(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The four-state verdict is exercised through the pure `interpret_capabilities_output`
+    // seam with injected output — no real `okx-a2a` binary is spawned (the `capabilities`
+    // command is not released yet).
+
+    #[test]
+    fn capability_unsupported_when_command_missing() {
+        // None models a missing command / spawn failure.
+        let cap = interpret_capabilities_output(None);
+        assert!(!cap.supported);
+        assert!(cap.fix_commands.is_empty());
+        // The caller still gets a usable upgrade hint via the packaged default.
+        assert_eq!(
+            cap.fix_commands_or_default(),
+            vec![DEFAULT_OFFLINE_REPLAY_FIX_COMMAND.to_string()]
+        );
+    }
+
+    #[test]
+    fn capability_unsupported_when_output_unparsable() {
+        let cap = interpret_capabilities_output(Some(b"not json at all"));
+        assert!(!cap.supported);
+        assert!(cap.fix_commands.is_empty());
+    }
+
+    #[test]
+    fn capability_unsupported_when_ok_false() {
+        let out =
+            br#"{"ok": false, "messageEligibleOfflineReplay": true, "fixCommands": ["npm i -g @okxweb3/a2a-node@1.2.3"]}"#;
+        let cap = interpret_capabilities_output(Some(out));
+        assert!(!cap.supported);
+        // fixCommands are still surfaced from the probe when present.
+        assert_eq!(
+            cap.fix_commands,
+            vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()]
+        );
+        assert_eq!(
+            cap.fix_commands_or_default(),
+            vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()]
+        );
+    }
+
+    #[test]
+    fn capability_supported_when_ok_true_and_eligible() {
+        let out = br#"{"ok": true, "messageEligibleOfflineReplay": true}"#;
+        let cap = interpret_capabilities_output(Some(out));
+        assert!(cap.supported);
+    }
+
+    #[test]
+    fn capability_unsupported_when_ok_true_but_not_eligible() {
+        // `ok == true` alone is not enough: the read verdict is
+        // `messageEligibleOfflineReplay`, so a false/absent value is unsupported.
+        let out = br#"{"ok": true, "messageEligibleOfflineReplay": false}"#;
+        assert!(!interpret_capabilities_output(Some(out)).supported);
+        let out_absent = br#"{"ok": true}"#;
+        assert!(!interpret_capabilities_output(Some(out_absent)).supported);
+    }
 }

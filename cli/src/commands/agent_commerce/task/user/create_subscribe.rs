@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
@@ -104,13 +105,29 @@ fn build_create_body(
 }
 
 /// The json-mode success envelope data — always carries the `deviceRoutingDegraded`
-/// marker so the skill can render the degraded notice without a second query.
-fn build_create_success(sub_id: &str, tx_hash: &str, degraded: bool) -> serde_json::Value {
-    serde_json::json!({
+/// marker so the skill can render the degraded notice without a second query, plus
+/// the `offlineReplaySupported` capability flag (always present). When the comm
+/// package cannot honor an offline-replay preference, also carries
+/// `offlineReplayFixCommands` (the upgrade commands) so the skill can prompt an
+/// upgrade. These offline-replay fields are copy-only — they never change whether
+/// or how the subscription was created.
+fn build_create_success(
+    sub_id: &str,
+    tx_hash: &str,
+    degraded: bool,
+    offline_replay: &OfflineReplayCapability,
+) -> serde_json::Value {
+    let mut envelope = serde_json::json!({
         "subId": sub_id,
         "txHash": tx_hash,
         "deviceRoutingDegraded": degraded,
-    })
+        "offlineReplaySupported": offline_replay.supported,
+    });
+    if !offline_replay.supported {
+        envelope["offlineReplayFixCommands"] =
+            serde_json::json!(offline_replay.fix_commands_or_default());
+    }
+    envelope
 }
 
 pub async fn handle_create_subscribe(
@@ -269,7 +286,15 @@ pub async fn handle_create_subscribe(
     }
 
     if json_mode {
-        crate::output::success(build_create_success(&sub_id, &tx_hash, device_routing_degraded));
+        // Copy-only capability probe: read AFTER the create has fully succeeded so
+        // its result can never influence whether the write was sent or judged.
+        let offline_replay = okx_a2a::probe_offline_replay_capability();
+        crate::output::success(build_create_success(
+            &sub_id,
+            &tx_hash,
+            device_routing_degraded,
+            &offline_replay,
+        ));
         if super::content::is_cli_mode() {
             println!();
             println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
@@ -465,11 +490,45 @@ mod tests {
 
     #[test]
     fn create_success_envelope_carries_degrade_marker() {
-        let degraded = super::build_create_success("0xjob", "0xhash", true);
+        use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
+        // Supported comm package ⇒ offlineReplaySupported:true and NO fix-commands field.
+        let supported = OfflineReplayCapability {
+            supported: true,
+            fix_commands: Vec::new(),
+        };
+        let degraded = super::build_create_success("0xjob", "0xhash", true, &supported);
         assert_eq!(degraded["deviceRoutingDegraded"], serde_json::json!(true));
         assert_eq!(degraded["subId"], serde_json::json!("0xjob"));
         assert_eq!(degraded["txHash"], serde_json::json!("0xhash"));
-        let ok = super::build_create_success("0xjob", "0xhash", false);
+        assert_eq!(degraded["offlineReplaySupported"], serde_json::json!(true));
+        assert!(degraded.get("offlineReplayFixCommands").is_none());
+        let ok = super::build_create_success("0xjob", "0xhash", false, &supported);
         assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn create_success_envelope_carries_offline_replay_fix_commands_when_unsupported() {
+        use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
+        // Unsupported + probe supplied its own fixCommands → passed through verbatim.
+        let unsupported = OfflineReplayCapability {
+            supported: false,
+            fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
+        };
+        let env = super::build_create_success("0xjob", "0xhash", false, &unsupported);
+        assert_eq!(env["offlineReplaySupported"], serde_json::json!(false));
+        assert_eq!(
+            env["offlineReplayFixCommands"],
+            serde_json::json!(["npm i -g @okxweb3/a2a-node@1.2.3"])
+        );
+        // Unsupported + no probe fixCommands → packaged default.
+        let unsupported_default = OfflineReplayCapability {
+            supported: false,
+            fix_commands: Vec::new(),
+        };
+        let env2 = super::build_create_success("0xjob", "0xhash", false, &unsupported_default);
+        assert_eq!(
+            env2["offlineReplayFixCommands"],
+            serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
+        );
     }
 }

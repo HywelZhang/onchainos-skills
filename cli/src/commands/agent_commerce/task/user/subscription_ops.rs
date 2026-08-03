@@ -329,6 +329,12 @@ pub async fn handle_subscribe_detail(
                     None => serde_json::Value::Null,
                 },
             );
+            // The readable this-device name for the degraded render's this-device
+            // row. Serialize-out only, from the cached device-name module.
+            obj.insert(
+                FIELD_THIS_DEVICE_NAME.to_string(),
+                serde_json::Value::String(this_device_name().to_string()),
+            );
         }
         crate::output::success(enriched);
         return Ok(());
@@ -369,6 +375,40 @@ pub async fn handle_subscribe_detail(
     if trial_type == 1 {
         let (t_start, t_end) = trial_window(&resp);
         println!("  trial:     {t_start} ~ {t_end}");
+    }
+
+    // Raw-state lines for the human view. A caller reading this instead of
+    // `--format json` must not be able to mistake "field absent" for a real
+    // value: an absent offline flag would otherwise read as the server default,
+    // and an absent device list read as empty then written back wholesale would
+    // wipe every other device's receipt. Only the raw state is printed here — the
+    // joined, named device table stays JSON-only.
+    let offline_line = match resp["offlineReceiveFlag"].as_i64() {
+        Some(1) => "1 (discard)".to_string(),
+        Some(0) => "0 (keep — default)".to_string(),
+        Some(n) => format!("{n} (keep — default)"),
+        None => "missing (keep — default)".to_string(),
+    };
+    println!("  offline:   {offline_line}");
+
+    let devices = normalize_str_array(resp.get(FIELD_DEVICE_LIST));
+    if devices.is_empty() {
+        println!("  devices:   none (no device receives this subscription)");
+    } else {
+        let this_id = crate::device::id::get_cached_device_id();
+        let rendered = devices
+            .iter()
+            .map(|d| {
+                let short: String = d.chars().take(8).collect();
+                if this_id == Some(d.as_str()) {
+                    format!("{short}(this device)")
+                } else {
+                    short
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("  devices:   {rendered}");
     }
     Ok(())
 }
@@ -572,6 +612,16 @@ const FIELD_CATEGORY_CODES: &str = "categoryCodes";
 const FIELD_THIS_DEVICE_RECEIVES: &str = "thisDeviceReceives";
 /// Wire field name: the client-resolved this-device id.
 const FIELD_THIS_DEVICE_ID: &str = "thisDeviceId";
+/// Wire field name: the readable OS name of the this-device (serialize-out only).
+const FIELD_THIS_DEVICE_NAME: &str = "thisDeviceName";
+
+/// The readable OS name of THIS device, serialized out on both subscription
+/// emitters so a degraded render has a name for the this-device row without a
+/// device-table lookup. Sourced from the cached device-name module (the OS name);
+/// serialize-out only — never read from the wire (mirrors `thisDeviceReceives`).
+fn this_device_name() -> &'static str {
+    crate::device::name::get_cached_device_name()
+}
 
 /// Normalized device-routing enrichment for one subscription: both arrays
 /// defaulted to `[]` and the this-device receipt derived from the device list.
@@ -661,6 +711,13 @@ pub async fn handle_my_subscriptions(
     envelope.insert(
         FIELD_THIS_DEVICE_ID.to_string(),
         serde_json::json!(this_device_id),
+    );
+    // Readable this-device name for the degraded render's this-device row.
+    // Serialize-out only, from the cached device-name module (same source and
+    // policy as the subscribe-detail emitter).
+    envelope.insert(
+        FIELD_THIS_DEVICE_NAME.to_string(),
+        serde_json::json!(this_device_name()),
     );
     crate::output::success(serde_json::Value::Object(envelope));
     Ok(())
@@ -1086,5 +1143,38 @@ mod tests {
         assert!(out.get(FIELD_CATEGORY_CODES).is_some());
         assert!(out.get(FIELD_THIS_DEVICE_RECEIVES).is_some());
         assert_eq!(FIELD_THIS_DEVICE_ID, "thisDeviceId");
+    }
+
+    #[test]
+    fn this_device_name_is_os_name_nonempty_not_id_and_unconditional() {
+        let name = this_device_name();
+        // Sourced from the cached device-name module (the OS display name), and
+        // memoized so a second read is byte-identical.
+        assert_eq!(name, crate::device::name::get_cached_device_name());
+        // Always non-empty — the module falls back to a placeholder, never "".
+        assert!(!name.is_empty());
+        // A readable name, never an ellipsized / truncated marker.
+        assert!(!name.contains('…') && !name.ends_with("..."));
+        // The name column source, a distinct concept from the device id — never
+        // the id itself.
+        if let Some(id) = crate::device::id::get_cached_device_id() {
+            assert_ne!(
+                name, id,
+                "thisDeviceName must be the readable name, not the id"
+            );
+        }
+        // Emitted unconditionally: independent of whether this device receives and
+        // independent of an empty device list. Receipt state varies across these
+        // cases; the emitted name does not.
+        for (device_list, this_id) in [
+            (Vec::<String>::new(), Some("dX")),
+            (vec!["dX".to_string()], Some("dX")),
+            (vec!["dOther".to_string()], Some("dX")),
+        ] {
+            let enr = derive_device_enrichment(Some(device_list), None, this_id);
+            let _ = enr.this_device_receives; // may be true or false…
+            assert_eq!(this_device_name(), name); // …but the name is the same.
+            assert!(!this_device_name().is_empty());
+        }
     }
 }

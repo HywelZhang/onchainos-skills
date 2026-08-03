@@ -193,6 +193,9 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
+    // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
+    // JSON is meaningless, so redact wholesale.
+    "--items",
     // CeFi user identifier passed to `hackathon register`. Fully redacted rather
     // than prefix-masked: an OKX UID is ~10-11 digits, so prefix-6 + suffix-4
     // would leave all but one character of it readable in the log.
@@ -207,6 +210,8 @@ const REDACT_ADDR: &[&str] = &[
     "--address",
     "--sub-id",
     "--new-sub-id",
+    // Subscription/job identifier — mask prefix+suffix like --sub-id.
+    "--job-id",
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
     "--tx-hash",
 ];
@@ -469,6 +474,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
         AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
         AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
+        AgentCommand::SubscribeDeviceUpdate { .. } => "subscribe-device-update".into(),
+        AgentCommand::SubscribeOfflineUpdate { .. } => "subscribe-offline-update".into(),
+        AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
@@ -1135,6 +1143,51 @@ mod tests {
         let args = vec_s(&["onchainos", "wallet", "status"]);
         let out = redact_args(&args);
         assert_eq!(out, args);
+    }
+
+    // ── device-routing redaction ─────────────────────────────────────────
+
+    #[test]
+    fn redact_subscribe_device_update_job_id_and_items() {
+        // --items is a JSON blob embedding jobIds → REDACT_FULL.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "subscribe-device-update",
+            "--items",
+            r#"[{"jobId":"0xabcdef0123456789abcdef","deviceList":["d1"]}]"#,
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--items");
+        assert_eq!(out[4], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_job_id_masks_prefix_suffix() {
+        // --job-id carries a subscription/job identifier → REDACT_ADDR (mask).
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "subscribe-device-update",
+            "--job-id",
+            "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--device-list",
+            "device-abc,device-def",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[4], "0xabcd***6789");
+        // --device-list holds machine-derived device ids, not credentials → stays visible.
+        assert_eq!(out[6], "device-abc,device-def");
+    }
+
+    #[test]
+    fn device_list_flags_stay_visible() {
+        // --device-list / --page / --page-size are never redacted (explicit).
+        let args = vec_s(&[
+            "onchainos", "agent", "device-list", "--page", "2", "--page-size", "50",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out, args, "device-list read flags must survive verbatim for audit review");
     }
 
     fn vec_s(items: &[&str]) -> Vec<String> {

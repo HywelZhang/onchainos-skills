@@ -122,6 +122,8 @@ pub enum AgentCommand {
         #[arg(long = "provider-agent-id")] provider_agent_id: Option<String>,
         #[arg(long = "service-interval", default_value = "month")] service_interval: String,
         #[arg(long, default_value = "")] format: String,
+        /// Device ids to omit from the default all-devices routing set (repeatable).
+        #[arg(long = "exclude-device")] exclude_device: Option<Vec<String>>,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -149,6 +151,36 @@ pub enum AgentCommand {
     /// Show total monthly cost of active subscriptions
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
+
+    /// Overwrite the receive-device list for one or more subscriptions (batch).
+    /// The passed list wholly replaces the stored list; empty/omitted clears it.
+    #[command(name = "subscribe-device-update")]
+    SubscribeDeviceUpdate {
+        /// Subscription jobId to overwrite (Form A, single subscription).
+        #[arg(long = "job-id")] job_id: Option<String>,
+        /// Comma-separated device ids (Form A); empty/omitted clears the list.
+        #[arg(long = "device-list")] device_list: Option<String>,
+        /// JSON array of {jobId, deviceList} (Form B, batch). Mutually exclusive with --job-id/--device-list.
+        #[arg(long, conflicts_with_all = ["job_id", "device_list"])] items: Option<String>,
+    },
+
+    /// Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog).
+    #[command(name = "subscribe-offline-update")]
+    SubscribeOfflineUpdate {
+        /// Subscription jobId whose offline-receive flag is being set.
+        #[arg(long = "job-id")] job_id: String,
+        /// Offline-receive flag: `0` keeps the backlog, `1` discards it.
+        #[arg(long)] flag: String,
+    },
+
+    /// List the devices this agent is logged in on (paginated to completion).
+    #[command(name = "device-list")]
+    DeviceList {
+        /// Starting page (`<1` normalized to 1).
+        #[arg(long, default_value = "1")] page: i64,
+        /// Page size (`<1` normalized to 20; `>100` → backend error 81001).
+        #[arg(long = "page-size", default_value = "20")] page_size: i64,
+    },
 
     /// Search matching ASPs (pre-publish or post-publish)
     #[command(name = "asp-match")]
@@ -991,8 +1023,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } =>
-            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format }, ctx).await,
+        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device } =>
+            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device }, ctx).await,
 
         AgentCommand::SubscribeCancel { sub_id } =>
             task::user::run_task(T::SubscribeCancel { sub_id }, ctx).await,
@@ -1004,6 +1036,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::SubscribeDetail { sub_id, format }, ctx).await,
         AgentCommand::SubscribeCost {} =>
             task::user::run_task(T::SubscribeCost {}, ctx).await,
+
+        AgentCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            task::user::run_task(T::SubscribeDeviceUpdate { job_id, device_list, items }, ctx).await,
+        AgentCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await,
+        AgentCommand::DeviceList { page, page_size } =>
+            task::user::run_task(T::DeviceList { page, page_size }, ctx).await,
 
         AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
             task::user::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format }, ctx).await,

@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
@@ -27,6 +28,8 @@ pub struct CreateSubscribeParams {
     pub provider_agent_id: Option<String>,
     pub service_interval: String,
     pub format: String,
+    /// Device ids to omit from the default all-devices routing set (repeatable).
+    pub exclude_device: Option<Vec<String>>,
 }
 
 const MAX_TITLE_CHARS: usize = 64;
@@ -67,6 +70,64 @@ impl CreateSubscribeParams {
         }
         Ok(())
     }
+}
+
+/// Assemble the `create` request body. `device_list` is ALWAYS embedded (even
+/// empty) so the created record never relies on server-default routing;
+/// `providerAgentId` is only present when a designated provider was requested.
+fn build_create_body(
+    params: &CreateSubscribeParams,
+    effective_use_trial: bool,
+    terms_for_create: serde_json::Value,
+    terms_sig: &str,
+    device_list: &[String],
+) -> serde_json::Value {
+    let mut create_body = serde_json::json!({
+        "serviceId": params.service_id,
+        "useTrial": effective_use_trial,
+        "serviceParams": params.service_params,
+        "serviceTokenAmount": params.service_token_amount,
+        "serviceTokenAddress": params.service_token_address,
+        "autoRenew": params.auto_renew,
+        "copyTrade": params.copy_trade,
+        "title": params.title,
+        "description": params.description,
+        "descriptionSummary": params.description_summary,
+        "serviceInterval": params.service_interval,
+        "terms": terms_for_create,
+        "termsSig": terms_sig,
+        "deviceList": device_list,
+    });
+    if let Some(ref pid) = params.provider_agent_id {
+        create_body["providerAgentId"] = serde_json::json!(pid);
+    }
+    create_body
+}
+
+/// The json-mode success envelope data — always carries the `deviceRoutingDegraded`
+/// marker so the skill can render the degraded notice without a second query, plus
+/// the `offlineReplaySupported` capability flag (always present). When the comm
+/// package cannot honor an offline-replay preference, also carries
+/// `offlineReplayFixCommands` (the upgrade commands) so the skill can prompt an
+/// upgrade. These offline-replay fields are copy-only — they never change whether
+/// or how the subscription was created.
+fn build_create_success(
+    sub_id: &str,
+    tx_hash: &str,
+    degraded: bool,
+    offline_replay: &OfflineReplayCapability,
+) -> serde_json::Value {
+    let mut envelope = serde_json::json!({
+        "subId": sub_id,
+        "txHash": tx_hash,
+        "deviceRoutingDegraded": degraded,
+        "offlineReplaySupported": offline_replay.supported,
+    });
+    if !offline_replay.supported {
+        envelope["offlineReplayFixCommands"] =
+            serde_json::json!(offline_replay.fix_commands_or_default());
+    }
+    envelope
 }
 
 pub async fn handle_create_subscribe(
@@ -146,24 +207,31 @@ pub async fn handle_create_subscribe(
         );
     }
 
-    let mut create_body = serde_json::json!({
-        "serviceId": params.service_id,
-        "useTrial": effective_use_trial,
-        "serviceParams": params.service_params,
-        "serviceTokenAmount": params.service_token_amount,
-        "serviceTokenAddress": params.service_token_address,
-        "autoRenew": params.auto_renew,
-        "copyTrade": params.copy_trade,
-        "title": params.title,
-        "description": params.description,
-        "descriptionSummary": params.description_summary,
-        "serviceInterval": params.service_interval,
-        "terms": terms_for_create,
-        "termsSig": terms_sig,
-    });
-    if let Some(ref pid) = params.provider_agent_id {
-        create_body["providerAgentId"] = serde_json::json!(pid);
+    // Resolve the receive-device routing set: default = all logged-in devices
+    // (device-list paged to completion) minus any --exclude-device. If that query
+    // fails or returns empty, degrade to this device only and mark the result —
+    // never abort the create. deviceList is ALWAYS sent explicitly so the
+    // created record never depends on server-default semantics.
+    let excluded = params.exclude_device.clone().unwrap_or_default();
+    let fetched = super::device_routing::fetch_all_device_ids(client, &user_agent_id)
+        .await
+        .ok();
+    let this_device_id = crate::device::id::get_cached_device_id();
+    let (device_list, device_routing_degraded) =
+        super::device_routing::resolve_create_device_set(fetched, &excluded, this_device_id);
+    if DEBUG_LOG {
+        eprintln!(
+            "[create-subscribe] deviceList={device_list:?} degraded={device_routing_degraded}"
+        );
     }
+
+    let create_body = build_create_body(
+        &params,
+        effective_use_trial,
+        terms_for_create,
+        &terms_sig,
+        &device_list,
+    );
 
     let create_resp = client
         .post_with_identity(
@@ -218,10 +286,15 @@ pub async fn handle_create_subscribe(
     }
 
     if json_mode {
-        crate::output::success(serde_json::json!({
-            "subId": sub_id,
-            "txHash": tx_hash,
-        }));
+        // Copy-only capability probe: read AFTER the create has fully succeeded so
+        // its result can never influence whether the write was sent or judged.
+        let offline_replay = okx_a2a::probe_offline_replay_capability();
+        crate::output::success(build_create_success(
+            &sub_id,
+            &tx_hash,
+            device_routing_degraded,
+            &offline_replay,
+        ));
         if super::content::is_cli_mode() {
             println!();
             println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
@@ -238,6 +311,11 @@ pub async fn handle_create_subscribe(
     println!("✓ Subscription submitted (transaction broadcast, awaiting on-chain confirmation)");
     println!("  jobId:  {sub_id}");
     println!("  txHash: {tx_hash}");
+    if device_routing_degraded {
+        println!(
+            "  ⚠ Device list unavailable — this subscription was set to receive on THIS device only; other devices can be added later."
+        );
+    }
     if let Some(ref pid) = params.provider_agent_id {
         println!("  Designated provider: {pid}");
     }
@@ -286,7 +364,7 @@ mod tests {
             super::super::TaskCommand::CreateSubscribe {
                 service_id, use_trial, service_token_amount, service_token_address,
                 auto_renew, copy_trade, title, description, description_summary,
-                provider_agent_id, service_params, service_interval, format,
+                provider_agent_id, service_params, service_interval, format, exclude_device,
             } => {
                 assert_eq!(service_id, "svc_001");
                 assert!(use_trial);
@@ -301,6 +379,7 @@ mod tests {
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
                 assert_eq!(format, "");
+                assert!(exclude_device.is_none());
             }
             _ => panic!("expected CreateSubscribe"),
         }
@@ -366,5 +445,90 @@ mod tests {
             "--description", "d",
             "--description-summary", "s",
         ]).is_err());
+    }
+
+    fn params_fixture(provider: Option<&str>) -> super::CreateSubscribeParams {
+        super::CreateSubscribeParams {
+            service_id: "svc".to_string(),
+            use_trial: false,
+            service_params: String::new(),
+            service_token_amount: "10".to_string(),
+            service_token_address: "0xtok".to_string(),
+            auto_renew: 1,
+            copy_trade: 0,
+            title: "t".to_string(),
+            description: "d".to_string(),
+            description_summary: "s".to_string(),
+            provider_agent_id: provider.map(str::to_string),
+            service_interval: "month".to_string(),
+            format: "json".to_string(),
+            exclude_device: None,
+        }
+    }
+
+    #[test]
+    fn create_body_always_embeds_device_list_even_when_empty() {
+        // Degrade / all-excluded resolves to an empty set — the body must still
+        // carry an explicit (empty) deviceList so routing never falls to a server default.
+        let p = params_fixture(None);
+        let body = super::build_create_body(&p, false, serde_json::json!({ "asp": "x" }), "0xsig", &[]);
+        assert_eq!(body["deviceList"], serde_json::json!([]));
+        assert!(body.get("deviceList").is_some());
+        assert_eq!(body["termsSig"], serde_json::json!("0xsig"));
+        assert!(body.get("providerAgentId").is_none());
+    }
+
+    #[test]
+    fn create_body_carries_devices_and_provider_when_present() {
+        let p = params_fixture(Some("agent-7"));
+        let devices = vec!["d1".to_string(), "d2".to_string()];
+        let body = super::build_create_body(&p, true, serde_json::json!({}), "0xsig", &devices);
+        assert_eq!(body["deviceList"], serde_json::json!(["d1", "d2"]));
+        assert_eq!(body["providerAgentId"], serde_json::json!("agent-7"));
+        assert_eq!(body["useTrial"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn create_success_envelope_carries_degrade_marker() {
+        use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
+        // Supported comm package ⇒ offlineReplaySupported:true and NO fix-commands field.
+        let supported = OfflineReplayCapability {
+            supported: true,
+            fix_commands: Vec::new(),
+        };
+        let degraded = super::build_create_success("0xjob", "0xhash", true, &supported);
+        assert_eq!(degraded["deviceRoutingDegraded"], serde_json::json!(true));
+        assert_eq!(degraded["subId"], serde_json::json!("0xjob"));
+        assert_eq!(degraded["txHash"], serde_json::json!("0xhash"));
+        assert_eq!(degraded["offlineReplaySupported"], serde_json::json!(true));
+        assert!(degraded.get("offlineReplayFixCommands").is_none());
+        let ok = super::build_create_success("0xjob", "0xhash", false, &supported);
+        assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn create_success_envelope_carries_offline_replay_fix_commands_when_unsupported() {
+        use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
+        // Unsupported + probe supplied its own fixCommands → passed through verbatim.
+        let unsupported = OfflineReplayCapability {
+            supported: false,
+            fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
+        };
+        let env = super::build_create_success("0xjob", "0xhash", false, &unsupported);
+        assert_eq!(env["offlineReplaySupported"], serde_json::json!(false));
+        assert_eq!(
+            env["offlineReplayFixCommands"],
+            serde_json::json!(["npm i -g @okxweb3/a2a-node@1.2.3"])
+        );
+        // Unsupported + no probe fixCommands → packaged default.
+        let unsupported_default = OfflineReplayCapability {
+            supported: false,
+            fix_commands: Vec::new(),
+        };
+        let env2 = super::build_create_success("0xjob", "0xhash", false, &unsupported_default);
+        assert_eq!(
+            env2["offlineReplayFixCommands"],
+            serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
+        );
     }
 }

@@ -21,6 +21,8 @@ mod complete;
 mod content;
 mod create;
 mod create_subscribe;
+mod device_routing;
+mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
@@ -122,6 +124,9 @@ pub enum TaskCommand {
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
+        /// Device ids to omit from the default all-devices routing set (repeatable).
+        #[arg(long = "exclude-device")]
+        exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs (pre-publish or post-publish)
     AspMatch {
@@ -329,6 +334,30 @@ pub enum TaskCommand {
     /// Show total monthly cost of active subscriptions.
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
+    /// Overwrite the receive-device list for one or more subscriptions (batch).
+    #[command(name = "subscribe-device-update")]
+    SubscribeDeviceUpdate {
+        #[arg(long = "job-id")]
+        job_id: Option<String>,
+        #[arg(long = "device-list")]
+        device_list: Option<String>,
+        #[arg(long, conflicts_with_all = ["job_id", "device_list"])]
+        items: Option<String>,
+    },
+    /// Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog).
+    #[command(name = "subscribe-offline-update")]
+    SubscribeOfflineUpdate {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        flag: String,
+    },
+    /// List the devices this agent is logged in on (paginated to completion).
+    #[command(name = "device-list")]
+    DeviceList {
+        page: i64,
+        page_size: i64,
+    },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -352,12 +381,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             let copy_trade = parse_bool_or_int(&copy_trade, "copy-trade")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format,
+                auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
@@ -413,6 +442,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reject::handle_reject(&mut client, &sub_id, &reason).await,
         TaskCommand::SubscribeDetail { sub_id, format } =>
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
+        TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            device_routing::handle_subscribe_device_update(&mut client, job_id.as_deref(), device_list.as_deref(), items.as_deref()).await,
+        TaskCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await,
+        TaskCommand::DeviceList { page, page_size } =>
+            device_routing::handle_device_list(&mut client, page, page_size).await,
 
         // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>

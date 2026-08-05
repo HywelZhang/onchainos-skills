@@ -780,6 +780,18 @@ pub(crate) async fn fetch_my_subscriptions_snapshot(
     status: Option<i32>,
 ) -> Result<MySubscriptionsSnapshot> {
     let header_agent = common_query::resolve_agent_id("", role.agent_role()).await;
+    fetch_my_subscriptions_snapshot_for_agent(client, role, status, header_agent).await
+}
+
+/// Fetch subscriptions for an agent id already resolved by the caller. The
+/// post-login new-device flow uses this after its pre-heartbeat device probe so
+/// identity resolution and device membership refer to the same buyer.
+pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
+    client: &mut TaskApiClient,
+    role: SubscriptionRole,
+    status: Option<i32>,
+    header_agent: String,
+) -> Result<MySubscriptionsSnapshot> {
     let path = my_subscriptions_path();
     let data = client
         .get_with_agent_id(&path, &header_agent)

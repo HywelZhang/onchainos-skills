@@ -378,6 +378,14 @@ const MAX_CONSECUTIVE_TRANSIENT_POLLS: u32 = 5;
 const SOCIAL_LOGIN_TIMEOUT_DEFAULT_SECS: u64 = 300;
 /// Minimum accepted override; values below this fall back to the default.
 const SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS: u64 = 10;
+/// Best-effort subscription/device enrichment must never turn a successful
+/// wallet login into an unbounded wait or a failed login.
+const POST_LOGIN_SNAPSHOT_TIMEOUT_SECS: u64 = 15;
+/// X Layer is the platform-default scope for the device-registration heartbeat.
+const LOGIN_HEARTBEAT_CHAIN_INDEX: u64 = 196;
+/// Device registration is best-effort and must not make login wait for the
+/// wallet client's full transport timeout.
+const POST_LOGIN_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
 
 /// Resolve the poll timeout from a raw `SOCIAL_LOGIN_TIMEOUT_SECS` value.
 /// Unset / unparseable / below-floor inputs all fall back to the default.
@@ -491,6 +499,73 @@ fn new_login_session() -> (String, String, String) {
     (auth_session_id, session_private_key, login_url)
 }
 
+pub(super) fn attach_post_login_subscriptions(
+    summary: &mut serde_json::Value,
+    snapshot: Option<serde_json::Value>,
+) {
+    let (Some(obj), Some(snapshot)) = (summary.as_object_mut(), snapshot) else {
+        return;
+    };
+    obj.insert("postLoginSubscriptions".to_string(), snapshot);
+}
+
+/// Shared bounded hook for both a newly completed login and an explicit
+/// user-facing login-status check. It is intentionally unavailable to ordinary
+/// internal auth preconditions, which keep using bare `wallet status`.
+pub(super) async fn fetch_post_login_subscriptions_bounded() -> Option<serde_json::Value> {
+    match tokio::time::timeout(
+        Duration::from_secs(POST_LOGIN_SNAPSHOT_TIMEOUT_SECS),
+        crate::commands::agent_commerce::task::user::fetch_post_login_subscriptions(),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!(
+                    "[DEBUG][post-login] snapshot timed out after {POST_LOGIN_SNAPSHOT_TIMEOUT_SECS}s"
+                );
+            }
+            None
+        }
+    }
+}
+
+/// Register or refresh this machine in the backend device table immediately
+/// after login. The backend upsert is driven by the heartbeat request carrying
+/// the shared `device-id` and `device-name` headers. Failure is deliberately
+/// non-fatal: authentication has already succeeded and remains usable.
+async fn report_post_login_device(client: &mut WalletApiClient, access_token: &str) {
+    match tokio::time::timeout(
+        Duration::from_secs(POST_LOGIN_HEARTBEAT_TIMEOUT_SECS),
+        crate::commands::agent_commerce::chat::fetch_heartbeat(
+            client,
+            access_token,
+            LOGIN_HEARTBEAT_CHAIN_INDEX,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] device heartbeat reported");
+            }
+        }
+        Ok(Err(e)) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] device heartbeat unavailable: {e:#}");
+            }
+        }
+        Err(_) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!(
+                    "[DEBUG][post-login] device heartbeat timed out after {POST_LOGIN_HEARTBEAT_TIMEOUT_SECS}s"
+                );
+            }
+        }
+    }
+}
+
 /// Poll for the verify result, persist the session, and emit the account
 /// summary. Shared by the `poll` phase and the legacy all-in-one flow.
 async fn complete_login(
@@ -507,6 +582,10 @@ async fn complete_login(
 
     save_verify_result(client, &resp, session_private_key, &email).await?;
 
+    // Program-level device-registration post-condition: a fresh login must be
+    // listable before the subscription/device snapshot is fetched below.
+    report_post_login_device(client, &resp.access_token).await;
+
     // Best-effort balance + identity → login-success summary for the skill.
     let wallets = wallet_store::load_wallets()?.unwrap_or_default();
     let mut summary =
@@ -518,6 +597,13 @@ async fn complete_login(
         obj.insert("email".to_string(), json!(email));
         obj.insert("isNew".to_string(), json!(resp.is_new));
     }
+
+    // Program-level post-condition: a successful login owns the subscription
+    // lookup. Empty/error stays absent (zero-disturb); a device-list failure is
+    // retained inside the snapshot as `devices: null` for degraded rendering.
+    let post_login = fetch_post_login_subscriptions_bounded().await;
+    attach_post_login_subscriptions(&mut summary, post_login);
+
     output::success(summary);
     Ok(())
 }
@@ -1004,6 +1090,135 @@ fn apply_all_account_address_list(list: &[crate::wallet_api::RefreshAccountItem]
 mod tests {
     use super::*;
     use base64::Engine;
+
+    #[test]
+    fn post_login_snapshot_is_attached_without_replacing_account_fields() {
+        let mut summary = json!({ "accountName": "Wallet 1", "isNew": false });
+        let snapshot = json!({
+            "subscriptions": { "list": [{ "jobId": "j1" }] },
+            "devices": { "list": [{ "deviceId": "d1" }] }
+        });
+        attach_post_login_subscriptions(&mut summary, Some(snapshot.clone()));
+        assert_eq!(summary["accountName"], "Wallet 1");
+        assert_eq!(summary["postLoginSubscriptions"], snapshot);
+    }
+
+    #[test]
+    fn absent_post_login_snapshot_leaves_login_summary_unchanged() {
+        let mut summary = json!({ "accountName": "Wallet 1" });
+        let before = summary.clone();
+        attach_post_login_subscriptions(&mut summary, None);
+        assert_eq!(summary, before);
+    }
+
+    #[tokio::test]
+    async fn post_login_device_report_sends_registration_heartbeat() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+
+        let test_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(format!(
+                "post_login_device_heartbeat_{}",
+                std::process::id()
+            ));
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create heartbeat test home");
+        {
+            let _env_lock = crate::home::TEST_ENV_MUTEX
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("ONCHAINOS_HOME", &test_home);
+            // Initialize the process-wide id while the isolated home is active;
+            // release the environment lock before the network await below.
+            assert!(crate::device::id::get_cached_device_id().is_some());
+            std::env::remove_var("ONCHAINOS_HOME");
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind heartbeat mock");
+        let address = listener.local_addr().expect("heartbeat mock address");
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_server = captured.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept heartbeat request");
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .expect("set heartbeat read timeout");
+
+            let mut request = Vec::new();
+            let mut content_length = None;
+            let mut header_end = None;
+            loop {
+                let mut chunk = [0u8; 4096];
+                let read = stream.read(&mut chunk).unwrap_or(0);
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+
+                if header_end.is_none() {
+                    header_end = request
+                        .windows(4)
+                        .position(|w| w == b"\r\n\r\n")
+                        .map(|i| i + 4);
+                    if let Some(end) = header_end {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        content_length = headers.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        });
+                    }
+                }
+
+                if let (Some(end), Some(length)) = (header_end, content_length) {
+                    if request.len() >= end + length {
+                        break;
+                    }
+                }
+            }
+            *captured_server.lock().expect("capture heartbeat request") =
+                String::from_utf8_lossy(&request).to_string();
+
+            let body = r#"{"code":0,"data":true,"msg":""}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write heartbeat response");
+        });
+
+        let mut client = WalletApiClient::with_base_url(Some(&format!("http://{address}")))
+            .expect("build heartbeat client");
+        report_post_login_device(&mut client, "login-access-token").await;
+        server.join().expect("join heartbeat mock");
+
+        let _ = std::fs::remove_dir_all(&test_home);
+
+        let request = captured.lock().expect("read heartbeat request").clone();
+        let lower = request.to_lowercase();
+        assert!(
+            request.starts_with("POST /priapi/v5/wallet/agentic/agent-heartbeat HTTP/1.1"),
+            "unexpected heartbeat request: {request}"
+        );
+        assert!(
+            lower.contains("authorization: bearer login-access-token"),
+            "missing login access token: {request}"
+        );
+        assert!(lower.contains("device-id:"), "missing device-id: {request}");
+        assert!(
+            lower.contains("device-name:"),
+            "missing device-name: {request}"
+        );
+        assert!(
+            request.contains(r#"{"chainIndex":196}"#),
+            "wrong heartbeat body: {request}"
+        );
+    }
 
     fn make_jwt(exp: i64) -> String {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD

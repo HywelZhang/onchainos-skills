@@ -15,16 +15,16 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use super::create::resolve_user_agent;
+use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 use crate::audit;
-use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
-use crate::commands::agent_commerce::task::common::{AGENT_ROLE_USER, AGENT_ROLE_ASP};
+use crate::commands::agent_commerce::task::common::{AGENT_ROLE_ASP, AGENT_ROLE_USER};
 use crate::commands::agent_commerce::task::signing;
-use super::create::resolve_user_agent;
-use super::create_subscribe::SUBSCRIBE_API_PREFIX;
+use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
 // ── copy-trade subscription: ensure XMTP session consent with the provider ──
 //
@@ -39,7 +39,9 @@ use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 /// marker. `None` if `job_id` fails the path-safety charset check.
 fn consent_marker_path(job_id: &str) -> Option<std::path::PathBuf> {
     if job_id.is_empty()
-        || !job_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        || !job_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
         return None;
     }
@@ -82,10 +84,7 @@ pub(crate) fn ensure_subscription_consent(
 
 // ── subscribe-cancel ────────────────────────────────────────────────────
 
-pub async fn handle_subscribe_cancel(
-    client: &mut TaskApiClient,
-    sub_id: &str,
-) -> Result<()> {
+pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (user_agent_id, _) = resolve_user_agent().await?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
@@ -101,11 +100,25 @@ pub async fn handle_subscribe_cancel(
 
     let biz_type = signing::extract_biz_type(&resp);
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address, sub_id, biz_type, &user_agent_id, None,
-    ).await?;
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        sub_id,
+        biz_type,
+        &user_agent_id,
+        None,
+    )
+    .await?;
 
-    audit::log("cli", "user/subscribe_cancel", true, Duration::default(),
-        Some(vec![format!("subId={sub_id}"), format!("txHash={tx_hash}")]), None);
+    audit::log(
+        "cli",
+        "user/subscribe_cancel",
+        true,
+        Duration::default(),
+        Some(vec![format!("subId={sub_id}"), format!("txHash={tx_hash}")]),
+        None,
+    );
 
     println!("✓ Subscription cancel in progress (transaction broadcast)");
     println!("  subId:  {sub_id}");
@@ -127,10 +140,7 @@ pub async fn handle_subscribe_cancel(
 
 // ── start-autorenew ─────────────────────────────────────────────────────
 
-pub async fn handle_start_autorenew(
-    client: &mut TaskApiClient,
-    sub_id: &str,
-) -> Result<()> {
+pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (user_agent_id, _) = resolve_user_agent().await?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
@@ -177,11 +187,25 @@ pub async fn handle_start_autorenew(
 
     let biz_type = signing::extract_biz_type(&resp);
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address, sub_id, biz_type, &user_agent_id, None,
-    ).await?;
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        sub_id,
+        biz_type,
+        &user_agent_id,
+        None,
+    )
+    .await?;
 
-    audit::log("cli", "user/start_autorenew", true, Duration::default(),
-        Some(vec![format!("subId={sub_id}"), format!("txHash={tx_hash}")]), None);
+    audit::log(
+        "cli",
+        "user/start_autorenew",
+        true,
+        Duration::default(),
+        Some(vec![format!("subId={sub_id}"), format!("txHash={tx_hash}")]),
+        None,
+    );
 
     println!("✓ Auto-renew enable in progress (transaction broadcast)");
     println!("  subId:  {sub_id}");
@@ -231,12 +255,25 @@ pub(crate) async fn handle_subscribe_reject_inner(
     let biz_type = signing::extract_biz_type(&resp);
     let reason_extra = serde_json::json!({ "reason": reason });
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address, sub_id, biz_type, user_agent_id,
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        sub_id,
+        biz_type,
+        user_agent_id,
         Some(&reason_extra),
-    ).await?;
+    )
+    .await?;
 
-    audit::log("cli", "user/subscribe_reject", true, Duration::default(),
-        Some(vec![format!("subId={sub_id}"), format!("txHash={tx_hash}")]), None);
+    audit::log(
+        "cli",
+        "user/subscribe_reject",
+        true,
+        Duration::default(),
+        Some(vec![format!("subId={sub_id}"), format!("txHash={tx_hash}")]),
+        None,
+    );
 
     println!("✓ Subscription rejection in progress (transaction broadcast)");
     println!("  subId:  {sub_id}");
@@ -267,20 +304,18 @@ pub async fn handle_subscribe_detail(
 
     let agent_id = match signing::resolve_agent_id_by_role(AGENT_ROLE_USER).await {
         Ok(id) => id,
-        Err(_) => signing::resolve_agent_id_by_role(AGENT_ROLE_ASP).await.unwrap_or_default(),
+        Err(_) => signing::resolve_agent_id_by_role(AGENT_ROLE_ASP)
+            .await
+            .unwrap_or_default(),
     };
 
     let json_mode = format.eq_ignore_ascii_case("json");
 
     let resp = client
-        .get_with_identity(
-            &format!("{SUBSCRIBE_API_PREFIX}/{sub_id}"),
-            &agent_id,
-        )
+        .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{sub_id}"), &agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("subscribe-detail failed: {e}"))?;
-    let is_buyer = !agent_id.is_empty()
-        && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
+    let is_buyer = !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
 
     // Checking a subscription's detail on a fresh device establishes the copy-trade
     // provider session (drains any held signals). Runs before the json early-return so
@@ -297,11 +332,8 @@ pub async fn handle_subscribe_detail(
     }
 
     if json_mode {
-        let enriched = enrich_subscription_detail(
-            resp,
-            crate::device::id::get_cached_device_id(),
-            is_buyer,
-        );
+        let enriched =
+            enrich_subscription_detail(resp, crate::device::id::get_cached_device_id(), is_buyer);
         crate::output::success(enriched);
         return Ok(());
     }
@@ -385,9 +417,7 @@ fn trial_window(resp: &serde_json::Value) -> (i64, i64) {
 
 // ── subscribe-cost (active subscriptions monthly cost) ─────────────────
 
-pub async fn handle_subscribe_cost(
-    client: &mut TaskApiClient,
-) -> Result<()> {
+pub async fn handle_subscribe_cost(client: &mut TaskApiClient) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (agent_id, _) = resolve_user_agent().await?;
     let path = format!("{SUBSCRIBE_API_PREFIX}/cost/active");
@@ -396,8 +426,12 @@ pub async fn handle_subscribe_cost(
         .await
         .map_err(|e| anyhow!("subscribe-cost failed: {e}"))?;
     audit::log(
-        "cli", "user/subscribe_cost", true, Duration::default(),
-        Some(vec![format!("agentId={agent_id}")]), None,
+        "cli",
+        "user/subscribe_cost",
+        true,
+        Duration::default(),
+        Some(vec![format!("agentId={agent_id}")]),
+        None,
     );
     crate::output::success(resp);
     Ok(())
@@ -478,16 +512,26 @@ struct SubscriptionList {
     list: Vec<SubscriptionInfo>,
 }
 
+/// Programmatic form of `my-subscriptions`, shared by the standalone command
+/// and the wallet login post-condition. Keeping the resolved buyer agent id
+/// alongside the JSON lets the login path fetch the matching device table
+/// without resolving identity a second time.
+pub(crate) struct MySubscriptionsSnapshot {
+    pub(crate) data: serde_json::Value,
+    pub(crate) agent_id: String,
+    pub(crate) is_empty: bool,
+}
+
 pub fn status_name(status: i64) -> String {
     match status {
         -1 => "INIT".to_string(),
-         1 => "ACTIVE".to_string(),
-         3 => "REJECTED".to_string(),
-         4 => "DISPUTED".to_string(),
-         6 => "COMPLETED".to_string(),
-         7 => "CLOSED".to_string(),
-         9 => "FAILED".to_string(),
-         n => format!("UNKNOWN_{n}"),
+        1 => "ACTIVE".to_string(),
+        3 => "REJECTED".to_string(),
+        4 => "DISPUTED".to_string(),
+        6 => "COMPLETED".to_string(),
+        7 => "CLOSED".to_string(),
+        9 => "FAILED".to_string(),
+        n => format!("UNKNOWN_{n}"),
     }
 }
 
@@ -641,11 +685,8 @@ fn derive_device_enrichment(
     default_all_receives: bool,
 ) -> DeviceEnrichment {
     let category_codes = category_codes.unwrap_or_default();
-    let this_device_receives = device_receives(
-        this_device_id,
-        device_list.as_deref(),
-        default_all_receives,
-    );
+    let this_device_receives =
+        device_receives(this_device_id, device_list.as_deref(), default_all_receives);
     DeviceEnrichment {
         device_list,
         category_codes,
@@ -734,11 +775,11 @@ fn filter_subscriptions(
         .collect()
 }
 
-pub async fn handle_my_subscriptions(
+pub(crate) async fn fetch_my_subscriptions_snapshot(
     client: &mut TaskApiClient,
     role: SubscriptionRole,
     status: Option<i32>,
-) -> Result<()> {
+) -> Result<MySubscriptionsSnapshot> {
     let header_agent = common_query::resolve_agent_id("", role.agent_role()).await;
     let path = my_subscriptions_path();
     let data = client
@@ -773,6 +814,7 @@ pub async fn handle_my_subscriptions(
             }
         }
     }
+    let is_empty = list.is_empty();
     let mut envelope = serde_json::Map::new();
     envelope.insert("list".to_string(), serde_json::json!(list));
     envelope.insert(
@@ -786,7 +828,20 @@ pub async fn handle_my_subscriptions(
         FIELD_THIS_DEVICE_NAME.to_string(),
         serde_json::json!(this_device_name()),
     );
-    crate::output::success(serde_json::Value::Object(envelope));
+    Ok(MySubscriptionsSnapshot {
+        data: serde_json::Value::Object(envelope),
+        agent_id: header_agent,
+        is_empty,
+    })
+}
+
+pub async fn handle_my_subscriptions(
+    client: &mut TaskApiClient,
+    role: SubscriptionRole,
+    status: Option<i32>,
+) -> Result<()> {
+    let snapshot = fetch_my_subscriptions_snapshot(client, role, status).await?;
+    crate::output::success(snapshot.data);
     Ok(())
 }
 
@@ -827,7 +882,11 @@ mod tests {
     #[test]
     fn cli_subscribe_reject() {
         let cli = TestCli::parse_from([
-            "test", "subscribe-reject", "sub-789", "--reason", "quality not met",
+            "test",
+            "subscribe-reject",
+            "sub-789",
+            "--reason",
+            "quality not met",
         ]);
         match cli.cmd {
             super::super::TaskCommand::SubscribeReject { sub_id, reason } => {
@@ -840,9 +899,7 @@ mod tests {
 
     #[test]
     fn cli_subscribe_detail() {
-        let cli = TestCli::parse_from([
-            "test", "subscribe-detail", "sub-ccc", "--format", "json",
-        ]);
+        let cli = TestCli::parse_from(["test", "subscribe-detail", "sub-ccc", "--format", "json"]);
         match cli.cmd {
             super::super::TaskCommand::SubscribeDetail { sub_id, format } => {
                 assert_eq!(sub_id, "sub-ccc");
@@ -855,7 +912,10 @@ mod tests {
     #[test]
     fn cli_subscribe_cost() {
         let cli = TestCli::parse_from(["test", "subscribe-cost"]);
-        assert!(matches!(cli.cmd, super::super::TaskCommand::SubscribeCost {}));
+        assert!(matches!(
+            cli.cmd,
+            super::super::TaskCommand::SubscribeCost {}
+        ));
     }
 
     fn detail_fixture() -> serde_json::Value {
@@ -1091,7 +1151,8 @@ mod tests {
     #[test]
     fn trial_window_falls_back_to_legacy_spelling() {
         // Legacy-only response (today's query API) still yields the window.
-        let legacy = json!({ "trailStartTime": 1_700_000_000i64, "trailEndTime": 1_700_600_000i64 });
+        let legacy =
+            json!({ "trailStartTime": 1_700_000_000i64, "trailEndTime": 1_700_600_000i64 });
         assert_eq!(trial_window(&legacy), (1_700_000_000, 1_700_600_000));
         // Neither present → zeros, never an error.
         assert_eq!(trial_window(&json!({})), (0, 0));
@@ -1123,7 +1184,10 @@ mod tests {
         let mut w = detail_fixture();
         w["deviceList"] = json!(["dX"]);
         let wrapper: SubscriptionList = serde_json::from_value(json!({ "list": [w] })).unwrap();
-        assert_eq!(wrapper.list[0].device_list.as_deref(), Some(&["dX".to_string()][..]));
+        assert_eq!(
+            wrapper.list[0].device_list.as_deref(),
+            Some(&["dX".to_string()][..])
+        );
     }
 
     #[test]
@@ -1140,12 +1204,24 @@ mod tests {
 
     #[test]
     fn normalize_str_array_tolerant_of_null_missing_and_non_array() {
-        assert_eq!(normalize_str_array(Some(&json!(["a", "b"]))), vec!["a", "b"]);
-        assert_eq!(normalize_str_array(Some(&serde_json::Value::Null)), Vec::<String>::new());
+        assert_eq!(
+            normalize_str_array(Some(&json!(["a", "b"]))),
+            vec!["a", "b"]
+        );
+        assert_eq!(
+            normalize_str_array(Some(&serde_json::Value::Null)),
+            Vec::<String>::new()
+        );
         assert_eq!(normalize_str_array(None), Vec::<String>::new());
-        assert_eq!(normalize_str_array(Some(&json!("notarray"))), Vec::<String>::new());
+        assert_eq!(
+            normalize_str_array(Some(&json!("notarray"))),
+            Vec::<String>::new()
+        );
         // non-string array elements are dropped, not errored.
-        assert_eq!(normalize_str_array(Some(&json!(["a", 1, null, "b"]))), vec!["a", "b"]);
+        assert_eq!(
+            normalize_str_array(Some(&json!(["a", 1, null, "b"]))),
+            vec!["a", "b"]
+        );
     }
 
     #[test]
@@ -1217,13 +1293,15 @@ mod tests {
             Some("d2"),
             true,
         );
-        assert_eq!(members.device_list, Some(vec!["d1".to_string(), "d2".to_string()]));
+        assert_eq!(
+            members.device_list,
+            Some(vec!["d1".to_string(), "d2".to_string()])
+        );
         assert_eq!(members.category_codes, vec!["c1"]);
         assert!(members.this_device_receives); // this-device in list → true
 
         // Unresolved this-device id ⇒ false even with a populated list.
-        let unresolved =
-            derive_device_enrichment(Some(vec!["d1".to_string()]), None, None, true);
+        let unresolved = derive_device_enrichment(Some(vec!["d1".to_string()]), None, None, true);
         assert!(!unresolved.this_device_receives);
     }
 

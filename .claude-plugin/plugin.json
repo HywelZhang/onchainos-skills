@@ -1,6 +1,6 @@
 {
   "name": "onchainos-skills",
-  "version": "5.0.67",
+  "version": "5.0.88",
   "skills": [
     "./skills/"
   ],

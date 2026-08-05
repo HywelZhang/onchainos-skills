@@ -25,6 +25,7 @@ use anyhow::{anyhow, bail, Result};
 use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -41,6 +42,46 @@ const MAX_UPDATE_ITEMS: usize = 100;
 const DEFAULT_PAGE_SIZE: i64 = 20;
 /// Hard safety cap on pagination rounds (a buggy backend must not loop forever).
 const MAX_PAGES: i64 = 10_000;
+/// Durable marker directory for interrupted new-device fan-out. Markers are
+/// keyed by a hash of buyer agent id + device id and deliberately survive
+/// logout, allowing a later login to finish a partially successful batch set.
+const PENDING_ROUTING_DIR: &str = "subscription-device-routing-pending";
+
+fn pending_routing_marker_path(agent_id: &str, device_id: &str) -> Result<std::path::PathBuf> {
+    if agent_id.is_empty() || device_id.is_empty() {
+        bail!("cannot address a pending device-routing marker without agent and device ids");
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(agent_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(device_id.as_bytes());
+    let key = format!("{:x}", hasher.finalize());
+    Ok(crate::home::onchainos_home()?
+        .join(PENDING_ROUTING_DIR)
+        .join(format!("{key}.pending")))
+}
+
+pub(crate) fn new_device_routing_is_pending(agent_id: &str, device_id: &str) -> Result<bool> {
+    Ok(pending_routing_marker_path(agent_id, device_id)?.is_file())
+}
+
+pub(crate) fn mark_new_device_routing_pending(agent_id: &str, device_id: &str) -> Result<()> {
+    let path = pending_routing_marker_path(agent_id, device_id)?;
+    crate::home::atomic_write(&path, b"pending\n", true)
+}
+
+pub(crate) fn clear_new_device_routing_pending(agent_id: &str, device_id: &str) -> Result<()> {
+    let path = pending_routing_marker_path(agent_id, device_id)?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| {
+            anyhow!(
+                "failed to clear pending device-routing marker {}: {e}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
 
 // ─── ms → local time helper (device lastOnlineTime is milliseconds) ─────────
 
@@ -301,7 +342,7 @@ pub async fn handle_device_list(
 
 /// One subscription's overwrite target. `device_list` empty ⇒ that subscription
 /// receives on no device (clear).
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct UpdateItem {
     job_id: String,
@@ -375,10 +416,138 @@ fn build_update_body(items: &[UpdateItem]) -> Value {
     json!({ "items": build_items_array(items) })
 }
 
+/// Build the overwrite operations needed to make a genuinely new device receive
+/// every subscription. Historical/default-all rows (`deviceList: null`) already
+/// include every device and must stay null. Explicit rows (including `[]`) are
+/// copied as-is and receive the new id exactly once.
+fn plan_new_device_updates(subscriptions: &Value, device_id: &str) -> Result<Vec<UpdateItem>> {
+    if device_id.is_empty() {
+        bail!("cannot enable subscription delivery for an empty device id");
+    }
+
+    let list = subscriptions
+        .get("list")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("subscription snapshot is missing its list"))?;
+    let mut updates = Vec::new();
+
+    for row in list {
+        let Some(raw_devices) = row.get("deviceList") else {
+            // Missing has the same historical/default-all meaning as null.
+            continue;
+        };
+        if raw_devices.is_null() {
+            continue;
+        }
+        let devices = raw_devices
+            .as_array()
+            .ok_or_else(|| anyhow!("subscription snapshot contains a malformed deviceList"))?;
+        if devices.iter().any(|value| value.as_str() == Some(device_id)) {
+            continue;
+        }
+
+        let job_id = row
+            .get("jobId")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| {
+                anyhow!("subscription requiring a device update is missing its jobId")
+            })?;
+        let mut next_devices = Vec::with_capacity(devices.len() + 1);
+        for value in devices {
+            let id = value.as_str().ok_or_else(|| {
+                anyhow!("subscription snapshot contains a non-string device id")
+            })?;
+            next_devices.push(id.to_string());
+        }
+        next_devices.push(device_id.to_string());
+        updates.push(UpdateItem {
+            job_id: job_id.to_string(),
+            device_list: next_devices,
+        });
+    }
+
+    Ok(updates)
+}
+
+/// Reflect a backend-confirmed new-device update into the already-fetched
+/// snapshot. This avoids a second subscription-list read while ensuring the
+/// login renderer never appears before every batch has succeeded.
+fn reflect_new_device_in_snapshot(subscriptions: &mut Value, device_id: &str) -> Result<()> {
+    let list = subscriptions
+        .get_mut("list")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("subscription snapshot is missing its list"))?;
+
+    for row in list {
+        let Some(obj) = row.as_object_mut() else {
+            bail!("subscription snapshot contains a malformed row");
+        };
+        match obj.get_mut("deviceList") {
+            None | Some(Value::Null) => {
+                // Default-all already includes the new device; preserve the mode.
+            }
+            Some(Value::Array(devices)) => {
+                if !devices
+                    .iter()
+                    .any(|value| value.as_str() == Some(device_id))
+                {
+                    devices.push(Value::String(device_id.to_string()));
+                }
+            }
+            Some(_) => bail!("subscription snapshot contains a malformed deviceList"),
+        }
+        obj.insert("thisDeviceReceives".to_string(), Value::Bool(true));
+    }
+    Ok(())
+}
+
 /// Success iff the backend `data` is boolean `true`. Any other shape (object,
 /// null, `"true"` string) is a failure whose raw body is echoed.
 fn is_update_success(data: &Value) -> bool {
     *data == Value::Bool(true)
+}
+
+async fn post_update_items(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    items: &[UpdateItem],
+) -> Result<()> {
+    validate_items_len(items.len())?;
+    let body = build_update_body(items);
+    let path = format!("{SUBSCRIBE_API_PREFIX}/device/batchUpdate");
+    let resp = client
+        .post_with_identity(&path, &body, agent_id)
+        .await
+        .map_err(|e| anyhow!("subscribe-device-update failed: {e}"))?;
+
+    if is_update_success(&resp) {
+        Ok(())
+    } else {
+        bail!(
+            "subscribe-device-update failed: backend did not confirm the update (data != true): {}",
+            serde_json::to_string(&resp).unwrap_or_else(|_| resp.to_string())
+        )
+    }
+}
+
+/// Add a newly registered device to every explicitly routed subscription.
+/// The batch endpoint overwrites complete lists, so this always plans from the
+/// fresh snapshot and preserves every existing receiver. More than 100 tasks
+/// are split into sequential backend-supported batches. The snapshot is only
+/// mutated after all batches have been confirmed.
+pub(crate) async fn add_new_device_to_all_subscriptions(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    subscriptions: &mut Value,
+    device_id: &str,
+) -> Result<usize> {
+    let updates = plan_new_device_updates(subscriptions, device_id)?;
+    for chunk in updates.chunks(MAX_UPDATE_ITEMS) {
+        post_update_items(client, agent_id, chunk).await?;
+    }
+    reflect_new_device_in_snapshot(subscriptions, device_id)?;
+    Ok(updates.len())
 }
 
 /// `subscribe-device-update` handler. Client-validates locally (0 / >100 items
@@ -400,24 +569,10 @@ pub async fn handle_subscribe_device_update(
         .map_err(|e| anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
     let (user_agent_id, _) = resolve_user_agent().await?;
 
-    let body = build_update_body(&normalized);
-    let path = format!("{SUBSCRIBE_API_PREFIX}/device/batchUpdate");
-    let resp = client
-        .post_with_identity(&path, &body, &user_agent_id)
-        .await
-        .map_err(|e| anyhow!("subscribe-device-update failed: {e}"))?;
-
-    if is_update_success(&resp) {
-        // Echo what was written so the skill re-renders without a second fetch.
-        output::success(json!({ "updated": build_items_array(&normalized) }));
-        Ok(())
-    } else {
-        // HTTP 200 + code "0" but data != true — echo the raw body verbatim.
-        bail!(
-            "subscribe-device-update failed: backend did not confirm the update (data != true): {}",
-            serde_json::to_string(&resp).unwrap_or_else(|_| resp.to_string())
-        )
-    }
+    post_update_items(client, &user_agent_id, &normalized).await?;
+    // Echo what was written so the skill re-renders without a second fetch.
+    output::success(json!({ "updated": build_items_array(&normalized) }));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -584,6 +739,97 @@ mod tests {
         assert!(!is_update_success(&json!("true")));
         assert!(!is_update_success(&json!({ "updated": 1 })));
         assert!(!is_update_success(&Value::Null));
+    }
+
+    #[test]
+    fn new_device_plan_preserves_tri_state_and_existing_receivers() {
+        let snapshot = json!({
+            "list": [
+                { "jobId": "default-all", "deviceList": null },
+                { "jobId": "explicit-none", "deviceList": [] },
+                { "jobId": "selected", "deviceList": ["d1", "d2"] },
+                { "jobId": "already-enabled", "deviceList": ["d-new"] },
+                { "jobId": "missing-default-all" }
+            ]
+        });
+
+        let updates = plan_new_device_updates(&snapshot, "d-new").unwrap();
+        assert_eq!(
+            updates,
+            vec![
+                UpdateItem {
+                    job_id: "explicit-none".into(),
+                    device_list: vec!["d-new".into()],
+                },
+                UpdateItem {
+                    job_id: "selected".into(),
+                    device_list: vec!["d1".into(), "d2".into(), "d-new".into()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn new_device_plan_is_idempotent_for_an_existing_receiver() {
+        let snapshot = json!({
+            "list": [
+                { "jobId": "j1", "deviceList": ["d1", "d-new"] },
+                { "jobId": "j2", "deviceList": null }
+            ]
+        });
+        assert!(plan_new_device_updates(&snapshot, "d-new")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn reflected_new_device_snapshot_keeps_null_and_marks_every_row_receiving() {
+        let mut snapshot = json!({
+            "list": [
+                { "jobId": "j1", "deviceList": null, "thisDeviceReceives": true },
+                { "jobId": "j2", "deviceList": [], "thisDeviceReceives": false },
+                { "jobId": "j3", "deviceList": ["d1"], "thisDeviceReceives": false }
+            ]
+        });
+
+        reflect_new_device_in_snapshot(&mut snapshot, "d-new").unwrap();
+        assert!(snapshot["list"][0]["deviceList"].is_null());
+        assert_eq!(snapshot["list"][1]["deviceList"], json!(["d-new"]));
+        assert_eq!(snapshot["list"][2]["deviceList"], json!(["d1", "d-new"]));
+        assert!(snapshot["list"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["thisDeviceReceives"] == json!(true)));
+    }
+
+    #[test]
+    fn new_device_plan_rejects_an_unupdatable_explicit_row() {
+        let snapshot = json!({ "list": [{ "deviceList": [] }] });
+        assert!(plan_new_device_updates(&snapshot, "d-new").is_err());
+    }
+
+    #[test]
+    fn pending_new_device_routing_marker_survives_until_explicit_clear() {
+        let _env_lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let test_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(format!("pending_device_routing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::env::set_var("ONCHAINOS_HOME", &test_home);
+
+        assert!(!new_device_routing_is_pending("agent-1", "device-1").unwrap());
+        mark_new_device_routing_pending("agent-1", "device-1").unwrap();
+        assert!(new_device_routing_is_pending("agent-1", "device-1").unwrap());
+        assert!(!new_device_routing_is_pending("agent-1", "device-2").unwrap());
+        clear_new_device_routing_pending("agent-1", "device-1").unwrap();
+        assert!(!new_device_routing_is_pending("agent-1", "device-1").unwrap());
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        let _ = std::fs::remove_dir_all(&test_home);
     }
 
     #[test]

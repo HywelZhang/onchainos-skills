@@ -531,11 +531,59 @@ pub(super) async fn fetch_post_login_subscriptions_bounded() -> Option<serde_jso
     }
 }
 
+/// Capture the pre-heartbeat device state within the same bounded budget used
+/// by the ordinary post-login snapshot. A timeout suppresses the optional table
+/// and skips registration so a later login can still detect the new device.
+async fn prepare_post_login_subscriptions_bounded(
+) -> Option<crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation> {
+    match tokio::time::timeout(
+        Duration::from_secs(POST_LOGIN_SNAPSHOT_TIMEOUT_SECS),
+        crate::commands::agent_commerce::task::user::prepare_post_login_subscriptions(),
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(_) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!(
+                    "[DEBUG][post-login] pre-registration snapshot timed out after {POST_LOGIN_SNAPSHOT_TIMEOUT_SECS}s"
+                );
+            }
+            None
+        }
+    }
+}
+
+async fn finalize_post_login_subscriptions_bounded(
+    prepared: crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation,
+    device_registration_succeeded: bool,
+) -> Option<serde_json::Value> {
+    match tokio::time::timeout(
+        Duration::from_secs(POST_LOGIN_SNAPSHOT_TIMEOUT_SECS),
+        crate::commands::agent_commerce::task::user::finalize_post_login_subscriptions(
+            prepared,
+            device_registration_succeeded,
+        ),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!(
+                    "[DEBUG][post-login] new-device routing timed out after {POST_LOGIN_SNAPSHOT_TIMEOUT_SECS}s"
+                );
+            }
+            None
+        }
+    }
+}
+
 /// Register or refresh this machine in the backend device table immediately
 /// after login. The backend upsert is driven by the heartbeat request carrying
 /// the shared `device-id` and `device-name` headers. Failure is deliberately
 /// non-fatal: authentication has already succeeded and remains usable.
-async fn report_post_login_device(client: &mut WalletApiClient, access_token: &str) {
+async fn report_post_login_device(client: &mut WalletApiClient, access_token: &str) -> bool {
     match tokio::time::timeout(
         Duration::from_secs(POST_LOGIN_HEARTBEAT_TIMEOUT_SECS),
         crate::commands::agent_commerce::chat::fetch_heartbeat(
@@ -550,11 +598,13 @@ async fn report_post_login_device(client: &mut WalletApiClient, access_token: &s
             if cfg!(feature = "debug-log") {
                 eprintln!("[DEBUG][post-login] device heartbeat reported");
             }
+            true
         }
         Ok(Err(e)) => {
             if cfg!(feature = "debug-log") {
                 eprintln!("[DEBUG][post-login] device heartbeat unavailable: {e:#}");
             }
+            false
         }
         Err(_) => {
             if cfg!(feature = "debug-log") {
@@ -562,6 +612,7 @@ async fn report_post_login_device(client: &mut WalletApiClient, access_token: &s
                     "[DEBUG][post-login] device heartbeat timed out after {POST_LOGIN_HEARTBEAT_TIMEOUT_SECS}s"
                 );
             }
+            false
         }
     }
 }
@@ -582,9 +633,27 @@ async fn complete_login(
 
     save_verify_result(client, &resp, session_private_key, &email).await?;
 
-    // Program-level device-registration post-condition: a fresh login must be
-    // listable before the subscription/device snapshot is fetched below.
-    report_post_login_device(client, &resp.access_token).await;
+    // Capture device membership before heartbeat so a genuinely new device can
+    // be distinguished from an existing device the user manually opted out.
+    let prepared_post_login = prepare_post_login_subscriptions_bounded().await;
+
+    // Only register after the pre-heartbeat device probe has succeeded. If that
+    // probe is unavailable, registering now would erase the only reliable signal
+    // that this machine is new and could make a later routing retry impossible.
+    // Any failure remains non-fatal to wallet login and suppresses only the
+    // optional subscription table.
+    let post_login = match prepared_post_login {
+        Some(prepared) => {
+            let device_registration_succeeded =
+                report_post_login_device(client, &resp.access_token).await;
+            finalize_post_login_subscriptions_bounded(
+                prepared,
+                device_registration_succeeded,
+            )
+            .await
+        }
+        None => None,
+    };
 
     // Best-effort balance + identity → login-success summary for the skill.
     let wallets = wallet_store::load_wallets()?.unwrap_or_default();
@@ -598,10 +667,8 @@ async fn complete_login(
         obj.insert("isNew".to_string(), json!(resp.is_new));
     }
 
-    // Program-level post-condition: a successful login owns the subscription
-    // lookup. Empty/error stays absent (zero-disturb); a device-list failure is
-    // retained inside the snapshot as `devices: null` for degraded rendering.
-    let post_login = fetch_post_login_subscriptions_bounded().await;
+    // Program-level post-condition: empty/error stays absent (zero-disturb); a
+    // post-update device-list failure stays `devices: null` for degraded render.
     attach_post_login_subscriptions(&mut summary, post_login);
 
     output::success(summary);
@@ -1194,7 +1261,7 @@ mod tests {
 
         let mut client = WalletApiClient::with_base_url(Some(&format!("http://{address}")))
             .expect("build heartbeat client");
-        report_post_login_device(&mut client, "login-access-token").await;
+        assert!(report_post_login_device(&mut client, "login-access-token").await);
         server.join().expect("join heartbeat mock");
 
         let _ = std::fs::remove_dir_all(&test_home);

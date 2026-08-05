@@ -243,21 +243,17 @@ pub(crate) fn resolve_create_device_set(
     }
 }
 
-/// `device-list` handler — full emit. Empty page / no devices ⇒ `success` with
-/// `list: []`, `total: 0` (NOT an error). Transport / endpoint-unavailable
-/// (endpoint not live in production yet) propagates as `output::error` (exit 1)
-/// — the degraded path is a first-class deliverable.
-pub async fn handle_device_list(
+/// Fetch the complete device-list command payload for an already-resolved
+/// buyer agent. Shared with the login post-condition so login can return the
+/// subscription and device snapshots atomically without shelling out to a
+/// second CLI process.
+pub(crate) async fn fetch_device_list_snapshot(
     client: &mut TaskApiClient,
+    agent_id: &str,
     page: i64,
     page_size: i64,
-) -> Result<()> {
-    ensure_tokens_refreshed()
-        .await
-        .map_err(|e| anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
-    let (agent_id, _) = resolve_user_agent().await?;
-
-    let aggregated = fetch_all_devices(client, &agent_id, page, page_size).await?;
+) -> Result<Value> {
+    let aggregated = fetch_all_devices(client, agent_id, page, page_size).await?;
     let this_id = crate::device::id::get_cached_device_id();
 
     let list: Vec<DeviceOut> = aggregated
@@ -274,13 +270,30 @@ pub async fn handle_device_list(
 
     let (echoed_page, echoed_size) = normalize_page_params(page, page_size);
 
-    output::success(json!({
+    Ok(json!({
         "list": list,
         "total": aggregated.total,
         "page": echoed_page,
         "pageSize": echoed_size,
         "thisDeviceId": this_id,
-    }));
+    }))
+}
+
+/// `device-list` handler — full emit. Empty page / no devices ⇒ `success` with
+/// `list: []`, `total: 0` (NOT an error). Transport / endpoint-unavailable
+/// (endpoint not live in production yet) propagates as `output::error` (exit 1)
+/// — the degraded path is a first-class deliverable.
+pub async fn handle_device_list(
+    client: &mut TaskApiClient,
+    page: i64,
+    page_size: i64,
+) -> Result<()> {
+    ensure_tokens_refreshed()
+        .await
+        .map_err(|e| anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
+    let (agent_id, _) = resolve_user_agent().await?;
+    let snapshot = fetch_device_list_snapshot(client, &agent_id, page, page_size).await?;
+    output::success(snapshot);
     Ok(())
 }
 

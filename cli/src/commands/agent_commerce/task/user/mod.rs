@@ -360,6 +360,70 @@ fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
     }
 }
 
+/// Build the optional post-login subscription block. An empty subscription
+/// list deliberately produces no block (the product's zero-disturb contract),
+/// while a missing device snapshot is kept as JSON null so the renderer uses
+/// the documented this-device-only degraded view.
+fn compose_post_login_subscriptions(
+    subscriptions: serde_json::Value,
+    subscriptions_empty: bool,
+    devices: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    if subscriptions_empty {
+        return None;
+    }
+    Some(serde_json::json!({
+        "subscriptions": subscriptions,
+        "devices": devices,
+    }))
+}
+
+/// Best-effort login post-condition: fetch the buyer's subscriptions and, only
+/// when non-empty, the complete logged-in-device table. Subscription failures
+/// and empty lists are intentionally silent; device failures preserve the
+/// subscription data and select the documented degraded render.
+pub(crate) async fn fetch_post_login_subscriptions() -> Option<serde_json::Value> {
+    let mut client = TaskApiClient::new();
+    let subscriptions = match subscription_ops::fetch_my_subscriptions_snapshot(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+
+    if subscriptions.is_empty {
+        return None;
+    }
+
+    let devices = match device_routing::fetch_device_list_snapshot(
+        &mut client,
+        &subscriptions.agent_id,
+        1,
+        20,
+    )
+    .await
+    {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] device snapshot unavailable; degrading: {e:#}");
+            }
+            None
+        }
+    };
+
+    compose_post_login_subscriptions(subscriptions.data, false, devices)
+}
+
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
@@ -445,5 +509,41 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::SubscribeCost {} =>
             subscription_ops::handle_subscribe_cost(&mut client).await,
 
+    }
+}
+
+#[cfg(test)]
+mod post_login_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn empty_subscriptions_produce_no_post_login_block() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [] }),
+            true,
+            Some(json!({ "list": [{ "deviceId": "d1" }] })),
+        );
+        assert!(block.is_none());
+    }
+
+    #[test]
+    fn non_empty_subscriptions_include_complete_device_snapshot() {
+        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
+        let devices = json!({ "list": [{ "deviceId": "d1" }], "total": 1 });
+        let block =
+            compose_post_login_subscriptions(subscriptions.clone(), false, Some(devices.clone()))
+                .expect("non-empty subscriptions must produce a block");
+        assert_eq!(block["subscriptions"], subscriptions);
+        assert_eq!(block["devices"], devices);
+    }
+
+    #[test]
+    fn device_failure_keeps_subscriptions_and_selects_degraded_render() {
+        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
+        let block = compose_post_login_subscriptions(subscriptions.clone(), false, None)
+            .expect("subscription data must survive a device-list failure");
+        assert_eq!(block["subscriptions"], subscriptions);
+        assert!(block["devices"].is_null());
     }
 }

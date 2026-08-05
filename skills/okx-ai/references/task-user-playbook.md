@@ -160,21 +160,26 @@ Key rules:
 
 Trigger: user asks for their subscriptions (`我的订阅` / `订阅列表` / `我订阅了哪些服务` / `my subscriptions` / `what am I subscribed to`). Routing entry lives in [`task-user-intent-routing.md`](task-user-intent-routing.md).
 
-Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ], "thisDeviceId": <String|null> }`. Render each element as one row (localize labels for non-CN users). **Render ALL columns below — never drop 服务商 or 期数, and never merge 下次扣款 into a raw period range; 下次扣款 is a single derived date per the rule below.**
+Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ], "thisDeviceId": <String|null>, "thisDeviceName": <String|null> }`; also run `onchainos agent device-list` to obtain the complete logged-in device table. Render each subscription as exactly **one row** (localize labels for non-CN users). **Render ALL subscription columns below — never drop 服务商 or 期数, and never merge 下次扣款 into a raw period range; 下次扣款 is a single derived date per the rule below. Then append one dynamic column per real device.**
 
-| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | 已登陆设备 | 设备是否接收任务消息 |
+Immediately above the table, render this legend (translate faithfully for non-Chinese sessions):
+
+> ✅-接收该任务消息，❌-不接收该任务消息
+
+The device columns below are illustrative — replace them with the user's **actual readable device names**, never aliases such as D1 / D2:
+
+| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | Chen Baijia’s MacBook Pro（本设备） | Kevin’s MacBook Pro |
 |---|------|--------|------|------|---------|---------|------|------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName from device-list, or thisDeviceName for the this-device row}{（本设备）if id == thisDeviceId} | {✅是/否} |
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {receives?"✅":"❌"} | {receives?"✅":"❌"} |
 
 - **状态**: 直接展示 CLI 返回的 `statusName`（ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式改由「期数」列区分（`trialType==1` 显示"试用期"）。
 - **费用**: `serviceTokenAmount` 字符串原样展示（绝不转 float）；CLI 不提供 token 符号，仅 `serviceTokenAddress`。
 - **期数** (按状态分派): `trialType==1` → "试用期"; else `periodIndex` 为合法正整数(> 0) → `第{periodIndex}期`; else (`periodIndex` 为 null 或 ≤ 0) → "—"。
 - **下次扣款** (no CLI field — derive): `statusName != "ACTIVE"` → "—"; else `trialType==1` → 读 `trialEndTime`(正拼, 优先) 或 `trailEndTime`(`trail*` 旧拼, fallback) 双读(复用 AC-17)，渲染为日期(试用转正扣款日)，两者皆缺 → "日期暂缺"; else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
-- **已登陆设备 / 设备是否接收任务消息** (per-device expansion): a subscription logged in on N devices occupies **N rows** — the `#` and all leading subscription columns **repeat unchanged** across that subscription's rows. For `deviceList:null`, expand against **all rows from `device-list`** and mark every buyer device ✅是 (default-all); for an explicit array, join its ids against `device-list` and mark membership. The **this-device** row gets `（本设备）` and its value comes directly from the CLI `thisDeviceReceives` flag — never recompute it. When a device name is unavailable, **degrade to a count / raw id — never fabricate a name**.
-- **已登陆设备 is a NAME column — never render a raw deviceId in it.** Sources, in order: ① `device-list` gives the readable `deviceName` for every device (use it whenever available); ② when `device-list` is unavailable, the degraded render shows only **this device's** row, and its name comes from the CLI's `thisDeviceName` (the local OS device name — no device-table lookup needed), rendered as `{thisDeviceName}（本设备）`; ③ only if a name is genuinely unobtainable for a device that must be shown, fall back to a short id prefix — and say plainly that the name is unavailable. **Never** substitute the bare marker 「本设备」 as if it were the name, and never fabricate a name.
-- **Empty `deviceList` (no device receives this subscription):** the subscription still occupies exactly ONE row; the 已登陆设备 cell reads 「无设备接收」 and 设备是否接收任务消息 reads 「否」. Do **not** put the table-level degradation notice (「其他设备的接收状态暂不可用」) in the device-name cell — that sentence belongs above the table, describing the whole render.
-- **Null `deviceList` (default-all):** this is not empty. With a usable device table, render every logged-in buyer device as receiving. With no usable device table, use the degraded one-row render: this-device is ✅是 from `thisDeviceReceives`, and explicitly state that other device names/statuses are unavailable; never say 「无设备接收」.
-- **Degraded render (MANDATORY — device table unavailable):** when `device-list` fails or is empty, fall back to **one row per subscription** and **explicitly state that other devices' receipt status is temporarily unavailable** (e.g. 「其他设备的接收状态暂不可用」). It is forbidden to present the one known (this) device as the full picture. The this-device row still shows ✅是/否 from `thisDeviceReceives`; all other devices are shown as unavailable, not omitted silently.
+- **Dynamic device-column matrix (no repeated subscription rows):** build the device columns once, then render every subscription against those same columns. Put the device matching `thisDeviceId` first and append `（本设备）` to its readable name; keep the remaining devices in `device-list` order. Every subscription occupies exactly one row, regardless of how many devices exist. Do **not** add routing-mode / selected-device summary columns, do **not** expand one subscription into multiple rows, and do **not** replace real names with D1 / D2 aliases. A wide table is acceptable because every device must remain directly visible.
+- **Device-name sources and disambiguation:** use each `device-list` row's readable `deviceName`. Escape Markdown table separators / line breaks in names. If multiple devices have the same name, keep the real name and append a short device-id suffix to each duplicate; the current device also keeps `（本设备）`. If an explicit non-empty subscription `deviceList` references an id absent from the otherwise usable device table, append a final column labelled `设备名称不可用（{short deviceId}）` so configured routing is never silently hidden. Never fabricate a device name.
+- **Per-cell receipt state (tri-state):** `deviceList:null` means default-all, so every device cell is `✅`; `deviceList:[]` means explicitly none, so every device cell is `❌`; a non-empty array uses id membership (`✅` when present, otherwise `❌`). Apply the same tri-state rule to appended unknown-id columns. The **this-device cell always comes directly from the CLI `thisDeviceReceives` flag** — never recompute it. The legend above the table defines the symbols; do not repeat the full explanation inside every cell.
+- **Degraded render (MANDATORY — device table unavailable):** when `device-list` fails or is empty, keep exactly one row per subscription and render only one dynamic device column for the known current device, named from CLI `thisDeviceName` as `{thisDeviceName}（本设备）`. Its cell comes directly from `thisDeviceReceives`. Immediately above the table, explicitly state 「其他设备的名称及接收状态暂不可用」 in addition to the legend. It is forbidden to present this one known device as the full picture. If even `thisDeviceName` is unavailable, use `设备名称不可用（{short thisDeviceId}）`; never use the bare marker 「本设备」 as a fabricated name.
 - **Display-only rule:** on any list render, do **not** proactively ask whether to turn on receipt (product retracted that prompt); turning on happens only on explicit user request.
 - All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.
@@ -182,19 +187,15 @@ Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ �
 
 ## Post-login subscription display (login-flow-triggered)
 
-**Trigger (entry layer):** the wallet login flow itself, NOT a user utterance. The single entry is the routing line in [`wallet.md`](../../okx-agentic-wallet/references/wallet.md) → Authentication step 3 ("After login"). Do **NOT** add any trigger words to `SKILL.md` for this display — the login flow is the only entry. Command: `onchainos agent my-subscriptions --role buyer`.
+**Trigger (entry layer):** the wallet login flow itself, NOT a user utterance. The single entry is the routing line in [`wallet.md`](../../okx-agentic-wallet/references/wallet.md). Do **NOT** add any trigger words to `SKILL.md` for this display — the login flow is the only entry.
 
-**Zero-disturb (mandatory).** If the command errors (no OKX.AI identity, transport/auth failure) OR the subscription list is empty, output **nothing** OKX.AI-related — no table, no opening line, no 💡 hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
+**Programmatic data source (mandatory).** Both successful `wallet login --phase poll` and explicit user-facing `wallet status --include-subscriptions` return the already-aggregated snapshot at `data.postLoginSubscriptions`: `subscriptions` is the exact buyer `my-subscriptions` payload and `devices` is the complete `device-list` payload (or `null` on device-query failure). Consume that snapshot directly. **Never issue a follow-up `my-subscriptions` or `device-list` command in the login flow.** User-initiated §My Subscriptions remains a separate command flow.
 
-**Non-empty render.** Reuse §My Subscriptions **as-is**: same per-device expansion (a subscription on N devices occupies N rows; the `#` and all leading subscription columns repeat unchanged), same `deviceList` × `device-list` name join, same pagination-to-completion, same `thisDeviceReceives` / `thisDeviceId` / `（本设备）` handling, and the same **mandatory degraded render** when `device-list` fails/empty (fall back to one row per subscription and explicitly state 「其他设备的接收状态暂不可用」 — never present this device as the full picture). Only the two deltas below differ.
+**Zero-disturb (mandatory).** The CLI omits `data.postLoginSubscriptions` when the subscription lookup errors (no OKX.AI identity, transport/auth failure), times out, or returns an empty list. When absent, output **nothing** OKX.AI-related — no table, no opening line, no 💡 hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
 
-- **Delta (a) — column header:** the device-name column header is **「已登陆设备名称」** (the second device column keeps **「设备是否接收任务消息」**, identical to §My Subscriptions / §Subscription Detail). All other columns and their derivation rules are exactly those of §My Subscriptions:
+**Non-empty render.** Reuse §My Subscriptions **as-is**: the same one-row-per-subscription dynamic device-column matrix, actual device names, device ordering and disambiguation, tri-state cell mapping, `thisDeviceReceives` authority, legend, and mandatory degraded render when `device-list` fails/empty. Only the surrounding copy below differs.
 
-| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 | 已登陆设备名称 | 设备是否接收任务消息 |
-|---|------|--------|------|------|---------|---------|------|------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} | {deviceName from device-list, or thisDeviceName for the this-device row}{（本设备）if id == thisDeviceId} | {✅是/否} |
-
-- **Delta (b) — surrounding copy.** Precede the table with this VERBATIM opening line (Chinese-language sessions: render verbatim; other languages: translate faithfully, preserving meaning, per the §Localization banner):
+- **Surrounding copy.** Precede the legend and table with this VERBATIM opening line (Chinese-language sessions: render verbatim; other languages: translate faithfully, preserving meaning, per the §Localization banner):
 
   > 这是你订阅的服务和每台设备的消息推送状态。想让某台设备开始或停止接收，随时告诉我就行。
 

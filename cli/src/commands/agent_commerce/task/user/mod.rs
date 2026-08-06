@@ -382,6 +382,7 @@ fn compose_post_login_subscriptions(
 pub(crate) struct PostLoginSubscriptionsPreparation {
     agent_id: String,
     current_device_id: String,
+    routing_api_base_url: String,
     current_device_was_registered: bool,
     current_device_needs_default_routing: bool,
     pre_registration_devices: serde_json::Value,
@@ -399,9 +400,9 @@ fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> 
 }
 
 /// Fetch the device table before the registration heartbeat. Device-query
-/// failure deliberately suppresses the login table and skips registration: in
-/// that state the client cannot safely decide whether it may apply new-device
-/// defaults without undoing an existing device's manual routing choices.
+/// failure deliberately suppresses only automatic routing/the login table; the
+/// login orchestrator still sends the heartbeat so device registration is never
+/// coupled to this optional classification step.
 pub(crate) async fn prepare_post_login_subscriptions(
 ) -> Option<PostLoginSubscriptionsPreparation> {
     let mut client = TaskApiClient::new();
@@ -450,6 +451,7 @@ pub(crate) async fn prepare_post_login_subscriptions(
     };
 
     let already_pending = match device_routing::new_device_routing_is_pending(
+        &client.base_url,
         &agent_id,
         &current_device_id,
     ) {
@@ -465,21 +467,31 @@ pub(crate) async fn prepare_post_login_subscriptions(
         device_needs_default_routing(current_device_was_registered, already_pending);
     if !current_device_was_registered && !already_pending {
         if let Err(e) = device_routing::mark_new_device_routing_pending(
+            &client.base_url,
             &agent_id,
             &current_device_id,
         ) {
             if cfg!(feature = "debug-log") {
                 eprintln!("[DEBUG][post-login] cannot persist pending routing marker: {e:#}");
             }
-            // Do not register the device when the durable retry marker could
-            // not be written; the next login can safely retry the whole flow.
+            // Automatic routing cannot safely start without durable state. The
+            // login orchestrator still reports the device heartbeat.
             return None;
         }
+    } else if current_device_was_registered && !already_pending {
+        // A completed marker is not needed once this device is visible. Deletion
+        // is merely garbage collection: Completed never counts as pending.
+        let _ = device_routing::clear_new_device_routing_state(
+            &client.base_url,
+            &agent_id,
+            &current_device_id,
+        );
     }
 
     Some(PostLoginSubscriptionsPreparation {
         agent_id,
         current_device_id,
+        routing_api_base_url: client.base_url.clone(),
         current_device_was_registered,
         current_device_needs_default_routing,
         pre_registration_devices: devices,
@@ -516,16 +528,21 @@ pub(crate) async fn finalize_post_login_subscriptions(
         if prepared.current_device_needs_default_routing
             && (prepared.current_device_was_registered || device_registration_succeeded)
         {
-            if let Err(e) = device_routing::clear_new_device_routing_pending(
+            if let Err(e) = device_routing::mark_new_device_routing_completed(
+                &prepared.routing_api_base_url,
                 &prepared.agent_id,
                 &prepared.current_device_id,
             ) {
                 if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] empty-list routing marker cleanup failed: {e:#}"
-                    );
+                    eprintln!("[DEBUG][post-login] empty-list routing completion failed: {e:#}");
                 }
+                return None;
             }
+            let _ = device_routing::clear_new_device_routing_state(
+                &prepared.routing_api_base_url,
+                &prepared.agent_id,
+                &prepared.current_device_id,
+            );
         }
         return None;
     }
@@ -546,6 +563,7 @@ pub(crate) async fn finalize_post_login_subscriptions(
     let devices = if prepared.current_device_needs_default_routing {
         match device_routing::add_new_device_to_all_subscriptions(
             &mut client,
+            &prepared.routing_api_base_url,
             &prepared.agent_id,
             &mut subscriptions,
             &prepared.current_device_id,
@@ -571,14 +589,13 @@ pub(crate) async fn finalize_post_login_subscriptions(
             }
         }
 
-        if let Err(e) = device_routing::clear_new_device_routing_pending(
+        if let Err(e) = device_routing::clear_new_device_routing_state(
+            &prepared.routing_api_base_url,
             &prepared.agent_id,
             &prepared.current_device_id,
         ) {
             if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][post-login] routing succeeded but pending marker cleanup failed: {e:#}"
-                );
+                eprintln!("[DEBUG][post-login] routing completed; state cleanup deferred: {e:#}");
             }
         }
 

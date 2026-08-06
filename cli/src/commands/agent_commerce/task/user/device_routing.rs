@@ -42,16 +42,55 @@ const MAX_UPDATE_ITEMS: usize = 100;
 const DEFAULT_PAGE_SIZE: i64 = 20;
 /// Hard safety cap on pagination rounds (a buggy backend must not loop forever).
 const MAX_PAGES: i64 = 10_000;
-/// Durable marker directory for interrupted new-device fan-out. Markers are
-/// keyed by a hash of buyer agent id + device id and deliberately survive
-/// logout, allowing a later login to finish a partially successful batch set.
+/// Durable marker directory for interrupted new-device fan-out. V2 markers are
+/// keyed by API environment + buyer agent id + device id and deliberately
+/// survive logout, allowing a later login to finish a partially successful
+/// batch set without leaking state between production and pre-release.
 const PENDING_ROUTING_DIR: &str = "subscription-device-routing-pending";
+const ROUTING_MARKER_VERSION: u8 = 2;
 
-fn pending_routing_marker_path(agent_id: &str, device_id: &str) -> Result<std::path::PathBuf> {
-    if agent_id.is_empty() || device_id.is_empty() {
-        bail!("cannot address a pending device-routing marker without agent and device ids");
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum RoutingMarkerPhase {
+    Detected,
+    Routing,
+    Completed,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RoutingMarker {
+    version: u8,
+    phase: RoutingMarkerPhase,
+    #[serde(default)]
+    remaining_job_ids: Vec<String>,
+}
+
+fn normalize_routing_scope(api_base_url: &str) -> Result<String> {
+    let mut url = url::Url::parse(api_base_url)
+        .map_err(|e| anyhow!("invalid API base URL for device-routing state: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        bail!("device-routing state requires an HTTP(S) API origin");
     }
+    url.set_query(None);
+    url.set_fragment(None);
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    url.set_path(&normalized_path);
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+fn pending_routing_marker_path(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+) -> Result<std::path::PathBuf> {
+    if agent_id.is_empty() || device_id.is_empty() {
+        bail!("cannot address device-routing state without agent and device ids");
+    }
+    let scope = normalize_routing_scope(api_base_url)?;
     let mut hasher = Sha256::new();
+    hasher.update(scope.as_bytes());
+    hasher.update([0]);
     hasher.update(agent_id.as_bytes());
     hasher.update([0]);
     hasher.update(device_id.as_bytes());
@@ -61,21 +100,104 @@ fn pending_routing_marker_path(agent_id: &str, device_id: &str) -> Result<std::p
         .join(format!("{key}.pending")))
 }
 
-pub(crate) fn new_device_routing_is_pending(agent_id: &str, device_id: &str) -> Result<bool> {
-    Ok(pending_routing_marker_path(agent_id, device_id)?.is_file())
+fn read_routing_marker(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+) -> Result<Option<RoutingMarker>> {
+    let path = pending_routing_marker_path(api_base_url, agent_id, device_id)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&path).map_err(|e| {
+        anyhow!(
+            "failed to read device-routing state {}: {e}",
+            path.display()
+        )
+    })?;
+    let marker: RoutingMarker = serde_json::from_slice(&bytes).map_err(|e| {
+        anyhow!(
+            "failed to parse device-routing state {}: {e}",
+            path.display()
+        )
+    })?;
+    if marker.version != ROUTING_MARKER_VERSION {
+        bail!(
+            "unsupported device-routing state version {} in {}",
+            marker.version,
+            path.display()
+        );
+    }
+    Ok(Some(marker))
 }
 
-pub(crate) fn mark_new_device_routing_pending(agent_id: &str, device_id: &str) -> Result<()> {
-    let path = pending_routing_marker_path(agent_id, device_id)?;
-    crate::home::atomic_write(&path, b"pending\n", true)
+fn write_routing_marker(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+    marker: &RoutingMarker,
+) -> Result<()> {
+    let path = pending_routing_marker_path(api_base_url, agent_id, device_id)?;
+    let bytes = serde_json::to_vec(marker)
+        .map_err(|e| anyhow!("failed to serialize device-routing state: {e}"))?;
+    crate::home::atomic_write(&path, &bytes, true)
 }
 
-pub(crate) fn clear_new_device_routing_pending(agent_id: &str, device_id: &str) -> Result<()> {
-    let path = pending_routing_marker_path(agent_id, device_id)?;
+pub(crate) fn new_device_routing_is_pending(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+) -> Result<bool> {
+    Ok(matches!(
+        read_routing_marker(api_base_url, agent_id, device_id)?.map(|marker| marker.phase),
+        Some(RoutingMarkerPhase::Detected | RoutingMarkerPhase::Routing)
+    ))
+}
+
+pub(crate) fn mark_new_device_routing_pending(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+) -> Result<()> {
+    write_routing_marker(
+        api_base_url,
+        agent_id,
+        device_id,
+        &RoutingMarker {
+            version: ROUTING_MARKER_VERSION,
+            phase: RoutingMarkerPhase::Detected,
+            remaining_job_ids: Vec::new(),
+        },
+    )
+}
+
+pub(crate) fn mark_new_device_routing_completed(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+) -> Result<()> {
+    write_routing_marker(
+        api_base_url,
+        agent_id,
+        device_id,
+        &RoutingMarker {
+            version: ROUTING_MARKER_VERSION,
+            phase: RoutingMarkerPhase::Completed,
+            remaining_job_ids: Vec::new(),
+        },
+    )
+}
+
+pub(crate) fn clear_new_device_routing_state(
+    api_base_url: &str,
+    agent_id: &str,
+    device_id: &str,
+) -> Result<()> {
+    let path = pending_routing_marker_path(api_base_url, agent_id, device_id)?;
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| {
             anyhow!(
-                "failed to clear pending device-routing marker {}: {e}",
+                "failed to clear device-routing state {}: {e}",
                 path.display()
             )
         })?;
@@ -442,7 +564,10 @@ fn plan_new_device_updates(subscriptions: &Value, device_id: &str) -> Result<Vec
         let devices = raw_devices
             .as_array()
             .ok_or_else(|| anyhow!("subscription snapshot contains a malformed deviceList"))?;
-        if devices.iter().any(|value| value.as_str() == Some(device_id)) {
+        if devices
+            .iter()
+            .any(|value| value.as_str() == Some(device_id))
+        {
             continue;
         }
 
@@ -455,9 +580,9 @@ fn plan_new_device_updates(subscriptions: &Value, device_id: &str) -> Result<Vec
             })?;
         let mut next_devices = Vec::with_capacity(devices.len() + 1);
         for value in devices {
-            let id = value.as_str().ok_or_else(|| {
-                anyhow!("subscription snapshot contains a non-string device id")
-            })?;
+            let id = value
+                .as_str()
+                .ok_or_else(|| anyhow!("subscription snapshot contains a non-string device id"))?;
             next_devices.push(id.to_string());
         }
         next_devices.push(device_id.to_string());
@@ -470,10 +595,15 @@ fn plan_new_device_updates(subscriptions: &Value, device_id: &str) -> Result<Vec
     Ok(updates)
 }
 
-/// Reflect a backend-confirmed new-device update into the already-fetched
-/// snapshot. This avoids a second subscription-list read while ensuring the
-/// login renderer never appears before every batch has succeeded.
-fn reflect_new_device_in_snapshot(subscriptions: &mut Value, device_id: &str) -> Result<()> {
+/// Reflect only backend-confirmed updates into the already-fetched snapshot.
+/// On a resumed flow, jobs removed from the durable remaining set must retain
+/// their fresh server state: the user may have manually opted out after an
+/// earlier batch completed.
+fn reflect_new_device_in_snapshot(
+    subscriptions: &mut Value,
+    device_id: &str,
+    updated_job_ids: &[String],
+) -> Result<()> {
     let list = subscriptions
         .get_mut("list")
         .and_then(Value::as_array_mut)
@@ -483,21 +613,32 @@ fn reflect_new_device_in_snapshot(subscriptions: &mut Value, device_id: &str) ->
         let Some(obj) = row.as_object_mut() else {
             bail!("subscription snapshot contains a malformed row");
         };
-        match obj.get_mut("deviceList") {
+        let job_id = obj.get("jobId").and_then(Value::as_str).map(str::to_string);
+        let this_device_receives = match obj.get_mut("deviceList") {
             None | Some(Value::Null) => {
                 // Default-all already includes the new device; preserve the mode.
+                true
             }
             Some(Value::Array(devices)) => {
-                if !devices
-                    .iter()
-                    .any(|value| value.as_str() == Some(device_id))
+                if job_id
+                    .as_ref()
+                    .is_some_and(|id| updated_job_ids.iter().any(|updated| updated == id))
+                    && !devices
+                        .iter()
+                        .any(|value| value.as_str() == Some(device_id))
                 {
                     devices.push(Value::String(device_id.to_string()));
                 }
+                devices
+                    .iter()
+                    .any(|value| value.as_str() == Some(device_id))
             }
             Some(_) => bail!("subscription snapshot contains a malformed deviceList"),
-        }
-        obj.insert("thisDeviceReceives".to_string(), Value::Bool(true));
+        };
+        obj.insert(
+            "thisDeviceReceives".to_string(),
+            Value::Bool(this_device_receives),
+        );
     }
     Ok(())
 }
@@ -531,6 +672,26 @@ async fn post_update_items(
     }
 }
 
+fn select_updates_for_routing_marker(
+    planned: Vec<UpdateItem>,
+    marker: RoutingMarker,
+) -> Result<Vec<UpdateItem>> {
+    let target_job_ids = match marker.phase {
+        RoutingMarkerPhase::Detected => planned
+            .iter()
+            .map(|item| item.job_id.clone())
+            .collect::<Vec<_>>(),
+        RoutingMarkerPhase::Routing => marker.remaining_job_ids,
+        RoutingMarkerPhase::Completed => {
+            bail!("new-device routing is already completed; refusing to rewrite subscriptions")
+        }
+    };
+    Ok(planned
+        .into_iter()
+        .filter(|item| target_job_ids.iter().any(|id| id == &item.job_id))
+        .collect())
+}
+
 /// Add a newly registered device to every explicitly routed subscription.
 /// The batch endpoint overwrites complete lists, so this always plans from the
 /// fresh snapshot and preserves every existing receiver. More than 100 tasks
@@ -538,15 +699,65 @@ async fn post_update_items(
 /// mutated after all batches have been confirmed.
 pub(crate) async fn add_new_device_to_all_subscriptions(
     client: &mut TaskApiClient,
+    api_base_url: &str,
     agent_id: &str,
     subscriptions: &mut Value,
     device_id: &str,
 ) -> Result<usize> {
-    let updates = plan_new_device_updates(subscriptions, device_id)?;
+    let planned = plan_new_device_updates(subscriptions, device_id)?;
+    let marker = read_routing_marker(api_base_url, agent_id, device_id)?
+        .ok_or_else(|| anyhow!("new-device routing state is missing"))?;
+    // A fresh snapshot is authoritative. A remaining job that no longer needs
+    // an update (already contains the device, changed to default-all, or no
+    // longer exists) is complete. Jobs completed by an earlier batch are not
+    // re-added, so a later manual opt-out is preserved during retry.
+    let updates = select_updates_for_routing_marker(planned, marker)?;
+    let mut remaining_job_ids = updates
+        .iter()
+        .map(|item| item.job_id.clone())
+        .collect::<Vec<_>>();
+
+    write_routing_marker(
+        api_base_url,
+        agent_id,
+        device_id,
+        &RoutingMarker {
+            version: ROUTING_MARKER_VERSION,
+            phase: if remaining_job_ids.is_empty() {
+                RoutingMarkerPhase::Completed
+            } else {
+                RoutingMarkerPhase::Routing
+            },
+            remaining_job_ids: remaining_job_ids.clone(),
+        },
+    )?;
+
     for chunk in updates.chunks(MAX_UPDATE_ITEMS) {
         post_update_items(client, agent_id, chunk).await?;
+        remaining_job_ids.retain(|job_id| !chunk.iter().any(|item| &item.job_id == job_id));
+        // Persist progress after every confirmed batch. Once the final batch is
+        // confirmed the durable state becomes Completed before any table can be
+        // rendered; cleanup failure therefore cannot trigger a future re-enable.
+        write_routing_marker(
+            api_base_url,
+            agent_id,
+            device_id,
+            &RoutingMarker {
+                version: ROUTING_MARKER_VERSION,
+                phase: if remaining_job_ids.is_empty() {
+                    RoutingMarkerPhase::Completed
+                } else {
+                    RoutingMarkerPhase::Routing
+                },
+                remaining_job_ids: remaining_job_ids.clone(),
+            },
+        )?;
     }
-    reflect_new_device_in_snapshot(subscriptions, device_id)?;
+    let updated_job_ids = updates
+        .iter()
+        .map(|item| item.job_id.clone())
+        .collect::<Vec<_>>();
+    reflect_new_device_in_snapshot(subscriptions, device_id, &updated_job_ids)?;
     Ok(updates.len())
 }
 
@@ -792,7 +1003,12 @@ mod tests {
             ]
         });
 
-        reflect_new_device_in_snapshot(&mut snapshot, "d-new").unwrap();
+        reflect_new_device_in_snapshot(
+            &mut snapshot,
+            "d-new",
+            &["j2".to_string(), "j3".to_string()],
+        )
+        .unwrap();
         assert!(snapshot["list"][0]["deviceList"].is_null());
         assert_eq!(snapshot["list"][1]["deviceList"], json!(["d-new"]));
         assert_eq!(snapshot["list"][2]["deviceList"], json!(["d1", "d-new"]));
@@ -804,13 +1020,75 @@ mod tests {
     }
 
     #[test]
+    fn resumed_snapshot_preserves_a_completed_jobs_manual_opt_out() {
+        let mut snapshot = json!({
+            "list": [
+                { "jobId": "completed-before-retry", "deviceList": [], "thisDeviceReceives": false },
+                { "jobId": "updated-now", "deviceList": [], "thisDeviceReceives": false }
+            ]
+        });
+        reflect_new_device_in_snapshot(
+            &mut snapshot,
+            "d-new",
+            &["updated-now".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(snapshot["list"][0]["deviceList"], json!([]));
+        assert_eq!(snapshot["list"][0]["thisDeviceReceives"], json!(false));
+        assert_eq!(snapshot["list"][1]["deviceList"], json!(["d-new"]));
+        assert_eq!(snapshot["list"][1]["thisDeviceReceives"], json!(true));
+    }
+
+    #[test]
     fn new_device_plan_rejects_an_unupdatable_explicit_row() {
         let snapshot = json!({ "list": [{ "deviceList": [] }] });
         assert!(plan_new_device_updates(&snapshot, "d-new").is_err());
     }
 
     #[test]
-    fn pending_new_device_routing_marker_survives_until_explicit_clear() {
+    fn routing_retry_only_selects_jobs_still_recorded_as_remaining() {
+        let planned = vec![
+            UpdateItem {
+                job_id: "already-finished".into(),
+                device_list: vec!["d-new".into()],
+            },
+            UpdateItem {
+                job_id: "still-pending".into(),
+                device_list: vec!["d-new".into()],
+            },
+        ];
+        let selected = select_updates_for_routing_marker(
+            planned,
+            RoutingMarker {
+                version: ROUTING_MARKER_VERSION,
+                phase: RoutingMarkerPhase::Routing,
+                remaining_job_ids: vec!["still-pending".into()],
+            },
+        )
+        .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].job_id, "still-pending");
+
+        let completed = select_updates_for_routing_marker(
+            vec![UpdateItem {
+                job_id: "manual-opt-out".into(),
+                device_list: vec!["d-new".into()],
+            }],
+            RoutingMarker {
+                version: ROUTING_MARKER_VERSION,
+                phase: RoutingMarkerPhase::Completed,
+                remaining_job_ids: Vec::new(),
+            },
+        );
+        assert!(
+            completed.is_err(),
+            "completed state must never rewrite routes"
+        );
+    }
+
+    #[test]
+    fn routing_state_is_environment_scoped_and_completed_is_not_pending() {
         let _env_lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -821,12 +1099,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&test_home);
         std::env::set_var("ONCHAINOS_HOME", &test_home);
 
-        assert!(!new_device_routing_is_pending("agent-1", "device-1").unwrap());
-        mark_new_device_routing_pending("agent-1", "device-1").unwrap();
-        assert!(new_device_routing_is_pending("agent-1", "device-1").unwrap());
-        assert!(!new_device_routing_is_pending("agent-1", "device-2").unwrap());
-        clear_new_device_routing_pending("agent-1", "device-1").unwrap();
-        assert!(!new_device_routing_is_pending("agent-1", "device-1").unwrap());
+        let production = "https://web3.okx.com";
+        let beta = "https://beta.okex.org";
+        // 5.0.89 used an environment-agnostic hash and a plain-text marker.
+        // Leave such a file in place and prove V2 never consumes it.
+        let mut legacy_hasher = Sha256::new();
+        legacy_hasher.update(b"agent-1");
+        legacy_hasher.update([0]);
+        legacy_hasher.update(b"device-1");
+        let legacy_path = test_home
+            .join(PENDING_ROUTING_DIR)
+            .join(format!("{:x}.pending", legacy_hasher.finalize()));
+        crate::home::atomic_write(&legacy_path, b"pending\n", true).unwrap();
+        assert!(!new_device_routing_is_pending(production, "agent-1", "device-1").unwrap());
+        assert!(!new_device_routing_is_pending(beta, "agent-1", "device-1").unwrap());
+        mark_new_device_routing_pending(production, "agent-1", "device-1").unwrap();
+        assert!(new_device_routing_is_pending(production, "agent-1", "device-1").unwrap());
+        assert!(
+            new_device_routing_is_pending("https://web3.okx.com/", "agent-1", "device-1").unwrap()
+        );
+        assert!(!new_device_routing_is_pending(beta, "agent-1", "device-1").unwrap());
+        assert!(!new_device_routing_is_pending(production, "agent-1", "device-2").unwrap());
+
+        mark_new_device_routing_completed(production, "agent-1", "device-1").unwrap();
+        assert!(!new_device_routing_is_pending(production, "agent-1", "device-1").unwrap());
+        assert_eq!(
+            read_routing_marker(production, "agent-1", "device-1")
+                .unwrap()
+                .unwrap()
+                .phase,
+            RoutingMarkerPhase::Completed
+        );
+        clear_new_device_routing_state(production, "agent-1", "device-1").unwrap();
+        assert!(read_routing_marker(production, "agent-1", "device-1")
+            .unwrap()
+            .is_none());
 
         std::env::remove_var("ONCHAINOS_HOME");
         let _ = std::fs::remove_dir_all(&test_home);

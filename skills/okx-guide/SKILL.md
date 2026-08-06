@@ -4,7 +4,7 @@ description: "Onchain OS onboarding & guide hub — the single entry for first-t
 license: MIT
 metadata:
   author: okx
-  version: "5.0.88"
+  version: "5.0.90"
   homepage: "https://web3.okx.com"
 ---
 

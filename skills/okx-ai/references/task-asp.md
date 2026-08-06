@@ -8,6 +8,14 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 
 ---
 
+## Deposit-address QR (insufficient-balance — MANDATORY)
+
+🛑 **Rule:** when any ASP command (`dispute raise`, `subscribe-dispute`, etc.) returns a JSON error containing a non-empty `depositAddress` field:
+1. **Render QR**: run `onchainos wallet qrcode --address <depositAddress>` and display the QR under option 1 of the funding list. Do NOT rewrite or drop the 4-option list.
+2. **Relay** (sub-session): if relaying to the user session via `user-notify --content`, translate freely but keep all 4 options and the wallet address intact. The user session's playbook will extract the address and render QR on its side.
+
+---
+
 ## 🛑 `deliver` is gated by `job_accepted`
 
 `apply` going on-chain does NOT advance the task status — it stays `created`. The User Agent then has to run `confirm-accept`, which triggers the `job_accepted` system event. **Only after `job_accepted` arrives** may the ASP run `onchainos agent deliver` / `okx-a2a xmtp-send` the deliverable.

@@ -68,6 +68,8 @@ See `task-user-actions-publish.md` **Appendix A2** for the subscription confirma
 
 AFTER a `create-subscribe` succeeds — in **both** the normal branch and the degraded branch (`deviceRoutingDegraded: true`) — render this question block so the user can decide what happens to deliverables produced while they are offline. Chinese-language sessions render it **VERBATIM**; other languages translate faithfully, preserving meaning, per the §Localization banner. `{任务名}` is the **just-created REAL subscription title** — never a hard-coded sample.
 
+**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_created` event.
+
 > 「{任务名}」订阅任务已创建成功 ✅
 > 您离线期间，这个任务会持续产生交付物。重新上线后，这批交付物怎么处理？
 > · 补推给我（默认）—— 上线后补上，后台照常接收并处理
@@ -89,6 +91,8 @@ Branching on the user's reply:
 
 ### Post-creation: Watch check (mandatory)
 
+This order is fixed: the offline-deliverables question has just been rendered without waiting; now inspect the CLI output and start watch. Never await the preference reply before this check.
+
 After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md`, execute watch, then **end this turn**.
 - No `[Watch]` block → **end this turn immediately**.
@@ -107,7 +111,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
 | 让本机开始接收某订阅消息 (start receiving on this device) | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`). If `deviceList:null`, default-all is already active: tell the user this device already receives and do **NOT** write. For an explicit array, if this device is already present, likewise do not write; otherwise union it in, write, re-read, and mark ✅是（本次新增）. |
 | 让某台/某几台指名设备开始接收某订阅 (start receiving on named device(s)) | `subscribe-device-update --job-id <id> --device-list <fresh list ∪ named device ids>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`); resolve device name→id via `device-list` — a name that cannot be resolved must **not** be fabricated. If `deviceList:null`, every logged-in device already receives: report no change and do **NOT** write. For an explicit array, build the new list as the **UNION** of the just-read list and named ids; overwrite; re-read; confirm with this VERBATIM copy frame: 「好的，「Y」现在会同时推送到 X1 和 X2。」 where the device-name list enumerates the **complete post-write receiving set from the re-read** (readable names, not just newly added devices; two devices joined by 和, three or more separated by 、 with 和 before the last). |
-| 停止向某设备推送某订阅 (stop pushing to a device) | `subscribe-device-update --job-id <id> --device-list <explicit receiver set − device>` | resolve device name→id via `device-list`. If the fresh `deviceList` is an explicit array, subtract from that array. If it is `null` (default-all), first fetch the complete logged-in `device-list`, then materialize the explicit receiver set as **all logged-in device ids minus the target**; if the complete device table is unavailable, stop and explain that the update cannot be done safely — never turn `null` into `[]` or a partial list. After write, read back remaining receivers; copy: 「已停止向 X 推送「Y」。现在这个任务只会推到 Z。」（名称不可得时降级为数量，绝不编造名称）. |
+| 停止向某设备推送某订阅 (stop pushing to a device) | `subscribe-device-update --job-id <id> --device-list <explicit receiver set − device>` | resolve device name→id via `device-list`. If the fresh `deviceList` is an explicit array, subtract from that array. If it is `null` (default-all), first fetch the complete logged-in `device-list`, then materialize the explicit receiver set as **all logged-in device ids minus the target**; if the complete device table is unavailable, stop and explain that the update cannot be done safely — never turn `null` into `[]` or a partial list. After write, read back remaining receivers and branch on that result: non-empty → 「已停止向 X 推送「Y」。现在这个任务只会推到 Z。」（名称不可得时降级为数量，绝不编造名称）; empty → 「已停止向 X 推送「Y」。现在该订阅没有任何设备接收消息。」 Never invent a Z for the empty set. |
 | 改离线交付物处理方式 (change offline-deliverables handling later — 「离线消息别清了」/「改成补推」/「改成清理」/「离线消息帮我清理」) | `subscribe-offline-update --job-id <id> --flag <0\|1>` (0=补推, 1=清理) | **fresh-read first** (`subscribe-detail <id> --format json` → current `offlineReceiveFlag`); if it already equals the target value, tell the user no change is needed and do **NOT** re-write; otherwise write the target flag, then re-read `subscribe-detail` to confirm the new 离线交付物 value. On a successful **`--flag 1`** write, branch the confirmation on the write envelope's `offlineReplaySupported` (read from the envelope; never run `okx-a2a capabilities`): `true`/absent → 「好的，离线期间的消息会直接清理，不再补推。」；`false` → 「好的，偏好已保存：通信包升级后，离线期间的消息会直接清理、不再补推；升级前仍会正常补推。」 The **`--flag 0`** direction keeps its current copy and behavior unchanged. |
 | 列出登录设备 (list devices) | `device-list` | render §Device List; ms→local time is already CLI-derived (`lastOnlineLocal`) |
 | 监听任务/消息（未指定任务）(listen, no task specified) | — | confirm exactly one task（「一次只能监听一个」）→ turn on this-device receipt → enter the existing watch flow (`watch-core.md`) → tell the user new messages push live into this conversation |
@@ -183,7 +187,7 @@ The device columns below are illustrative — replace them with the user's **act
 
 ## Post-login subscription display (login-flow-triggered)
 
-**Trigger (entry layer):** the wallet login flow itself, NOT a user utterance. The single entry is the routing line in [`wallet.md`](../../okx-agentic-wallet/references/wallet.md). Do **NOT** add any trigger words to `SKILL.md` for this display — the login flow is the only entry.
+**Trigger (entry layer):** the wallet login flow, not a standalone OKX.AI free-text intent. [`wallet.md`](../../okx-agentic-wallet/references/wallet.md) owns exactly two entry points: step 1 when an already-logged-in user explicitly asks to log in or check login status, and step 3 after a successful login poll. Do **NOT** add trigger words to `SKILL.md` for this display; both entries stay inside the wallet login flow.
 
 **Programmatic data source (mandatory).** Both successful `wallet login --phase poll` and explicit user-facing `wallet status --include-subscriptions` return the already-aggregated snapshot at `data.postLoginSubscriptions`: `subscriptions` is the exact buyer `my-subscriptions` payload and `devices` is the complete `device-list` payload (or `null` on device-query failure). Consume that snapshot directly. **Never issue a follow-up `my-subscriptions` or `device-list` command in the login flow.** User-initiated §My Subscriptions remains a separate command flow.
 

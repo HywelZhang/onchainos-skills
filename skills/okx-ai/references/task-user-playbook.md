@@ -34,6 +34,10 @@
 
 ---
 
+## Deposit-address QR (insufficient-balance — MANDATORY)
+
+🛑 **Rule:** when a CLI JSON response contains a non-empty `depositAddress` field, run `onchainos wallet qrcode --address <depositAddress>` and render the QR under option 1 of the funding list. When no JSON field is present (relayed notification), extract the first `0x` + 40-hex-char address from the 4-option funding text and use that. Render the QR once; do NOT rewrite or drop the 4-option list.
+
 ## Subscription
 
 ### Subscription branching (integrated into create_task playbook)
@@ -57,10 +61,10 @@ If a single ASP returns both subscription and non-subscription services, display
 | `serviceId` | from `asp-match` response | auto-filled |
 | `useTrial` | `supportTrial == true` (or `supportTrail == true` — legacy typo, check both) from `asp-match` → auto `true`; otherwise `false`. Display hours from `freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| `copyTrade` | parse `serviceDescription` for actionable trading signal indicators (buy/sell direction, entry price, TP/SL, position size); if eligible → **ask user explicitly** "Enable auto copy-trade? (yes/no)", yes → 1, no → 0; if not eligible → 0 (skip the question) | **must ask user when eligible** |
-| `serviceTokenAmount` | from `asp-match` response `feeAmount` | must match listing price |
+| Signal preflight | Retain the complete structured `autoTradePreflight` object from `asp-match`. Surface its `assetClasses`, each `tools[].readiness`, and `reminders[]` (bilingual `messageEn`/`messageZh`, all non-blocking). If install/configure reminders exist, show a separate mandatory-turn gate before the subscription confirmation: one optional preparation action per unavailable tool plus “Later — continue subscribing”, then end the turn. State that Later preserves delivery display/storage and later manual execution through any user-chosen available tool. Act only on the user's explicit choice. After preparation, re-run the same `asp-match`, re-select the same `serviceId`, and repeat the gate with fresh readiness. Preparing a tool does not select it, save a venue preference, or establish consent. Do not infer an install from the raw description, block creation, pick a venue, or install automatically. Missing preflight only hides these advisory rows. | **advisory; not a subscription input** |
+| `serviceTokenAmount` | from `asp-match` response `feeAmount` | must match listing price; CLI normalizes a missing/null value from monthly `subscription[].fee` |
 
-The `create-subscribe` CLI command handles the full flow internally: providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101). Wait for `sub_created` event to confirm success.
+The `create-subscribe` CLI command handles the full flow internally: providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101). The current backend delivery marker is written internally as `copyTrade=1`; it is not a user choice or CLI argument. Wait for `sub_created` event to confirm success.
 
 See `task-user-actions-publish.md` **Appendix A2** for the subscription confirmation form template.
 
@@ -97,7 +101,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md`, execute watch, then **end this turn**.
 - No `[Watch]` block → **end this turn immediately**.
 
-🛑 This is the **last action before ending the turn** — no other commands after it. DApp plugin pre-install is handled later when the `sub_created` event arrives.
+🛑 This is the **last action before ending the turn** — no other commands after it. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Tool install/config is surfaced up-front (before subscribing) as the non-blocking `autoTradePreflight.reminders[]`; the visible install/config flow runs only if the user explicitly chooses to handle a reminder, and readiness is re-checked once more when the first real signal arrives.
 
 ### Subscription management (user-initiated)
 

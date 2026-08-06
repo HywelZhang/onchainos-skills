@@ -26,14 +26,13 @@ use crate::commands::agent_commerce::task::common::{AGENT_ROLE_ASP, AGENT_ROLE_U
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
-// ── copy-trade subscription: ensure XMTP session consent with the provider ──
+// ── active subscription: ensure XMTP session consent with the provider ──
 //
-// Copy-trade signals arrive as P2P `[intent:deliver]` XMTP messages, which the buyer's
-// a2a daemon holds at `consent=0` until the buyer has an established (allowed) session
-// with the provider. One-shot tasks open that session during negotiation; the subscribe
-// flow has no negotiation, so consent is never granted and every signal is held → the
-// three-way consent card never fires. We establish the session (idempotently, per device)
-// so held/future signals are dispatched. Gated to `copyTrade` subscriptions; best-effort.
+// Subscription deliverables arrive as P2P `[intent:deliver]` XMTP messages, which the
+// buyer's a2a daemon holds at `consent=0` until the buyer has an established (allowed)
+// session with the provider. One-shot tasks open that session during negotiation; the
+// subscribe flow has no negotiation. Establish the session for every active subscription
+// so delivery transport is independent of the optional `copyTrade` capability marker.
 
 /// `<onchainos_home>/subscription/consent/<jobId>` — per-device "already established"
 /// marker. `None` if `job_id` fails the path-safety charset check.
@@ -49,16 +48,19 @@ fn consent_marker_path(job_id: &str) -> Option<std::path::PathBuf> {
     Some(home.join("subscription").join("consent").join(job_id))
 }
 
-/// Idempotently ensure the buyer has a consented XMTP session with `provider_agent_id`
-/// for this copy-trade subscription. No-op unless `is_copy_trade`. Safe to call from any
-/// device and repeatedly (a per-device marker avoids re-sending). Never fails the caller.
-pub(crate) fn ensure_subscription_consent(
+fn should_ensure_subscription_session(status: i64) -> bool {
+    status == SubStatus::Active.code()
+}
+
+/// Idempotently ensure the buyer has a consented XMTP session with `provider_agent_id`.
+/// Safe to call from any device and repeatedly (a per-device marker avoids re-sending).
+/// Never fails the caller.
+pub(crate) fn ensure_subscription_session(
     job_id: &str,
     my_agent_id: &str,
     provider_agent_id: &str,
-    is_copy_trade: bool,
 ) {
-    if !is_copy_trade || my_agent_id.is_empty() {
+    if my_agent_id.is_empty() {
         return;
     }
     if provider_agent_id.is_empty() || provider_agent_id == "?" {
@@ -76,7 +78,7 @@ pub(crate) fn ensure_subscription_consent(
         let _ = okx_a2a::session_send(
             job_id,
             Some(provider_agent_id),
-            "[SUB_CONSENT] copy-trade subscription session established.",
+            "[SUB_CONSENT] subscription session established.",
         );
         let _ = crate::home::write_secure(&marker, b"1");
     }
@@ -315,19 +317,17 @@ pub async fn handle_subscribe_detail(
         .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{sub_id}"), &agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("subscribe-detail failed: {e}"))?;
-    let is_buyer = !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
+    let is_buyer =
+        !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
 
-    // Checking a subscription's detail on a fresh device establishes the copy-trade
-    // provider session (drains any held signals). Runs before the json early-return so
+    // Checking an active subscription on a fresh device establishes the provider
+    // session (drains any held deliverables). Runs before the json early-return so
     // both modes benefit. Only when the logged-in agent is this subscription's buyer.
-    if is_buyer {
-        let is_ct = resp["copyTrade"].as_i64().unwrap_or(0) == 1
-            && resp["status"].as_i64().unwrap_or(-1) == 1;
-        ensure_subscription_consent(
+    if is_buyer && should_ensure_subscription_session(resp["status"].as_i64().unwrap_or(-1)) {
+        ensure_subscription_session(
             sub_id,
             &agent_id,
             resp["providerAgentId"].as_str().unwrap_or(""),
-            is_ct,
         );
     }
 
@@ -812,16 +812,15 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
             matches!(role, SubscriptionRole::Buyer),
         );
     }
-    // Buyer listing their subscriptions on any device establishes the copy-trade provider
-    // session for each active copy-trade sub (drains held signals cross-device).
+    // Buyer listing subscriptions on any device establishes the provider session for
+    // every active subscription (drains held deliverables cross-device).
     if matches!(role, SubscriptionRole::Buyer) {
         for item in &list {
-            if item.copy_trade == 1 && item.status == 1 {
-                ensure_subscription_consent(
+            if should_ensure_subscription_session(item.status) {
+                ensure_subscription_session(
                     &item.job_id,
                     &header_agent,
                     &item.provider_agent_id,
-                    true,
                 );
             }
         }
@@ -867,6 +866,14 @@ mod tests {
     struct TestCli {
         #[command(subcommand)]
         cmd: super::super::TaskCommand,
+    }
+
+    #[test]
+    fn subscription_session_is_gated_only_by_active_status() {
+        assert!(should_ensure_subscription_session(SubStatus::Active.code()));
+        assert!(!should_ensure_subscription_session(SubStatus::Init.code()));
+        assert!(!should_ensure_subscription_session(SubStatus::Closed.code()));
+        assert!(!should_ensure_subscription_session(SubStatus::Failed.code()));
     }
 
     #[test]
@@ -981,6 +988,22 @@ mod tests {
         assert_eq!(info.period_index, Some(1));
         assert_eq!(info.service_id, "svc-1");
         assert_eq!(info.service_params, "{\"k\":\"v\"}");
+    }
+
+    #[test]
+    fn detail_deserializes_tolerates_lingering_description_summary() {
+        // AC-4: after WBW-14172 the backend may still send `descriptionSummary`
+        // for a transition period. `SubscriptionInfo` uses container-level
+        // `#[serde(default)]` with no `deny_unknown_fields`, so a payload that
+        // carries the (now display-unused) field must still deserialize cleanly.
+        // The fixture already includes `descriptionSummary`.
+        assert!(detail_fixture().get("descriptionSummary").is_some());
+        let parsed = serde_json::from_value::<SubscriptionInfo>(detail_fixture());
+        assert!(
+            parsed.is_ok(),
+            "SubscriptionInfo must tolerate a lingering descriptionSummary: {:?}",
+            parsed.err()
+        );
     }
 
     #[test]

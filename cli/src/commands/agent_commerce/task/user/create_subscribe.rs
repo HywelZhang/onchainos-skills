@@ -9,10 +9,14 @@ use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
-use crate::commands::agent_commerce::task::common::DEBUG_LOG;
+use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
 
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
+/// Compatibility marker required by the current subscription API. It enables
+/// delivery routing only; runtime parsing, consent, cap and tool checks remain
+/// authoritative for whether a delivery can execute.
+const SUBSCRIPTION_DELIVERY_ENABLED: i32 = 1;
 
 pub struct CreateSubscribeParams {
     pub service_id: String,
@@ -21,11 +25,10 @@ pub struct CreateSubscribeParams {
     pub service_token_amount: String,
     pub service_token_address: String,
     pub auto_renew: i32,
-    pub copy_trade: i32,
     pub title: String,
     pub description: String,
-    pub description_summary: String,
     pub provider_agent_id: Option<String>,
+    pub service_description: String,
     pub service_interval: String,
     pub format: String,
     /// Device ids to omit from the default all-devices routing set (repeatable).
@@ -34,7 +37,6 @@ pub struct CreateSubscribeParams {
 
 const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
-const MAX_SUMMARY_CHARS: usize = 512;
 
 impl CreateSubscribeParams {
     fn validate(&self) -> Result<()> {
@@ -50,9 +52,6 @@ impl CreateSubscribeParams {
         if self.auto_renew != 0 && self.auto_renew != 1 {
             bail!("--auto-renew must be 0 (off) or 1 (on), got {}", self.auto_renew);
         }
-        if self.copy_trade != 0 && self.copy_trade != 1 {
-            bail!("--copy-trade must be 0 (off) or 1 (on), got {}", self.copy_trade);
-        }
         if self.title.is_empty() {
             bail!("--title is required");
         }
@@ -64,9 +63,6 @@ impl CreateSubscribeParams {
         }
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
-        }
-        if self.description_summary.chars().count() > MAX_SUMMARY_CHARS {
-            bail!("--description-summary exceeds {MAX_SUMMARY_CHARS} characters");
         }
         Ok(())
     }
@@ -89,10 +85,9 @@ fn build_create_body(
         "serviceTokenAmount": params.service_token_amount,
         "serviceTokenAddress": params.service_token_address,
         "autoRenew": params.auto_renew,
-        "copyTrade": params.copy_trade,
+        "copyTrade": SUBSCRIPTION_DELIVERY_ENABLED,
         "title": params.title,
         "description": params.description,
-        "descriptionSummary": params.description_summary,
         "serviceInterval": params.service_interval,
         "terms": terms_for_create,
         "termsSig": terms_sig,
@@ -250,10 +245,46 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] subId={sub_id}, bizType={biz_type}");
     }
 
+    // Blocking balance pre-check (the "6th" balance checkpoint). Unlike
+    // create-task — which only *registers* the task and involves no transfer, so
+    // an advisory (non-blocking) warning is appropriate — create-subscribe's
+    // broadcast performs an *immediate* ERC20 token transfer. An insufficient
+    // business-token balance must therefore block *before* broadcast: the
+    // previous advisory mode continued to broadcast, the transfer reverted
+    // on-chain as an opaque `estimateGas` error ("ERC20: transfer amount exceeds
+    // balance") propagated via `?`, and the already-computed deposit
+    // address + QR were dropped (JSON output missing depositAddress; non-TTY
+    // runtimes got no output at all). On insufficiency this bails the enriched
+    // `InsufficientBalanceError`, which `main.rs` downcasts into the structured
+    // `error_insufficient_balance` JSON envelope (carrying `depositAddress`); the
+    // agent playbook reads that field and calls `onchainos wallet qrcode` to
+    // render the QR in non-TTY runtimes.
+    ensure_subscribe_balance(
+        &params.service_token_amount,
+        &params.service_token_address,
+        &user_agent_id,
+    )
+    .await?;
+
     // Step 4 + 5: sign uopData → broadcast (reuses the standard task broadcast endpoint)
     let tx_hash = signing::sign_uop_and_broadcast(
         client, uop_data, &account_id, &address, &sub_id, biz_type, &user_agent_id, None,
     ).await?;
+
+    // Persist only bounded classifier output. Failure is advisory: the
+    // subscription already exists and runtime still has safe shape defaults.
+    if !params.service_description.trim().is_empty() {
+        if let Err(err) =
+            crate::commands::agent_commerce::task::common::autotrade::profile::save_from_description(
+                &sub_id,
+                &params.service_id,
+                params.provider_agent_id.as_deref(),
+                &params.service_description,
+            )
+        {
+            eprintln!("[autotrade] could not persist subscription execution hints: {err}");
+        }
+    }
 
     audit::log(
         "cli",
@@ -266,23 +297,17 @@ pub async fn handle_create_subscribe(
             format!("serviceId={}", params.service_id),
             format!("useTrial={effective_use_trial}"),
             format!("autoRenew={}", params.auto_renew),
-            format!("copyTrade={}", params.copy_trade),
+            format!("copyTrade={SUBSCRIPTION_DELIVERY_ENABLED}"),
             format!("txHash={tx_hash}"),
         ]),
         None,
     );
 
-    // Establish the copy-trade provider XMTP session now (before the first delivery) so
-    // signals are not held at consent=0. Prefer the created record's copyTrade; fall back
-    // to the requested flag. Runs in both json and text modes.
-    {
-        let is_ct = create_resp["copyTrade"]
-            .as_i64()
-            .map(|v| v == 1)
-            .unwrap_or(params.copy_trade == 1);
-        if let Some(pid) = params.provider_agent_id.as_deref() {
-            super::subscription_ops::ensure_subscription_consent(&sub_id, &user_agent_id, pid, is_ct);
-        }
+    // Establish the provider XMTP session now (before the first delivery) so
+    // subscription deliverables are not held at consent=0. Delivery transport
+    // must not depend on the backend compatibility marker.
+    if let Some(pid) = params.provider_agent_id.as_deref() {
+        super::subscription_ops::ensure_subscription_session(&sub_id, &user_agent_id, pid);
     }
 
     if json_mode {
@@ -295,6 +320,9 @@ pub async fn handle_create_subscribe(
             device_routing_degraded,
             &offline_replay,
         ));
+        // Balance is verified *before* broadcast now (blocking), so a success
+        // envelope no longer carries a `balanceWarning` — an insufficiency exits
+        // earlier via the structured `error_insufficient_balance` envelope.
         if super::content::is_cli_mode() {
             println!();
             println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
@@ -336,8 +364,64 @@ pub async fn handle_create_subscribe(
     Ok(())
 }
 
+/// Blocking balance pre-check for the subscription flow — the "6th" balance
+/// checkpoint. Unlike create-task's advisory checkpoint, create-subscribe's
+/// broadcast performs an *immediate* ERC20 transfer, so an insufficient balance
+/// must block *before* broadcast. Subscribe carries a token *address* (not a
+/// symbol), so the symbol is resolved first. On an insufficient XLayer
+/// business-token balance this bails the enriched `InsufficientBalanceError`
+/// (deposit address attached + XLayer QR rendered to stderr on TTY, silent-degrade
+/// if the address can't be resolved), which `main.rs` downcasts into the
+/// structured `error_insufficient_balance` JSON envelope. Pre-check inputs that
+/// carry no balance obligation (a zero/unparsable amount) or that can't be mapped
+/// to a symbol silent-degrade to `Ok(())` — the symbol lookup is a subscribe-only
+/// pre-check step and must never introduce a new blocking failure mode for an
+/// otherwise-fundable subscription (FR-6).
+async fn ensure_subscribe_balance(
+    service_token_amount: &str,
+    service_token_address: &str,
+    user_agent_id: &str,
+) -> Result<()> {
+    let required: f64 = service_token_amount.parse().unwrap_or(0.0);
+    if required <= 0.0 {
+        return Ok(());
+    }
+
+    let symbol = match common::util::resolve_token_symbol_by_address(
+        common::XLAYER_CHAIN_INDEX,
+        service_token_address,
+    )
+    .await
+    {
+        Ok(sym) => sym,
+        Err(e) => {
+            if DEBUG_LOG {
+                eprintln!(
+                    "[create-subscribe] ⚠ token symbol resolution failed \
+                     (skipping balance pre-check): {e}"
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    if let Err(e) = common::ensure_sufficient_balance(required, &symbol).await {
+        // Blocking: enrich the insufficiency with the caller's XLayer deposit
+        // address + stderr QR (silent-degrade if unresolved), then bail so main.rs
+        // downcasts to the structured `error_insufficient_balance` JSON. A
+        // non-insufficiency infra error (login expired, balance-query failure)
+        // passes through `enrich_blocking` unchanged and blocks the same way the
+        // sibling checkpoints (accept / dispute) do — consistent with a flow whose
+        // very next step is an immediate on-chain transfer.
+        return Err(common::deposit_qr::enrich_blocking(e, user_agent_id).await);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use clap::Parser;
 
     #[derive(Parser)]
@@ -355,27 +439,34 @@ mod tests {
             "--service-token-amount", "10",
             "--service-token-address", "0x6776",
             "--auto-renew", "1",
-            "--copy-trade", "0",
             "--title", "Signal Subscription",
             "--description", "On-chain signal subscription service",
-            "--description-summary", "Signal sub",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
-                service_id, use_trial, service_token_amount, service_token_address,
-                auto_renew, copy_trade, title, description, description_summary,
-                provider_agent_id, service_params, service_interval, format, exclude_device,
+                service_id,
+                use_trial,
+                service_token_amount,
+                service_token_address,
+                auto_renew,
+                title,
+                description,
+                provider_agent_id,
+                service_description,
+                service_params,
+                service_interval,
+                format,
+                exclude_device,
             } => {
                 assert_eq!(service_id, "svc_001");
                 assert!(use_trial);
                 assert_eq!(service_token_amount, "10");
                 assert_eq!(service_token_address, "0x6776");
                 assert_eq!(auto_renew, "1");
-                assert_eq!(copy_trade, "0");
                 assert_eq!(title, "Signal Subscription");
                 assert_eq!(description, "On-chain signal subscription service");
-                assert_eq!(description_summary, "Signal sub");
                 assert!(provider_agent_id.is_none());
+                assert_eq!(service_description, "");
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
                 assert_eq!(format, "");
@@ -393,19 +484,16 @@ mod tests {
             "--service-token-amount", "5",
             "--service-token-address", "0xAddr",
             "--auto-renew", "0",
-            "--copy-trade", "1",
             "--title", "Copy Trade",
             "--description", "Auto copy trade subscription",
-            "--description-summary", "Copy",
             "--provider-agent-id", "agent-99",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
-                provider_agent_id, use_trial, copy_trade, ..
+                provider_agent_id, use_trial, ..
             } => {
                 assert_eq!(provider_agent_id.as_deref(), Some("agent-99"));
                 assert!(!use_trial);
-                assert_eq!(copy_trade, "1");
             }
             _ => panic!("expected CreateSubscribe"),
         }
@@ -419,15 +507,12 @@ mod tests {
             "--service-token-amount", "1",
             "--service-token-address", "0xA",
             "--auto-renew", "true",
-            "--copy-trade", "false",
             "--title", "t",
             "--description", "d for test bool strings ok",
-            "--description-summary", "s",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::CreateSubscribe { auto_renew, copy_trade, .. } => {
+            super::super::TaskCommand::CreateSubscribe { auto_renew, .. } => {
                 assert_eq!(auto_renew, "true");
-                assert_eq!(copy_trade, "false");
             }
             _ => panic!("expected CreateSubscribe"),
         }
@@ -440,10 +525,8 @@ mod tests {
             "--service-token-amount", "10",
             "--service-token-address", "0xAddr",
             "--auto-renew", "1",
-            "--copy-trade", "0",
             "--title", "t",
             "--description", "d",
-            "--description-summary", "s",
         ]).is_err());
     }
 
@@ -455,11 +538,10 @@ mod tests {
             service_token_amount: "10".to_string(),
             service_token_address: "0xtok".to_string(),
             auto_renew: 1,
-            copy_trade: 0,
             title: "t".to_string(),
             description: "d".to_string(),
-            description_summary: "s".to_string(),
             provider_agent_id: provider.map(str::to_string),
+            service_description: String::new(),
             service_interval: "month".to_string(),
             format: "json".to_string(),
             exclude_device: None,
@@ -530,5 +612,51 @@ mod tests {
             env2["offlineReplayFixCommands"],
             serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
         );
+    }
+
+    #[test]
+    fn cli_create_subscribe_rejects_removed_copy_trade_argument() {
+        assert!(TestCli::try_parse_from([
+            "test", "create-subscribe",
+            "--service-id", "svc_001",
+            "--service-token-amount", "10",
+            "--service-token-address", "0x6776",
+            "--auto-renew", "1",
+            "--copy-trade", "0",
+            "--title", "Signal Subscription",
+            "--description", "On-chain signal subscription service",
+        ]).is_err());
+    }
+
+    #[test]
+    fn create_body_always_enables_subscription_delivery() {
+        let params = CreateSubscribeParams {
+            service_id: "svc_report_only".to_string(),
+            use_trial: false,
+            service_params: String::new(),
+            service_token_amount: "10".to_string(),
+            service_token_address: "0x6776".to_string(),
+            auto_renew: 0,
+            title: "Analytics report".to_string(),
+            description: "Read-only market report without trading signals".to_string(),
+            provider_agent_id: Some("agent-99".to_string()),
+            service_description: String::new(),
+            service_interval: "month".to_string(),
+            format: "json".to_string(),
+            exclude_device: None,
+        };
+
+        let body = build_create_body(
+            &params,
+            false,
+            serde_json::json!({"subId": 0}),
+            "0xsignature",
+            &[],
+        );
+
+        assert_eq!(body["copyTrade"], serde_json::json!(1));
+        assert_eq!(body["providerAgentId"], serde_json::json!("agent-99"));
+        assert_eq!(body["description"], params.description);
+        assert!(body.get("descriptionSummary").is_none());
     }
 }

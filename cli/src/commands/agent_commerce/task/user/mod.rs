@@ -26,9 +26,7 @@ mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::{
-    persist_a2a_spool, run_recovered_autotrade, try_recover_from_temp_file,
-};
+pub(crate) use flow_lifecycle::{persist_a2a_spool, try_recover_from_temp_file, route_subscription_delivery_to_skill};
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
@@ -51,8 +49,6 @@ pub enum TaskCommand {
     Create {
         #[arg(long)]
         description: String,
-        #[arg(long = "description-summary")]
-        description_summary: Option<String>,
         #[arg(long)]
         budget: f64,
         #[arg(long = "max-budget")]
@@ -105,21 +101,19 @@ pub enum TaskCommand {
         /// Auto-renew: 0/false=off, 1/true=on
         #[arg(long = "auto-renew")]
         auto_renew: String,
-        /// Copy trade: 0/false=off, 1/true=on
-        #[arg(long = "copy-trade")]
-        copy_trade: String,
         /// Subscription title (max 64 chars)
         #[arg(long)]
         title: String,
         /// Subscription description (max 4096 chars)
         #[arg(long)]
         description: String,
-        /// Description summary (max 512 chars)
-        #[arg(long = "description-summary")]
-        description_summary: String,
         /// Designated provider agent ID
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
+        /// Exact service description returned by asp-match. Used only to persist
+        /// bounded asset/tool hints; the raw prose is never executed.
+        #[arg(long = "service-description", default_value = "")]
+        service_description: String,
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
@@ -213,9 +207,13 @@ pub enum TaskCommand {
     },
     /// Client confirms ASP and executes payment (setPaymentMode must be done first).
     /// ASP, token symbol, and amount are read from the task detail API.
-    ConfirmAccept { job_id: String },
+    ConfirmAccept {
+        job_id: String,
+    },
     /// Client confirms task complete and releases payment
-    Complete { job_id: String },
+    Complete {
+        job_id: String,
+    },
     /// Client rejects deliverable
     Reject {
         job_id: String,
@@ -235,16 +233,8 @@ pub enum TaskCommand {
         agent_id: Option<String>,
     },
     /// Client claims auto-refund after seller timeout (submit_expired / reject_expired)
-    ClaimAutoRefund { job_id: String },
-    /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
-    DirectAccept {
+    ClaimAutoRefund {
         job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        #[arg(long = "token-amount")]
-        token_amount: Option<String>,
     },
     /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay.
     /// Returns replay result (deliverable) and Payment Credential.
@@ -268,6 +258,10 @@ pub enum TaskCommand {
         /// JSON business body to POST during replay (for endpoints that require business parameters)
         #[arg(long)]
         body: Option<String>,
+        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3).
+        /// Automated playbooks pass this.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Validate an x402 endpoint and extract pricing info
     X402Check {
@@ -295,13 +289,19 @@ pub enum TaskCommand {
         file_paths: Vec<String>,
     },
     /// List attachments for a task
-    ListAttachments { job_id: String },
+    ListAttachments {
+        job_id: String,
+    },
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
     #[command(name = "subscribe-cancel")]
-    SubscribeCancel { sub_id: String },
+    SubscribeCancel {
+        sub_id: String,
+    },
     /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
     #[command(name = "start-autorenew")]
-    StartAutorenew { sub_id: String },
+    StartAutorenew {
+        sub_id: String,
+    },
     /// Reject a subscription delivery
     #[command(name = "subscribe-reject")]
     SubscribeReject {
@@ -344,7 +344,10 @@ pub enum TaskCommand {
     },
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
-    DeviceList { page: i64, page_size: i64 },
+    DeviceList {
+        page: i64,
+        page_size: i64,
+    },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -694,221 +697,48 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create {
-            description,
-            description_summary,
-            budget,
-            max_budget,
-            currency,
-            title,
-            provider,
-            attachments,
-            endpoint,
-            payment_mode,
-            service_id,
-            service_params,
-            service_token_address,
-            service_token_amount,
-        } => {
-            create::handle_create(
-                &mut client,
-                create::CreateTaskParams {
-                    description,
-                    description_summary,
-                    budget,
-                    max_budget,
-                    currency,
-                    title,
-                    provider,
-                    attachments,
-                    endpoint,
-                    payment_mode,
-                    service_id,
-                    service_params,
-                    service_token_address,
-                    service_token_amount,
-                },
-            )
-            .await
-        }
-        TaskCommand::CreateSubscribe {
-            service_id,
-            use_trial,
-            service_params,
-            service_token_amount,
-            service_token_address,
-            auto_renew,
-            copy_trade,
-            title,
-            description,
-            description_summary,
-            provider_agent_id,
-            service_interval,
-            format,
-            exclude_device,
-        } => {
+        TaskCommand::Create { description, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
+            create::handle_create(&mut client, create::CreateTaskParams {
+                description, budget, max_budget, currency,
+                title, provider, attachments, endpoint, payment_mode,
+                service_id, service_params, service_token_address, service_token_amount,
+            }).await,
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
-            let copy_trade = parse_bool_or_int(&copy_trade, "copy-trade")?;
-            create_subscribe::handle_create_subscribe(
-                &mut client,
-                create_subscribe::CreateSubscribeParams {
-                    service_id,
-                    use_trial,
-                    service_params,
-                    service_token_amount,
-                    service_token_address,
-                    auto_renew,
-                    copy_trade,
-                    title,
-                    description,
-                    description_summary,
-                    provider_agent_id,
-                    service_interval,
-                    format,
-                    exclude_device,
-                },
-            )
-            .await
+            create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
+                service_id, use_trial, service_params, service_token_amount, service_token_address,
+                auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device,
+            }).await
         }
-        TaskCommand::AspMatch {
-            task_desc,
-            job_id,
-            provider_agent_id,
-            payment_token_amount,
-            page,
-            agent_id,
-            format,
-        } => {
-            asp_ops::handle_asp_match(
-                &mut client,
-                job_id.as_deref(),
-                &task_desc,
-                provider_agent_id.as_deref(),
-                payment_token_amount,
-                page,
-                agent_id.as_deref(),
-                &format,
-            )
-            .await
+        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
+            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
+        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
+        TaskCommand::ResetAsp { job_id, agent_id } =>
+            asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::UserReject { job_id, agent_id } =>
+            asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::MarkFailed { job_id, provider_agent_id } => {
+            negotiate::mark_failed(&job_id, &provider_agent_id)
         }
-        TaskCommand::SetAsp {
-            job_id,
-            provider_agent_id,
-            service_id,
-            service_type,
-            service_params,
-            service_token_address,
-            service_token_amount,
-            payment_token_symbol,
-            payment_token_amount,
-            payment_most_token_amount,
-            agent_id,
-        } => {
-            asp_ops::handle_set_asp(
-                &mut client,
-                &job_id,
-                &provider_agent_id,
-                &service_id,
-                &service_type,
-                &service_params,
-                &service_token_address,
-                &service_token_amount,
-                payment_token_symbol.as_deref(),
-                payment_token_amount.as_deref(),
-                payment_most_token_amount.as_deref(),
-                agent_id.as_deref(),
-            )
-            .await
-        }
-        TaskCommand::ResetAsp { job_id, agent_id } => {
-            asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await
-        }
-        TaskCommand::UserReject { job_id, agent_id } => {
-            asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await
-        }
-        TaskCommand::MarkFailed {
-            job_id,
-            provider_agent_id,
-        } => negotiate::mark_failed(&job_id, &provider_agent_id),
-        TaskCommand::SetPaymentMode {
-            job_id,
-            payment_mode,
-            token_symbol,
-            token_amount,
-            endpoint,
-        } => {
-            accept::handle_set_payment_mode(
-                &mut client,
-                &job_id,
-                payment_mode.as_deref(),
-                token_symbol.as_deref(),
-                token_amount.as_deref(),
-                endpoint.as_deref(),
-            )
-            .await
-        }
-        TaskCommand::ConfirmAccept { job_id } => {
-            accept::handle_confirm_accept(&mut client, &job_id, None).await
-        }
-        TaskCommand::DirectAccept {
-            job_id,
-            provider_agent_id,
-            token_symbol,
-            token_amount,
-        } => {
-            accept::handle_direct_accept(
-                &mut client,
-                &job_id,
-                &provider_agent_id,
-                token_symbol.as_deref(),
-                token_amount.as_deref(),
-            )
-            .await
-        }
-        TaskCommand::Task402Pay {
-            job_id,
-            provider_agent_id,
-            accepts,
-            endpoint,
-            token_symbol,
-            token_amount,
-            from,
-            body,
-        } => {
-            accept::handle_task_402_pay(
-                &mut client,
-                &job_id,
-                &provider_agent_id,
-                &accepts,
-                &endpoint,
-                &token_symbol,
-                &token_amount,
-                from.as_deref(),
-                body.as_deref(),
-            )
-            .await
-        }
-        TaskCommand::X402Check {
-            endpoint,
-            agent_id,
-            body,
-        } => {
-            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref())
-                .await
-        }
-        TaskCommand::Complete { job_id } => complete::handle_complete(&mut client, &job_id).await,
-        TaskCommand::Reject { job_id, reason } => {
-            reject::handle_reject(&mut client, &job_id, &reason).await
-        }
-        TaskCommand::Close { job_id, agent_id } => {
-            close::handle_close(&mut client, &job_id, agent_id.as_deref()).await
-        }
-        TaskCommand::ClaimAutoRefund { job_id } => {
-            claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await
-        }
-        TaskCommand::RejectApply { job_id, agent_id } => {
-            reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await
-        }
+        TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
+            accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id } =>
+            accept::handle_confirm_accept(&mut client, &job_id, None).await,
+        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body, force } =>
+            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref(), body.as_deref(), force).await,
+        TaskCommand::X402Check { endpoint, agent_id, body } =>
+            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref()).await,
+        TaskCommand::Complete { job_id } =>
+            complete::handle_complete(&mut client, &job_id).await,
+        TaskCommand::Reject { job_id, reason } =>
+            reject::handle_reject(&mut client, &job_id, &reason).await,
+        TaskCommand::Close { job_id, agent_id } =>
+            close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::ClaimAutoRefund { job_id } =>
+            claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
+        TaskCommand::RejectApply { job_id, agent_id } =>
+            reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::TaskAttach { job_id, file_paths } => {
             if file_paths.is_empty() {
                 anyhow::bail!("at least one --file <path> is required");
@@ -918,49 +748,35 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             }
             Ok(())
         }
-        TaskCommand::ListAttachments { job_id } => attachments::handle_task_attachments(&job_id),
+        TaskCommand::ListAttachments { job_id } => {
+            attachments::handle_task_attachments(&job_id)
+        }
 
         // ── Subscription management ─────────────────────────────
-        TaskCommand::SubscribeCancel { sub_id } => {
-            subscription_ops::handle_subscribe_cancel(&mut client, &sub_id).await
-        }
-        TaskCommand::StartAutorenew { sub_id } => {
-            subscription_ops::handle_start_autorenew(&mut client, &sub_id).await
-        }
-        TaskCommand::SubscribeReject { sub_id, reason } => {
-            reject::handle_reject(&mut client, &sub_id, &reason).await
-        }
-        TaskCommand::SubscribeDetail { sub_id, format } => {
-            subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await
-        }
-        TaskCommand::SubscribeDeviceUpdate {
-            job_id,
-            device_list,
-            items,
-        } => {
-            device_routing::handle_subscribe_device_update(
-                &mut client,
-                job_id.as_deref(),
-                device_list.as_deref(),
-                items.as_deref(),
-            )
-            .await
-        }
-        TaskCommand::SubscribeOfflineUpdate { job_id, flag } => {
-            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await
-        }
-        TaskCommand::DeviceList { page, page_size } => {
-            device_routing::handle_device_list(&mut client, page, page_size).await
-        }
+        TaskCommand::SubscribeCancel { sub_id } =>
+            subscription_ops::handle_subscribe_cancel(&mut client, &sub_id).await,
+        TaskCommand::StartAutorenew { sub_id } =>
+            subscription_ops::handle_start_autorenew(&mut client, &sub_id).await,
+        TaskCommand::SubscribeReject { sub_id, reason } =>
+            reject::handle_reject(&mut client, &sub_id, &reason).await,
+        TaskCommand::SubscribeDetail { sub_id, format } =>
+            subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
+        TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            device_routing::handle_subscribe_device_update(&mut client, job_id.as_deref(), device_list.as_deref(), items.as_deref()).await,
+        TaskCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await,
+        TaskCommand::DeviceList { page, page_size } =>
+            device_routing::handle_device_list(&mut client, page, page_size).await,
 
         // ── Read-only queries ────────────────────────────────────
-        TaskCommand::Payment { job_id, agent_id } => {
-            query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
-        }
+        TaskCommand::Payment { job_id, agent_id } =>
+            query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
         TaskCommand::MySubscriptions { role, status } => {
             subscription_ops::handle_my_subscriptions(&mut client, role, status).await
         }
-        TaskCommand::SubscribeCost {} => subscription_ops::handle_subscribe_cost(&mut client).await,
+        TaskCommand::SubscribeCost {} =>
+            subscription_ops::handle_subscribe_cost(&mut client).await,
+
     }
 }
 

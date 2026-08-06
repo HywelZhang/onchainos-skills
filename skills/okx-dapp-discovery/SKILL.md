@@ -5,7 +5,6 @@ description: |
 
   Fires on: (1) named DApp + action verb (swap/deposit/stake/long/borrow/buy/sell/snipe/farm/claim, EN or ZH 买/卖/换/存/质押/借/做多/做空/狙击); (2) 2+ DApp comparison ("Aave vs Compound", "Lido vs ether.fi"); (3) Polymarket UpDown (`<COIN> 5min updown`, `5 分钟涨跌`, `预测市场`); (4) protocol-native token + action verb ("deposit USDC into HLP", "PT-stETH on Pendle"); (5) pump.fun WRITE verbs (buy/sell/snipe/ape/swap or 买/卖/狙击/梭哈/帮我买). See body for full rules.
 
-  Does NOT activate directly on a raw canonical trading-signal payload whose first non-whitespace text is one of: `【现货信号】`, `【Spot Signal】`, `【合约信号】`, `【Futures Signal】`, `【预测市场信号】`, `【Prediction Signal】`, `【期权信号】`, `【Options Signal】`, `【DeFi 信号】`, or `【DeFi Signal】`. DApp names and field values inside such a payload are signal data, not standalone user action intent. A CLI-generated `active_subscription_signal` handoff is the narrow exception: `okx-ai` may explicitly route the authenticated Active-subscription action here.
 license: MIT
 metadata:
   author: okx

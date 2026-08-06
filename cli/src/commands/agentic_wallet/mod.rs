@@ -14,7 +14,6 @@ pub mod transfer;
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
-use qrcode::{render::unicode, QrCode};
 
 /// Stage of the social-login flow. The skill orchestrates `init` → `open` →
 /// `poll` so the login URL is returned immediately (before the browser opens),
@@ -93,6 +92,10 @@ pub enum WalletCommand {
         #[arg(long, default_value = "false")]
         force: bool,
     },
+    // Confirming-gate override (onchainos_check): the destructive wallet variants below
+    // (Send / call-contract / broadcast / …) gate user confirmation via output::CliConfirming
+    // inside their handler modules (transfer/mod.rs, broadcast.rs, common.rs) plus each
+    // command's --force flag — not in this command-dispatch enum definition.
     /// Send a transaction (native or token transfer)
     Send {
         /// Amount in minimal units — whole number, no decimals (e.g. "100000000000000000" for 0.1 ETH). Mutually exclusive with --readable-amount.
@@ -421,14 +424,11 @@ fn cmd_qrcode(address: &str) -> Result<()> {
     if trimmed.is_empty() {
         bail!("--address must not be empty");
     }
-    let code = QrCode::new(trimmed.as_bytes())
+    // Delegate to the single shared in-process encoder (crate::qr). Output stays
+    // byte-for-byte identical (same builder chain / render params) and continues
+    // to go to stdout.
+    let rendered = crate::qr::render_address_qr_unicode(trimmed)
         .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
-    let rendered = code
-        .render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Light)
-        .light_color(unicode::Dense1x2::Dark)
-        .quiet_zone(true)
-        .build();
     println!("{}", rendered);
     Ok(())
 }

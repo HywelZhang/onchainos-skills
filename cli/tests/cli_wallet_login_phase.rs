@@ -120,7 +120,14 @@ fn login_phase_open_rejects_non_http_url() {
     let (_tmp, home) = fresh_home();
 
     let output = scrubbed(&mut onchainos(), &home)
-        .args(["wallet", "login", "--phase", "open", "--url", "file:///etc/passwd"])
+        .args([
+            "wallet",
+            "login",
+            "--phase",
+            "open",
+            "--url",
+            "file:///etc/passwd",
+        ])
         .output()
         .expect("run onchainos");
 
@@ -177,7 +184,9 @@ fn login_no_phase_defaults_to_init() {
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(
-        stdout.contains("loginUrl") && stdout.contains("authSessionId") && stdout.contains("opened"),
+        stdout.contains("loginUrl")
+            && stdout.contains("authSessionId")
+            && stdout.contains("opened"),
         "init output must carry loginUrl + authSessionId + opened\nstdout: {stdout}",
     );
 }
@@ -207,4 +216,27 @@ fn login_phase_full_is_rejected() {
         combined.contains("invalid value") || combined.contains("full"),
         "expected clap invalid-value error for `--phase full`\noutput: {combined}",
     );
+}
+
+// ── explicit login/status path can request the combined snapshot ─────
+
+#[test]
+fn wallet_status_accepts_include_subscriptions_flag() {
+    let (_tmp, home) = fresh_home();
+
+    // A clean home is logged out, so this remains fully offline while pinning
+    // the new one-command user-facing status surface.
+    let output = scrubbed(&mut onchainos(), &home)
+        .args(["wallet", "status", "--include-subscriptions"])
+        .output()
+        .expect("run onchainos wallet status --include-subscriptions");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "combined status flag must be accepted\nstdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(stdout.contains("\"loggedIn\":false"));
+    assert!(!stdout.contains("postLoginSubscriptions"));
 }

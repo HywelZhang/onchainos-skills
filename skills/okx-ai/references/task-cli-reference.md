@@ -406,7 +406,7 @@ Show subscription detail.
 agent subscribe-detail <subId> [--format json]
 ```
 
-> **Enriched output:** `data` gains `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives` (bool) + `thisDeviceId` (String|null). Subscribe time fields (`trialStartTime`/`trialEndTime`/`subStartTime`/`subEndTime`/`subBufferEndTime`) stay Unix **seconds** — device-list times are ms.
+> **Enriched output:** `data` gains `deviceList` with its backend tri-state preserved (`null` = historical/unconfigured default-all, `[]` = explicitly no receiving devices, non-empty array = selected devices) + `categoryCodes` (normalized `[]`) + `thisDeviceReceives` (bool) + `thisDeviceId` (String|null). Default-all produces `thisDeviceReceives:true` only in the buyer view; provider devices are never inferred as receivers. Subscribe time fields (`trialStartTime`/`trialEndTime`/`subStartTime`/`subEndTime`/`subBufferEndTime`) stay Unix **seconds** — device-list times are ms.
 
 ### subscribe-cancel
 
@@ -450,7 +450,7 @@ agent my-subscriptions [--role <buyer|provider>] [--status <code|name>]
 | `--role` | No | `buyer` | Viewpoint: `buyer` (subscriber) or `provider` (ASP) |
 | `--status` | No | all | Filter by status code (-1/1/3/4/6/7/9) or name (INIT/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/FAILED) |
 
-> **Enriched output:** each row adds `deviceList` (normalized `[]`) + `categoryCodes` + `thisDeviceReceives`; the envelope echoes top-level `thisDeviceId` (String|null) once.
+> **Enriched output:** each row adds nullable `deviceList` with the backend tri-state preserved (`null` default-all / `[]` explicitly none / non-empty selected) + `categoryCodes` (normalized `[]`) + `thisDeviceReceives`; the envelope echoes top-level `thisDeviceId` (String|null) once. In `--role buyer`, null yields `thisDeviceReceives:true`; in `--role provider`, it remains false because routing belongs to the buyer's devices.
 
 ### subscribe-cost
 
@@ -464,7 +464,7 @@ No parameters. Output via `output::success`.
 
 ### subscribe-device-update
 
-Overwrite the receive-device list for one or more subscriptions (buyer side). The passed list wholly replaces the stored list; empty/omitted clears it. No `confirming` gate — the clear-list confirmation is a skill-dialog responsibility.
+Overwrite the receive-device list for one or more subscriptions (buyer side). The passed list wholly replaces the stored list; empty/omitted writes `[]` and therefore explicitly disables every receiving device. It does **not** restore the default-all `null` mode. No `confirming` gate — the clear-list confirmation is a skill-dialog responsibility.
 
 ```
 agent subscribe-device-update --job-id <jobId> [--device-list <id1,id2>]

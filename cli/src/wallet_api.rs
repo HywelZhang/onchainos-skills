@@ -631,17 +631,38 @@ pub struct BroadcastResponse {
     pub tx_hash: String,
 }
 
-/// Detect the backend's "access token revoked / invalid" signal (code 10008 /
-/// "Invalid access token"). Both `ApiClient` (`API error (code=10008): ...`)
-/// and `WalletApiClient` (`Wallet API error (code=10008): ...`) format the
-/// code into the error string, so a substring match works for either client.
+/// Detect the backend's "access token revoked / invalid" signals (codes 10001,
+/// 10008, 53017, and 130100031, or their corresponding messages). Both `ApiClient`
+/// (`API error (code=N): ...`) and `WalletApiClient`
+/// (`Wallet API error (code=N): ...`) format the code into the error string,
+/// so a substring match works for either client.
 ///
 /// Used by the transport-layer retry: local JWT `exp` may still be in the
 /// future yet the backend has invalidated the token (re-login on another
 /// device, password change, server-side risk control).
 pub(crate) fn is_invalid_token_error(e: &anyhow::Error) -> bool {
+    const INVALID_TOKEN_CODES: [&str; 4] = ["10001", "10008", "53017", "130100031"];
+
+    // Prefer the structured wallet error when available so similarly prefixed
+    // codes (for example 10001 vs 100010) cannot be confused.
+    if let Some(api_err) = e.downcast_ref::<ApiCodeError>() {
+        if INVALID_TOKEN_CODES.contains(&api_err.code.as_str()) {
+            return true;
+        }
+    }
+
+    // ApiClient currently formats its code into the error string. Include the
+    // closing delimiter in the match to keep the comparison exact.
     let s = e.to_string();
-    s.contains("code=10008") || s.contains("Invalid access token")
+    if INVALID_TOKEN_CODES
+        .iter()
+        .any(|code| s.contains(&format!("code={code})")))
+    {
+        return true;
+    }
+
+    let lower = s.to_ascii_lowercase();
+    lower.contains("invalid access token") || lower.contains("access token invalid")
 }
 
 /// Force-refresh the access token via the refresh-token endpoint, bypassing the
@@ -650,7 +671,7 @@ pub(crate) fn is_invalid_token_error(e: &anyhow::Error) -> bool {
 /// tokens, and returns the new access token.
 ///
 /// This is the single shared force-refresh primitive used by both clients'
-/// transport-layer 10008 retry (`ApiClient` + `WalletApiClient`) and by the
+/// transport-layer invalid-token retry (`ApiClient` + `WalletApiClient`) and by the
 /// competition module. It does NOT apply `chainUpdated` from the refresh
 /// response — that stays the responsibility of `ensure_tokens_refreshed`'s
 /// normal TTL path; this primitive's only job is to obtain a valid token.
@@ -845,7 +866,9 @@ impl WalletApiClient {
             {
                 Err(e) if is_invalid_token_error(&e) => {
                     if cfg!(feature = "debug-log") {
-                        eprintln!("[DEBUG][post_authed] 10008 invalid token → force-refresh + retry once");
+                        eprintln!(
+                            "[DEBUG][post_authed] invalid token → force-refresh + retry once"
+                        );
                     }
                     let fresh = force_refresh_access_token().await?;
                     self.post_authed_with_headers_once(path, &fresh, body, extra_headers)
@@ -1186,7 +1209,9 @@ impl WalletApiClient {
             {
                 Err(e) if is_invalid_token_error(&e) => {
                     if cfg!(feature = "debug-log") {
-                        eprintln!("[DEBUG][get_authed] 10008 invalid token → force-refresh + retry once");
+                        eprintln!(
+                            "[DEBUG][get_authed] invalid token → force-refresh + retry once"
+                        );
                     }
                     let fresh = force_refresh_access_token().await?;
                     self.get_authed_with_headers_once(path, &fresh, query, extra_headers)
@@ -1801,13 +1826,31 @@ mod tests {
         assert!(is_invalid_token_error(&anyhow::anyhow!(
             "Wallet API error (code=10008): token revoked"
         )));
+        // The agent-commerce gateway uses a different code/message pair for
+        // the same invalid-access-token condition.
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=130100031): access token invalid"
+        )));
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=10001): authentication failed"
+        )));
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=53017): authentication failed"
+        )));
         // Bare message match (no code in the string).
         assert!(is_invalid_token_error(&anyhow::anyhow!(
             "auth failed: Invalid access token"
         )));
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "auth failed: access token invalid"
+        )));
         // Unrelated errors must NOT trigger a force-refresh retry.
         assert!(!is_invalid_token_error(&anyhow::anyhow!(
             "API error (code=51000): insufficient balance"
+        )));
+        // Exact code matching: 100010 is ORDER_AMOUNT_TOO_SMALL, not 10001.
+        assert!(!is_invalid_token_error(&anyhow::anyhow!(
+            "API error (code=100010): order amount too small"
         )));
         assert!(!is_invalid_token_error(&anyhow::anyhow!(
             "Network unavailable — check your connection and try again"

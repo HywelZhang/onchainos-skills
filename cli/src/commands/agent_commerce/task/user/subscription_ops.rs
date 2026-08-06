@@ -317,12 +317,13 @@ pub async fn handle_subscribe_detail(
         .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{sub_id}"), &agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("subscribe-detail failed: {e}"))?;
+    let is_buyer =
+        !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
+
     // Checking an active subscription on a fresh device establishes the provider
     // session (drains any held deliverables). Runs before the json early-return so
     // both modes benefit. Only when the logged-in agent is this subscription's buyer.
-    if resp["buyerAgentId"].as_str().unwrap_or("") == agent_id
-        && should_ensure_subscription_session(resp["status"].as_i64().unwrap_or(-1))
-    {
+    if is_buyer && should_ensure_subscription_session(resp["status"].as_i64().unwrap_or(-1)) {
         ensure_subscription_session(
             sub_id,
             &agent_id,

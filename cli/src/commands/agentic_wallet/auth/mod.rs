@@ -381,11 +381,18 @@ const SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS: u64 = 10;
 /// Best-effort subscription/device enrichment must never turn a successful
 /// wallet login into an unbounded wait or a failed login.
 const POST_LOGIN_SNAPSHOT_TIMEOUT_SECS: u64 = 15;
+/// The complete login-only device classification, heartbeat and routing flow
+/// shares one deadline instead of stacking three independent timeout budgets.
+const POST_LOGIN_SETUP_TIMEOUT_SECS: u64 = 15;
+/// Reserve most of the shared setup budget for heartbeat + routing. If device
+/// classification cannot finish quickly, heartbeat still runs and routing is
+/// safely suppressed because newness is unknown.
+const POST_LOGIN_PREPARE_TIMEOUT_SECS: u64 = 4;
 /// X Layer is the platform-default scope for the device-registration heartbeat.
 const LOGIN_HEARTBEAT_CHAIN_INDEX: u64 = 196;
 /// Device registration is best-effort and must not make login wait for the
 /// wallet client's full transport timeout.
-const POST_LOGIN_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
+const POST_LOGIN_HEARTBEAT_TIMEOUT_SECS: u64 = 4;
 
 /// Resolve the poll timeout from a raw `SOCIAL_LOGIN_TIMEOUT_SECS` value.
 /// Unset / unparseable / below-floor inputs all fall back to the default.
@@ -537,7 +544,7 @@ pub(super) async fn fetch_post_login_subscriptions_bounded() -> Option<serde_jso
 async fn prepare_post_login_subscriptions_bounded(
 ) -> Option<crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation> {
     match tokio::time::timeout(
-        Duration::from_secs(POST_LOGIN_SNAPSHOT_TIMEOUT_SECS),
+        Duration::from_secs(POST_LOGIN_PREPARE_TIMEOUT_SECS),
         crate::commands::agent_commerce::task::user::prepare_post_login_subscriptions(),
     )
     .await
@@ -546,7 +553,7 @@ async fn prepare_post_login_subscriptions_bounded(
         Err(_) => {
             if cfg!(feature = "debug-log") {
                 eprintln!(
-                    "[DEBUG][post-login] pre-registration snapshot timed out after {POST_LOGIN_SNAPSHOT_TIMEOUT_SECS}s"
+                    "[DEBUG][post-login] pre-registration snapshot timed out after {POST_LOGIN_PREPARE_TIMEOUT_SECS}s"
                 );
             }
             None
@@ -557,9 +564,10 @@ async fn prepare_post_login_subscriptions_bounded(
 async fn finalize_post_login_subscriptions_bounded(
     prepared: crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation,
     device_registration_succeeded: bool,
+    deadline: tokio::time::Instant,
 ) -> Option<serde_json::Value> {
-    match tokio::time::timeout(
-        Duration::from_secs(POST_LOGIN_SNAPSHOT_TIMEOUT_SECS),
+    match tokio::time::timeout_at(
+        deadline,
         crate::commands::agent_commerce::task::user::finalize_post_login_subscriptions(
             prepared,
             device_registration_succeeded,
@@ -571,7 +579,7 @@ async fn finalize_post_login_subscriptions_bounded(
         Err(_) => {
             if cfg!(feature = "debug-log") {
                 eprintln!(
-                    "[DEBUG][post-login] new-device routing timed out after {POST_LOGIN_SNAPSHOT_TIMEOUT_SECS}s"
+                    "[DEBUG][post-login] device setup reached its shared {POST_LOGIN_SETUP_TIMEOUT_SECS}s deadline"
                 );
             }
             None
@@ -617,6 +625,30 @@ async fn report_post_login_device(client: &mut WalletApiClient, access_token: &s
     }
 }
 
+/// Heartbeat is unconditional after a successful login. Optional preparation
+/// only controls whether subscription routing can be finalized safely.
+async fn report_device_and_finalize_post_login(
+    client: &mut WalletApiClient,
+    access_token: &str,
+    prepared: Option<
+        crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation,
+    >,
+    deadline: tokio::time::Instant,
+) -> Option<serde_json::Value> {
+    let device_registration_succeeded = report_post_login_device(client, access_token).await;
+    match prepared {
+        Some(prepared) => {
+            finalize_post_login_subscriptions_bounded(
+                prepared,
+                device_registration_succeeded,
+                deadline,
+            )
+            .await
+        }
+        None => None,
+    }
+}
+
 /// Poll for the verify result, persist the session, and emit the account
 /// summary. Shared by the `poll` phase and the legacy all-in-one flow.
 async fn complete_login(
@@ -633,27 +665,24 @@ async fn complete_login(
 
     save_verify_result(client, &resp, session_private_key, &email).await?;
 
+    let post_login_deadline =
+        tokio::time::Instant::now() + Duration::from_secs(POST_LOGIN_SETUP_TIMEOUT_SECS);
+
     // Capture device membership before heartbeat so a genuinely new device can
     // be distinguished from an existing device the user manually opted out.
     let prepared_post_login = prepare_post_login_subscriptions_bounded().await;
 
-    // Only register after the pre-heartbeat device probe has succeeded. If that
-    // probe is unavailable, registering now would erase the only reliable signal
-    // that this machine is new and could make a later routing retry impossible.
-    // Any failure remains non-fatal to wallet login and suppresses only the
-    // optional subscription table.
-    let post_login = match prepared_post_login {
-        Some(prepared) => {
-            let device_registration_succeeded =
-                report_post_login_device(client, &resp.access_token).await;
-            finalize_post_login_subscriptions_bounded(
-                prepared,
-                device_registration_succeeded,
-            )
-            .await
-        }
-        None => None,
-    };
+    // Device registration is independent from optional subscription lookup.
+    // When classification failed we still report the heartbeat, but suppress
+    // automatic routing because newness is unknown and an existing device's
+    // explicit opt-out must never be overwritten.
+    let post_login = report_device_and_finalize_post_login(
+        client,
+        &resp.access_token,
+        prepared_post_login,
+        post_login_deadline,
+    )
+    .await;
 
     // Best-effort balance + identity → login-success summary for the skill.
     let wallets = wallet_store::load_wallets()?.unwrap_or_default();
@@ -1201,7 +1230,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_login_device_report_sends_registration_heartbeat() {
+    async fn post_login_without_subscription_preparation_still_sends_heartbeat() {
         use std::io::{Read, Write};
         use std::sync::{Arc, Mutex};
 
@@ -1283,7 +1312,14 @@ mod tests {
 
         let mut client = WalletApiClient::with_base_url(Some(&format!("http://{address}")))
             .expect("build heartbeat client");
-        assert!(report_post_login_device(&mut client, "login-access-token").await);
+        let snapshot = report_device_and_finalize_post_login(
+            &mut client,
+            "login-access-token",
+            None,
+            tokio::time::Instant::now() + Duration::from_secs(5),
+        )
+        .await;
+        assert!(snapshot.is_none());
         server.join().expect("join heartbeat mock");
 
         let _ = std::fs::remove_dir_all(&test_home);

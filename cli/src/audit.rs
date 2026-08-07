@@ -718,7 +718,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Login { .. } => "login",
         WalletCommand::Add => "add",
         WalletCommand::Switch { .. } => "switch",
-        WalletCommand::Status => "status",
+        WalletCommand::Status { .. } => "status",
         WalletCommand::Addresses { .. } => "addresses",
         WalletCommand::Qrcode { .. } => "qrcode",
         WalletCommand::Logout => "logout",
@@ -1067,11 +1067,25 @@ mod tests {
     fn grant_caps_not_redacted() {
         // Policy caps are not secrets — must survive verbatim for audit review.
         let args = vec_s(&[
-            "onchainos", "agent", "autotrade-grant-check", "--job-id", "j1", "--venue", "dex",
-            "--action", "buy", "--amount", "100.5", "--format", "json",
+            "onchainos",
+            "agent",
+            "autotrade-grant-check",
+            "--job-id",
+            "j1",
+            "--venue",
+            "dex",
+            "--action",
+            "buy",
+            "--amount",
+            "100.5",
+            "--format",
+            "json",
         ]);
         let out = redact_args(&args);
-        assert!(out.contains(&"100.5".to_string()), "amount cap must not be redacted");
+        assert!(
+            out.contains(&"100.5".to_string()),
+            "amount cap must not be redacted"
+        );
     }
 
     #[test]
@@ -1292,10 +1306,19 @@ mod tests {
     fn device_list_flags_stay_visible() {
         // --device-list / --page / --page-size are never redacted (explicit).
         let args = vec_s(&[
-            "onchainos", "agent", "device-list", "--page", "2", "--page-size", "50",
+            "onchainos",
+            "agent",
+            "device-list",
+            "--page",
+            "2",
+            "--page-size",
+            "50",
         ]);
         let out = redact_args(&args);
-        assert_eq!(out, args, "device-list read flags must survive verbatim for audit review");
+        assert_eq!(
+            out, args,
+            "device-list read flags must survive verbatim for audit review"
+        );
     }
 
     fn vec_s(items: &[&str]) -> Vec<String> {

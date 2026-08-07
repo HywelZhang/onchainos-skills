@@ -578,15 +578,15 @@ contract — output is a top-level `{"ok":true}` / `{"ok":false,"reason":"…"}`
 exit code equals `ok`.
 
 ```
-agent autotrade-grant-check --job-id <id> --venue <dex|hyperliquid|defi|polymarket> --action <buy|sell> --amount <decimal> --format json
+agent autotrade-grant-check --job-id <id> --venue <dex|hyperliquid|defi|polymarket|trade_kit> --action <buy|sell> --amount <decimal> --format json
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | — | Job id (charset-checked before use as grant filename). |
-| `--venue` | Yes | — | `dex` \| `hyperliquid` (canonicalized to `dex`) \| `defi` \| `polymarket`. |
+| `--venue` | Yes | — | `dex` \| `hyperliquid` (canonicalized to `dex`) \| `defi` \| `polymarket` \| `trade_kit`. Trade Kit has an independent grant and does not alias to `dex`. |
 | `--action` | Yes | — | `buy` \| `sell`. |
-| `--amount` | Yes | — | Decimal string; the per-trade amount to check against the written cap. |
+| `--amount` | Yes | — | Decimal string; the per-trade amount to check against the written cap. For Trade Kit, pass the configured quote/notional amount for both buy and sell. |
 | `--format` | Yes | — | Only `json` is accepted. |
 
 ### task-deliverable-list

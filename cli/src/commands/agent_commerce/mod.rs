@@ -478,7 +478,7 @@ pub enum AgentCommand {
     #[command(name = "autotrade-grant-check")]
     AutotradeGrantCheck {
         #[arg(long = "job-id")] job_id: String,
-        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket`.
+        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
         #[arg(long)] venue: String,
         /// `buy` | `sell`.
         #[arg(long)] action: String,
@@ -493,7 +493,7 @@ pub enum AgentCommand {
     #[command(name = "autotrade-grant-write", hide = true)]
     AutotradeGrantWrite {
         #[arg(long = "job-id")] job_id: String,
-        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket`.
+        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
         #[arg(long)] venue: String,
         #[arg(long = "max-buy")] max_buy: Option<String>,
         #[arg(long = "max-sell")] max_sell: Option<String>,

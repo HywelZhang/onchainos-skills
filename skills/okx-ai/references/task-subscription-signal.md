@@ -64,10 +64,15 @@ card. Do not collapse every non-allow state into the first-time three-way decisi
 - `status=unreadable`: fail closed. Notify that local execution authorization cannot be read and do not
   execute or replace the policy from inferred conversation.
 - `status=active, mode=auto`: use the stored fixed amount when present, then run
-  `autotrade-grant-check` for the selected venue/action/amount. Allow means execute through the compatible
-  tool's `--autotrade-job` path without another card. `over_cap` uses one localized two-way
-  `--source-event autotrade_over_cap` decision (execute this delivery visibly / skip). Any other denial is
-  not authorization: explain the reason and request explicit re-authorization instead of bypassing it.
+  `autotrade-grant-check` for the selected venue/action/amount. Allow means execute without another card.
+  For tools that support `--autotrade-job`, pass the current `jobId`. For Trade Kit, use
+  `--venue trade_kit` and check the configured quote/notional amount; after allow, invoke the selected
+  `okx` trading command through its normal path without the unsupported `--autotrade-job` flag. Trade Kit
+  caps both `buy` and `sell`, because a derivative sell may increase short exposure. The selected Skill
+  must still validate all market, account, instrument, and order parameters. `over_cap` uses one localized
+  two-way `--source-event autotrade_over_cap` decision (execute this delivery visibly / skip). Any other
+  denial is not authorization: explain the reason and request explicit re-authorization instead of
+  bypassing it.
 - `status=active, mode=manual`: do not show the first-time A/B/C card. Request one localized two-way
   `--source-event autotrade_manual_signal` decision (execute this delivery / skip). Show the stored amount
   when available; if execution is chosen without an amount, re-request the same decision with an amount.

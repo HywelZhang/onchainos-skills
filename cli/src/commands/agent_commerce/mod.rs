@@ -122,6 +122,14 @@ pub enum AgentCommand {
         #[arg(long = "service-description", default_value = "")]
         service_description: String,
         #[arg(long = "service-interval", default_value = "month")] service_interval: String,
+        /// Explicit user-confirmed automatic signal execution (`auto`).
+        #[arg(long = "autotrade-mode")] autotrade_mode: Option<String>,
+        /// Fixed quote-currency amount used for every delivered signal.
+        #[arg(long = "autotrade-amount")] autotrade_amount: Option<String>,
+        /// Per-delivery automatic-execution cap.
+        #[arg(long = "autotrade-cap")] autotrade_cap: Option<String>,
+        /// Quote currency for amount/cap (`usdt` or `usdc`).
+        #[arg(long = "autotrade-quote")] autotrade_quote: Option<String>,
         #[arg(long, default_value = "")] format: String,
         /// Device ids to omit from the default all-devices routing set (repeatable).
         #[arg(long = "exclude-device")] exclude_device: Option<Vec<String>>,
@@ -1047,8 +1055,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device } =>
-            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device }, ctx).await,
+        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } =>
+            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device }, ctx).await,
 
         AgentCommand::SubscribeCancel { sub_id } =>
             task::user::run_task(T::SubscribeCancel { sub_id }, ctx).await,

@@ -403,6 +403,8 @@ agent create-subscribe \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
+  [--autotrade-mode auto --autotrade-amount <amt> --autotrade-cap <cap> \
+   --autotrade-quote <usdt|usdc>] \
   [--exclude-device <id>]... [--format json]
 ```
 
@@ -417,13 +419,17 @@ agent create-subscribe \
 | `--description` | Yes | - | Max 4096 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--service-description` | No | `""` | Exact service description from `asp-match`; persisted only as bounded routing hints |
+| `--autotrade-mode` | No | - | Explicit user-confirmed automatic signal execution; currently only `auto`. When supplied, all other `--autotrade-*` fields are required |
+| `--autotrade-amount` | With mode | - | Positive fixed quote amount for each signal; must be ≤ cap |
+| `--autotrade-cap` | With mode | - | Positive per-signal quote amount cap |
+| `--autotrade-quote` | With mode | - | `usdt` or `usdc` |
 | `--exclude-device` | No | *(none)* | Device id to omit from the default all-devices routing set (repeatable) |
 
 > **Device routing:** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-The CLI always writes the current backend delivery-routing compatibility field as `copyTrade=1`. There is no subscription-time auto-copy-trade question or `--copy-trade` input. The inbound client no longer uses that field or a deterministic text parser for routing: it requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks.
+The CLI always writes the current backend delivery-routing compatibility field as `copyTrade=1`. There is no old subscription-time binary copy-trade question or `--copy-trade` input. The inbound client no longer uses that field or a deterministic text parser for routing: it requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks. The optional `--autotrade-*` group is different: it persists a complete, explicit user-authored execution policy after the subscription jobId is created. Partial groups fail closed and report exactly which fields are missing. JSON success reports `autoTradeConfigRequested` and `autoTradeConfigured`; a persistence failure does not roll back the already-created subscription and leaves execution unconfigured.
 
 ### subscribe-detail
 

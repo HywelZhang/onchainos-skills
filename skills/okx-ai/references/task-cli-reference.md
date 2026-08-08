@@ -210,6 +210,10 @@ Render the service provider as `Agent <providerAgentId>(<providerAgentName>)`; d
 - `reminders[]` = bilingual (`messageEn`+`messageZh`), `blocking:false`, de-duplicated install/config hints
 - `evidence[]` = stable diagnostic codes only (never raw text/secrets)
 
+For Trade Kit, subscription-time `ready` means only that the local `okx` CLI exists. The
+preflight never reads configuration or credential state and never invokes the CLI; the first
+real signal re-checks authentication, account permissions, and runtime capabilities.
+
 Undetermined descriptions yield `isTradingSignal:false`, `assetClasses:[]`, and `reminders:[]`. On an internal preflight error the object degrades to `evidence:["preflight:unavailable"]` and `asp-match` still returns `ok:true`. Preflight absence never blocks subscription creation.
 
 ### mark-failed

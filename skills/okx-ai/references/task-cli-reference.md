@@ -555,9 +555,8 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 
 Submit the deliverable on-chain (only allowed when status=accepted)
 
-> When `--autotrade` is supplied, the signal is structure-validated **before** any upload/send/broadcast; an
-> invalid signal aborts delivery with `signal rejected: <reason>` (exit 1). Unit is constrained by side
-> (buy=quote, sell=base|pct; deposit=quote; withdraw=pct; polymarket buy=quote/sell=base).
+> `--autotrade` is a retired compatibility argument. The CLI accepts but completely ignores its value;
+> only `--deliverable-text` or `--file` is sent and processed.
 
 ```
 agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<txt>"] --agent-id <aspAgentId> [--autotrade '<single-line JSON>']
@@ -569,7 +568,7 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 | `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
 | `--message` | No | `Task completed, please review` | Delivery message |
 | `--agent-id` | Yes | - | ASP agentId |
-| `--autotrade` | No | (none) | Single-line JSON auto-trade signal, **omitting `signalTime`**. CLI stamps `signalTime`, runs structure validation, and appends an `autotrade:` line to the delivery content. Invalid signal → command errors and **nothing is sent**. Empty/absent = ordinary delivery. |
+| `--autotrade` | No | (none) | Deprecated compatibility argument. Accepted but ignored; malformed or valid JSON never changes, blocks, or augments the text/file deliverable. |
 
 ### autotrade-grant-check
 

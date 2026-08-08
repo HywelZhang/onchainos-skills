@@ -467,9 +467,8 @@ pub enum AgentCommand {
         #[arg(long = "deliverable-text", default_value = "")] deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
-        /// Single-line JSON auto-trade signal (omitting `signalTime`). When non-empty the CLI
-        /// stamps `signalTime`, structure-validates the signal, and appends an `autotrade:` line
-        /// to the delivery content. Invalid ⇒ `signal rejected: <reason>` (exit 1), nothing sent.
+        /// Deprecated compatibility argument. Accepted but ignored; only the
+        /// explicit text/file deliverable is sent and processed.
         #[arg(long, default_value = "")] autotrade: String,
     },
 

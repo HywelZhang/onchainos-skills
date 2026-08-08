@@ -1823,6 +1823,28 @@ LINK 🎯 | ETH | BTC
     }
 
     #[test]
+    fn legacy_autotrade_suffix_never_enters_user_deliverable_text() {
+        let content = "\
+jobId: 0x8bad
+deliverableType: text
+- - -
+【合约信号】BTC-PERP | LONG 10x | 10分钟内有效
+- - -
+[intent:deliver]
+autotrade: {\"schemaVersion\":1,\"deliveryId\":\"legacy-1\"}";
+
+        let payload = parse_deliver_content(content).expect("should parse text deliver");
+        match payload {
+            DeliverPayload::Text(text) => {
+                assert_eq!(text, "【合约信号】BTC-PERP | LONG 10x | 10分钟内有效");
+                assert!(!text.contains("autotrade:"));
+                assert!(!text.contains("schemaVersion"));
+            }
+            DeliverPayload::File { .. } => panic!("expected Text"),
+        }
+    }
+
+    #[test]
     fn parse_a2a_json_file_type() {
         let a2a_json = r#"{
   "msgType": "a2a-agent-chat",

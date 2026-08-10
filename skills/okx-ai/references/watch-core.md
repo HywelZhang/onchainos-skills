@@ -103,27 +103,6 @@ If this watch session started from the CLI `[Watch]` block (the only path that p
 
 The session ends when §Stop condition fires, or when the user starts a **new** watch via a §Triggers phrase — that new session is global, no `--job-id`.
 
-#### CLI operation-confirmation mode (scoped and sticky)
-
-If the CLI `[Watch]` block's first line is exactly `[Watch] mode=cancel-confirmation`, remember
-`cancel-confirmation` as a session-local mode alongside the sticky `--job-id`. Run and dispatch the
-scoped watch normally. Notifications unrelated to the cancellation are still rendered and the same
-scoped watch is re-entered. After rendering a cancellation-result notification whose first
-non-whitespace line starts with one of the exact prefixes below, stop this confirmation watch and do
-not re-enter it:
-
-- `[Cancelled]`
-- `[Auto-Renew Cancelled]`
-- `[Subscription Cancellation Failed]`
-- `[已取消]`
-- `[已取消续费]`
-- `[订阅取消失败]`
-
-This mode applies **only** to the watch session created by that explicitly marked CLI block. Never
-infer it from a cancellation-looking notification in a regular scoped or global watch. In particular,
-`[Auto-Renew Cancelled]` is not a general terminal marker: the subscription remains active through
-the current paid period, and every other watcher must continue normally.
-
 ## Anti-patterns
 
 - Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
@@ -210,7 +189,6 @@ Separate user-initiated intent (triggers: `未决策` / `待决策` / `outstandi
 🛑 **The ONLY valid stop conditions:**
 - **User picks `保留` / `稍后` / `暂不` / `skip` on a `decision_request`** — item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `outdated-list`. The watch loop ends here because the user explicitly chose to defer; honor that.
 - The user explicitly says stop — e.g. `停止监听` / `不用监听了` / `stop watching` / `unsubscribe`.
-- **`cancel-confirmation` session + cancellation result rendered.** Apply only the exact mode and prefixes defined in §CLI operation-confirmation mode. Stop this operation-confirmation watch after rendering the result; do not treat the subscription itself as terminal unless the returned lifecycle instructions separately say so.
 - **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND the latest `notification`'s `userContent` contains any of: `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`, render the notification verbatim per §kind == notification, then **stop the watch loop** — do not re-enter. This jobId is terminal; continuing to long-poll on a dead jobId is pure churn (no new events will ever arrive for this `--job-id`).
   - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 

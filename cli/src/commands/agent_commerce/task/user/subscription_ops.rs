@@ -92,27 +92,20 @@ enum SubscriptionMutation {
     Reject,
 }
 
-fn subscription_watch_mode(mutation: SubscriptionMutation) -> Option<&'static str> {
-    match mutation {
-        SubscriptionMutation::Cancel => Some("cancel-confirmation"),
-        SubscriptionMutation::Reject => None,
-    }
+fn should_watch_after_subscription_mutation(mutation: SubscriptionMutation) -> bool {
+    matches!(mutation, SubscriptionMutation::Reject)
 }
 
 fn print_watch_after_subscription_mutation(mutation: SubscriptionMutation, sub_id: &str) {
-    if !super::content::is_cli_mode() {
+    if !super::content::is_cli_mode() || !should_watch_after_subscription_mutation(mutation) {
         return;
     }
     println!();
-    match subscription_watch_mode(mutation) {
-        Some(mode) => println!("[Watch] mode={mode}"),
-        None => println!("[Watch]"),
-    }
-    println!("🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
+    println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
     println!();
     println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
     println!();
-    println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Preserve the optional mode from this block for the whole scoped session. Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing unless that mode's stop condition fires. (Do NOT guess the bash invocation — read watch-core.md first.)");
+    println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
     println!();
     println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
 }
@@ -901,12 +894,13 @@ mod tests {
     }
 
     #[test]
-    fn subscription_mutations_use_isolated_watch_modes() {
-        assert_eq!(
-            subscription_watch_mode(SubscriptionMutation::Cancel),
-            Some("cancel-confirmation")
-        );
-        assert_eq!(subscription_watch_mode(SubscriptionMutation::Reject), None);
+    fn subscribe_cancel_does_not_rearm_scoped_watch() {
+        assert!(!should_watch_after_subscription_mutation(
+            SubscriptionMutation::Cancel
+        ));
+        assert!(should_watch_after_subscription_mutation(
+            SubscriptionMutation::Reject
+        ));
     }
 
     #[test]

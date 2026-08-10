@@ -124,9 +124,13 @@ pub enum AgentCommand {
         #[arg(long = "service-interval", default_value = "month")] service_interval: String,
         /// Explicit user-confirmed automatic signal execution (`auto`).
         #[arg(long = "autotrade-mode")] autotrade_mode: Option<String>,
-        /// Fixed quote-currency amount used for every delivered signal.
+        /// Fixed quote amount used for every delivered signal.
+        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
+        /// e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
         #[arg(long = "autotrade-amount")] autotrade_amount: Option<String>,
-        /// Per-delivery automatic-execution cap.
+        /// Per-delivery automatic-execution quote cap.
+        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
+        /// e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
         #[arg(long = "autotrade-cap")] autotrade_cap: Option<String>,
         /// Quote currency for amount/cap (`usdt` or `usdc`).
         #[arg(long = "autotrade-quote")] autotrade_quote: Option<String>,

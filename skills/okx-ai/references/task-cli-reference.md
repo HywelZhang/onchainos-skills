@@ -407,7 +407,7 @@ agent create-subscribe \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
-  [--autotrade-mode auto --autotrade-amount <amt> --autotrade-cap <cap> \
+  [--autotrade-mode auto --autotrade-amount <decimal-number> --autotrade-cap <decimal-number> \
    --autotrade-quote <usdt|usdc>] \
   [--exclude-device <id>]... [--format json]
 ```
@@ -424,8 +424,8 @@ agent create-subscribe \
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--service-description` | No | `""` | Exact service description from `asp-match`; persisted only as bounded routing hints |
 | `--autotrade-mode` | No | - | Explicit user-confirmed automatic signal execution; currently only `auto`. When supplied, all other `--autotrade-*` fields are required |
-| `--autotrade-amount` | With mode | - | Positive fixed quote amount for each signal; must be ≤ cap |
-| `--autotrade-cap` | With mode | - | Positive per-signal quote amount cap |
+| `--autotrade-amount` | With mode | - | Positive human-readable quote amount for each signal; decimal number only (for example `10` or `20.5`), never minimal units or a currency suffix; currency is selected by `--autotrade-quote`; must be ≤ cap |
+| `--autotrade-cap` | With mode | - | Positive human-readable per-signal quote cap; decimal number only, never minimal units or a currency suffix; currency is selected by `--autotrade-quote` |
 | `--autotrade-quote` | With mode | - | `usdt` or `usdc` |
 | `--exclude-device` | No | *(none)* | Device id to omit from the default all-devices routing set (repeatable) |
 

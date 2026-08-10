@@ -240,11 +240,12 @@ onchainos agent create-subscribe \\
   --service-description \"<serviceDescription>\" \\
   --provider-agent-id <agentId> \\
   [--autotrade-mode auto \\
-   --autotrade-amount \"<fixed quote amount>\" \\
-   --autotrade-cap \"<per-signal cap>\" \\
+   --autotrade-amount \"<decimal-number>\" \\
+   --autotrade-cap \"<decimal-number>\" \\
    --autotrade-quote <usdt|usdc>]
 ```
 - Pass the four `--autotrade-*` flags together only when the final subscription confirmation contained the user's explicit automatic-execution setup. Never synthesize them from service or deliverable content.
+- `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 
 {attachments_stop}",

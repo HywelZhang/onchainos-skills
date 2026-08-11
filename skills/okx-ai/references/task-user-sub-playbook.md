@@ -139,8 +139,8 @@ does not parse fields or select an execution command. Read and follow
 route cache are hints only, never trading consent.
 
 **Pause auto copy-trade (user says「暂停自动跟单」/ "pause auto copy-trading" / "stop copy-trading"):**
-Clear the auto-follow authorization for **that one subscription** so the next signal re-shows the
-three-way prompt:
+Clear the auto-follow authorization for **that one subscription** so a later actionable signal requests
+the missing automatic-execution configuration in natural language:
 ```bash
 onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <yours> --mode pause
 ```
@@ -148,8 +148,8 @@ onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <yours> --mode
   notification, use that signal's `jobId` from context. If they say it bare and have **more than one**
   auto-following subscription, **ask which one** — do not guess.
 - Scope is this `jobId` only (not all subscriptions). Returns `{"consentMode":"pause","cleared":true}`.
-  Afterwards the next delivery for this subscription re-shows the three-way consent card ("尚未开启自动执行");
-  re-enabling is just choosing A again. Tell the user it's paused.
+  Afterwards a later actionable delivery asks only for the required fixed amount, cap, and quote currency;
+  it does not show A/B/C choices. Tell the user it's paused.
 
 ---
 

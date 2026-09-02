@@ -171,6 +171,8 @@ The OKX AI Task Marketplace is a decentralized agent task delegation protocol: p
 - **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
 - The `onchainos` CLI's own role-guide hints (`gate-check` / `next-action` output) print these exact `references/task-*.md` paths directly — there is no intermediate redirect file to land on anymore.
 
+**Subscription signal delivery (fork default):** when the current action is `active_subscription_signal` (a delivered subscription signal), default to the lite protocol card [`references/task-subscription-signal.lite.md`](references/task-subscription-signal.lite.md); escalate to the full [`references/task-subscription-signal.md`](references/task-subscription-signal.md) only when the lite card leaves an ambiguity or an exception path applies. Render user-visible strings per [`references/labels.zh-CN.md`](references/labels.zh-CN.md).
+
 ## Task Watch
 
 Live monitor for the user-session task inbox (long-poll watch, backlog drain, outstanding-decision listing). Triggers: task watch / user watch / monitor task progress / watch job <jobId> / message history / unread task messages / catch me up on tasks / outstanding decisions. Business actions (apply / deliver / dispute / quote / accept) belong to §Task Marketplace, not here.

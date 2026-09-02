@@ -63,10 +63,11 @@
 - [x] 行为验证: ① preflight 4.5.3 skill + 4.5.2 CLI → action:null（版本配对宽容, 领先一个 patch 无碍）② 无代理 preflight 通过 → CLI 内置 DoH, API 流量免代理（代理只用于安装/更新/网页）③ preflight 会在后台清理官方废弃 skill（okx-how-to-play/okx-ai-guide/okx-x402-payment 等名单已捕获）
 - [~] 量化基线: 静态完成(单流程文档加载 47-104KB vs 优化后 1-2KB; 回合数见 04)；实时耗时需钱包登录会话, 待有登录态时补测
 
-### P1 — 文档层优化（1~3 天，L1）
-- [ ] 按 P0 基线选 2~3 条最高频流程做 zh-CN 变体（新文件名，不碰上游同名文件）
-- [ ] CLI 常用 Label/输出字段中英对照小表（替代全文翻译的心智负担）
-- [ ] 主 SKILL 瘦身试点（选 okx-ai 或 payments，把可折叠内容移到 lite 参考）
+### P1 — 文档层优化（L1，方向修订: 主体保持英文 + 精简/分层 + i18n 渲染层，不做全文中文变体）
+- [x] 决策: skill 主体保持英文（指令精度/多模型鲁棒/sync 零冲突）；中文只用于 keyword 触发、示例、用户可见文案 i18n
+- [x] 试点流(订阅信号处理): task-subscription-signal.lite.md 协议卡(13KB, 原 25.7KB, 硬规则零丢失: 非可信输入边界/流程/终态/桥/consent/排队续跑) + labels.zh-CN.md 渲染表 + SKILL.md 挂载(lite 默认, 歧义升全量)
+- [ ] 其余高频流同法精简: 身份注册(identity-register 30.8KB) → 发单(task-user-playbook 37KB) → watch(watch-core 31KB)
+- [ ] 主 SKILL 瘦身试点: okx-ai 21KB → 目标 ~10KB（可折叠内容下沉 references）
 - [ ] 防呆护栏可放宽项试点（自用 lite profile，不动协议规则）
 - 验收: 对照 P0 基线，所选流程「加载 KB / 往返次数 / 出错率」下降，中文输出零混语
 

@@ -110,7 +110,7 @@ signalProfile:
 
 ## 6. 边界与待验证
 
-1. 信封如何随交付物落地: 需实测 `agent deliver` 保存格式（.txt/.md/附件）以确定信封载体（首部块 vs 伴生 json）——P1 前做一次真实交付采样。
+1. [部分解决·源码] 交付物落盘: 内联文本存 .txt（长文本可能以 .md 上传），附件走 fileKey；savedPath 透传进 [Persisted delivery context]（flow_lifecycle/core.rs）。信封载体定为: 交付 .txt 内首部 JSON fence 块 + raw 保留全文；附件按原样。仍留一次真实交付采样验证（需登录态）。
 2. 官方对交付物的"买家侧模型路由"仍会存在（协议/UI 要求）——我们的 strict 路径与其并行: 检测到可解析信封时走确定性引擎, 否则维持官方模型路由。
 3. 信号加密/签名: v1 不引入（信任=订阅关系+声誉）；若需要防 ASP 抵赖/伪造, 后续在 envelope 加 senderSig（私钥签名）——评估必要性后再说。
 4. grants 文件当前按 jobId 存 venue caps（官方）。我们的订阅级 caps 复用同一文件格式与校验核心, 不另造轮子。

@@ -168,7 +168,7 @@ signalProfile: { template: okx-signal-trade-v1, classes: [trade], fieldCoverage:
 ## 6. 开放问题
 
 1. 配置编辑面: v1 用 YAML 文件 + `onchainos policy set/get` 命令，还是只文件？(建议 v1 只文件+校验命令，v2 加交互)
-2. limits.grants 与官方 autotrade/grants 的核销联动: 官方是"文件内 cap"语义还是"逐笔核销"(executor 有 EXECUTION_LATCH/journal)？需读 grants 校验核心确认后定联动语义（P1 前置）。
+2. [已解决·源码] 官方 grants 语义（grants.rs `check_grant` v2）: ① amount 已不再与 max_buy/max_sell 比对（v2 起 cap 比对从 grant-check 移除）② check_grant 只验: jobId 字符集（防路径穿越）/venue/action/amount 可解析且非零/文件存在（缺失即拒，DENY-by-default）/JSON 可读/版本/jobId 匹配/未过期/venue 已授权 ③ cap 的真正执行点 = in-process consent 闸（auto 模式每笔 amount ≤ cap）+ 插件自行读 maxBuy ④ sell 天然被持仓约束（除 trade_kit 双边 cap）⑤ write_grant 目前仅 dev-seed，注释明言等 "external create-subscription flow" 成为首个生产调用方——正是我们的订阅创建流。含义: 我们 limits 的 per-trade cap 由 consent/执行桥校验；grant 文件当存在性/venue 门；dailyCap 等聚合限额官方无此概念，需在我们执行桥的 ledger/journal 内实现。
 3. notifyTo 通道由宿主实现（Hermes console/telegram），CLI 只发事件——宿主适配器接口待定。
 4. role=evaluator 节点暂缓（01 附录 A），schema 的 events."*" 已保证其事件默认安全落 ask/notify。
 5. events.<wire> 的 wire 名以 state_machine.rs parse 函数为准（如 sub_user_reject）；上游 sync 后需对账（scripts/audit-events.py 辅助）。

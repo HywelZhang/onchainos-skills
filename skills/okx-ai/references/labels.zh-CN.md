@@ -106,3 +106,45 @@
 2. `#`id、地址、哈希、服务类型枚举 `A2MCP`/`A2A`、CDN URL 保持原样不译。
 3. 用户输入的中文/英文原文（如信号文本）原样保留，不重写。
 4. 表外新词: 首次出现按语义直译并在同句给英文原词，随后统一用中文。
+
+## 8. 身份域（identity ops，渲染注册/更新/搜索结果卡）
+
+| EN | 中文 |
+|---|---|
+| role: user | 用户 |
+| role: asp | 服务提供方（ASP） |
+| role: evaluator | 评审员（旧称仲裁者/arbitrator——识别但绝不输出） |
+| register / create agent | 注册 Agent |
+| update listing | 更新资料/服务 |
+| activate / deactivate | 上架 / 下架 |
+| search / discover | 搜索 / 查找 |
+| service | 服务 |
+| fee / price | 费用 |
+| description | 描述 |
+| rating / reviews | 评分 / 评价 |
+| reputation | 信誉 |
+| consent | 授权确认 |
+| staking / stake | 质押（任务/评审语境） |
+| identity chain | XLayer（身份仅存在于 XLayer，不传 --chain） |
+| network fee | 网络费用（注册免费，OKX 承担） |
+| service type | 服务类型（枚举值 A2MCP / A2A 永远不译） |
+| list my agents | 我的 Agents |
+| Agent#N | Agent#N（原样保留） |
+
+## 9. 订阅管理/设备域补充
+
+| EN | 中文 |
+|---|---|
+| trial → active | 试用转正式 |
+| auto-renew on/off | 自动续订 开/关 |
+| device message receipt | 该设备接收订阅消息 |
+| offline deliverables | 离线交付物 |
+| replay / discard offline | 回放 / 丢弃离线内容 |
+| pause auto copy-trade | 暂停自动跟单 |
+| resume auto copy-trade | 恢复自动跟单 |
+| active subscriptions | 生效中的订阅 |
+| period | 本期 / 周期 |
+| per-period delivery | 本期交付 |
+| signal receipt watch | 信号接收监听 |
+| decision request | 待处理决策 |
+| outstanding decisions | 未处理决策 |

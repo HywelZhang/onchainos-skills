@@ -94,10 +94,17 @@ def watch_until(job_id, a, dryrun):
         if any(m in text for m in ACCEPT_MARK):
             got_accept = True
             print("  [executor] accepted by provider")
-        if any(m in text for m in DELIVER_MARK) and ("fileKey" in text or "digest" in text):
-            dl = extract_deliverable(text)
-            print("  [executor] deliverable params captured")
-            return True, dl
+        if any(m in text for m in DELIVER_MARK):
+            if "fileKey" in text or "digest" in text:
+                dl = extract_deliverable(text)
+                print("  [executor] deliverable params captured")
+            elif "deliverableType: text" in text or "[intent:deliver]" in text:
+                body = extract_inline_text(text)
+                if body:
+                    dl = {"text": body, "kind": "text"}
+                    print("  [executor] text deliverable captured (%d chars)" % len(body))
+            if dl:
+                return True, dl
     print("  [executor] watch timeout without full lifecycle (accept=%s dl=%s)" % (got_accept, bool(dl)))
     return got_accept and bool(dl), dl
 
@@ -120,6 +127,15 @@ def persist_params(dl, out_dir):
 
 # ── download + decrypt ──────────────────────────────────────────────────
 def download(dl, agent_id, out_dir, dryrun):
+    if dl.get("kind") == "text":
+        persist_params(dl, out_dir)
+        path = os.path.join(out_dir, "deliverable.txt")
+        if not dryrun:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(dl["text"])
+            print(f"  [executor] text deliverable saved: {path} ({len(dl['text'])} chars)")
+            elapsed("downloaded")
+        return path
     persist_params(dl, out_dir)
     cmd = ["okx-a2a", "file", "download", "--file-key", dl["fileKey"],
            "--agent-id", agent_id, "--digest", dl["digest"], "--salt", dl["salt"],
@@ -192,8 +208,17 @@ def complete(job_id, agent_id, dryrun, source_event="job_submitted"):
     print("  [executor] resolve rc=%s %s" % (rr.get("rc"), txt[:200].replace("\n", " ")))
     return rr.get("rc") == 0
 
+def extract_inline_text(content):
+    """Pull the human payload from a text-type [Received] notice.
+    Structure: 'deliverableType: text\\n- - -\\n<BODY>\\n- - -\\n[intent:deliver]'"""
+    m = re.search(r"deliverableType:\s*text\s*- - -\s*(.*?)\s*- - -", content, re.S)
+    if not m:
+        return None
+    body = m.group(1).strip()
+    return body if body else None
+
 def fetch_deliverable_params(job_id):
-    """Late delivery fallback: pull [Received] params from handled history."""
+    """Late delivery fallback: pull [Received] payload from handled history."""
     r = run(["okx-a2a", "user", "list", "--job-id", job_id, "--include-handled", "--json"],
             False, timeout=90)
     if r.get("rc") != 0:
@@ -204,11 +229,18 @@ def fetch_deliverable_params(job_id):
         return None
     for it in (d.get("items") or []):
         uc = it.get("userContent") or ""
-        if "[Received]" in uc and "fileKey" in uc:
+        if "[Received]" not in uc:
+            continue
+        if "fileKey" in uc:
             dl = extract_deliverable(uc)
             if dl.get("fileKey") and dl.get("digest"):
-                print("  [executor] deliverable params recovered from history")
+                print("  [executor] file deliverable params recovered from history")
                 return dl
+        if "deliverableType: text" in uc:
+            body = extract_inline_text(uc)
+            if body:
+                print("  [executor] text deliverable recovered from history (%d chars)" % len(body))
+                return {"text": body, "kind": "text"}
     return None
 
 # ── main ────────────────────────────────────────────────────────────────
@@ -299,6 +331,26 @@ def selftest():
     v, _ = rule_review(p)
     check(v == "UNCERTAIN", "review uncertain on junk")
     os.unlink(p)
+    # text-type deliverable extraction (run3 discovery)
+    fixture = ("[Received] X -> Y (you) Job: 0xabc\n────────────\n「jobId: 0xabc\ndeliverableType: text\n- - -\n7天低卡晚餐方案，日均约398kcal，高蛋白低脂，附烹饪要点。\n- - -\n[intent:deliver]」────────────")
+    body = extract_inline_text(fixture)
+    check(body and "398kcal" in body and "intent" not in body,
+          "extract_inline_text pulls text-type body")
+    check(extract_inline_text("no markers here") is None, "extract_inline_text None on non-text")
+    # download() writes text deliverable to disk
+    good_text = ("周一晚餐: 鸡胸肉150g(蛋白质~33g) 西兰花200g 糙米饭80g 估算热量~380kcal\n"
+                 "周二晚餐: 清蒸鲈鱼200g(蛋白质~40g) 芦笋150g 紫薯100g 估算热量~365kcal\n"
+                 "周三晚餐: 虾仁200g(蛋白质~38g) 黄瓜100g 荞麦面70g 估算热量~390kcal\n"
+                 "周四晚餐: 瘦牛肉120g(蛋白质~26g) 菠菜200g 玉米1根 估算热量~400kcal\n"
+                 "周五晚餐: 三文鱼150g(蛋白质~34g) 秋葵150g 藜麦80g 估算热量~420kcal\n"
+                 "周六晚餐: 豆腐250g(蛋白质~20g) 生菜100g 燕麦50g 估算热量~350kcal\n"
+                 "周日晚餐: 鸡腿肉去皮150g(蛋白质~32g) 番茄200g 杂粮饭80g 估算热量~400kcal\n"
+                 "烹饪要点: 少油少盐, 每餐用油不超过5ml, 全天控糖。\n"
+                 "减脂期饮食建议: 1) 每餐先吃蔬菜再吃蛋白质最后主食; 2) 每天饮水2000ml以上; 3) 晚餐尽量在睡前3小时完成。")
+    with tempfile.TemporaryDirectory() as td:
+        p2 = download({"kind": "text", "text": good_text}, "2366", td, False)
+        v2, _ = rule_review(p2)
+        check(v2 == "PASS" and os.path.exists(p2), "text deliverable downloads + passes review")
     print("selftest:", "OK" if not fails else f"{len(fails)} FAIL")
     return 0 if not fails else 1
 

@@ -12,8 +12,9 @@
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\install-watch-task.ps1 [-IntervalMin 5] [-User $env:USERNAME]
-$ErrorActionPreference = "Stop"
 param([int]$IntervalMin = 5, [string]$User = "")
+
+$ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $py = (Get-Command python).Source

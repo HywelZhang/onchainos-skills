@@ -16,7 +16,11 @@ Usage:
   python scripts/executor-lite.py --live ...          # real run (money!)
   python scripts/executor-lite.py --selftest          # offline tests
 """
-import argparse, json, os, re, subprocess, sys, time
+import argparse, importlib.util, json, os, re, subprocess, sys, time
+
+_T0 = time.monotonic()
+def elapsed(tag):
+    print(f"  [executor] +{time.monotonic()-_T0:6.1f}s {tag}", flush=True)
 
 TERMINAL = ["[任务已完成]", "[Job Completed]", "[Job Auto-Completed]", "[任务已关闭]"]
 ACCEPT_MARK = ["[任务已接受]", "[Job Accepted]"]
@@ -68,6 +72,7 @@ def publish(a, dryrun):
         print("  raw:", (r.get("out") or r.get("err") or "")[:500])
         sys.exit(3)
     print(f"  [executor] published jobId={job_id}")
+    elapsed("published")
     return job_id, r
 
 # ── watch loop ──────────────────────────────────────────────────────────
@@ -135,6 +140,7 @@ def download(dl, agent_id, out_dir, dryrun):
         path = m.group(1) if m else None
     if path and os.path.exists(path):
         print(f"  [executor] deliverable saved: {path}")
+        elapsed("downloaded")
         return path
     print("  [executor] download: rc=0 but no resolvable path. stdout:", out[:200], "stderr:", err[:200])
     return None
@@ -214,12 +220,14 @@ def main():
         sys.exit(2)
     os.makedirs(a.out_dir, exist_ok=True)
     print("== executor-lite ==")
+    elapsed("start")
     job_id, _ = publish(a, a.dryrun)
     if not a.dryrun:
         ok, dl = watch_until(job_id, a, False)
         path = download(dl, a.agent_id, a.out_dir, False) if dl else None
         verdict, detail = rule_review(path)
         print(f"  [executor] review verdict: {verdict} {detail}")
+        elapsed("reviewed")
         if verdict == "PASS":
             complete(job_id, a.agent_id, False)
         else:

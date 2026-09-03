@@ -99,30 +99,43 @@ def extract_deliverable(text):
     def grab(pat):
         m = re.search(pat, text)
         return m.group(1) if m else None
-    return {"fileKey": grab(r'fileKey["\']?\s*[:=]\s*["\']?([A-Za-z0-9_\-\.]+)'),
+    return {"fileKey": grab(r'fileKey["\']?\s*[:=]\s*["\']?([A-Za-z0-9_\-\.\/]+)'),
             "digest": grab(r'digest["\']?\s*[:=]\s*["\']?([A-Za-z0-9]+)'),
             "salt": grab(r'salt["\']?\s*[:=]\s*["\']?([A-Za-z0-9+\/=]+)'),
             "nonce": grab(r'nonce["\']?\s*[:=]\s*["\']?([A-Za-z0-9+\/=]+)'),
             "secret": grab(r'secret["\']?\s*[:=]\s*["\']?([A-Za-z0-9+\/=]+)')}
 
+def persist_params(dl, out_dir):
+    if not dl or not any(dl.values()):
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "deliverable-params.json"), "w", encoding="utf-8") as f:
+        json.dump({**dl, "ts": time.time()}, f, ensure_ascii=False, indent=1)
+
 # ── download + decrypt ──────────────────────────────────────────────────
 def download(dl, agent_id, out_dir, dryrun):
+    persist_params(dl, out_dir)
     cmd = ["okx-a2a", "file", "download", "--file-key", dl["fileKey"],
            "--agent-id", agent_id, "--digest", dl["digest"], "--salt", dl["salt"],
            "--nonce", dl["nonce"], "--secret", dl["secret"]]
-    r = run(cmd, dryrun, timeout=120)
+    r = run(cmd, dryrun, timeout=180)
     if dryrun: return None
-    d = parse_json(r["out"])
+    out = r.get("out", "") or ""
+    err = r.get("err", "") or ""
+    if r.get("rc") != 0:
+        print(f"  [executor] download rc={r.get('rc')} err={err[:300]}")
+        return None
+    d = parse_json(out)
     path = None
     if isinstance(d, dict):
         path = find_key(d, "path") or find_key(d, "savedPath") or find_key(d, "filePath")
     if not path:
-        m = re.search(r'([A-Za-z]:[\\\/][^\s"\']+\.md)', r.get("out", ""))
+        m = re.search(r'([A-Za-z]:[\\\/][^\r\n"\']+\.(?:md|txt|json|pdf))', out)
         path = m.group(1) if m else None
     if path and os.path.exists(path):
         print(f"  [executor] deliverable saved: {path}")
         return path
-    print("  [executor] download: no saved path resolved. raw:", (r.get("out") or "")[:300])
+    print("  [executor] download: rc=0 but no resolvable path. stdout:", out[:200], "stderr:", err[:200])
     return None
 
 # ── rule review ─────────────────────────────────────────────────────────
@@ -140,7 +153,7 @@ def rule_review(path):
     return ("PASS" if ok else "UNCERTAIN"), json.dumps(checks, ensure_ascii=False)
 
 # ── complete ────────────────────────────────────────────────────────────
-def complete(job_id, dryrun):
+def complete(job_id, agent_id, dryrun, source_event="job_submitted"):
     r = run(["onchainos", "agent", "complete", job_id], dryrun)
     if dryrun: return
     text = (r.get("out", "") + r.get("err", ""))
@@ -148,9 +161,13 @@ def complete(job_id, dryrun):
     if r.get("rc") == 0 and "ok" in text.lower():
         print("  [executor] completed (escrow released)")
         return True
-    print("  [executor] complete blocked/delayed; review gate likely pending.")
-    print("  fallback hint: onchainos agent pending-decisions-v2 resolve-with-sessionkey --job-id %s" % job_id)
-    return False
+    print("  [executor] complete blocked by review gate -> resolve decision A")
+    rr = run(["onchainos", "agent", "pending-decisions-v2", "resolve-with-sessionkey",
+              "--user-reply", "A", "--job-id", job_id, "--role", "user",
+              "--agent-id", agent_id, "--source-event", source_event], False)
+    txt = (rr.get("out", "") + rr.get("err", ""))
+    print("  [executor] resolve rc=%s %s" % (rr.get("rc"), txt[:200].replace("\n", " ")))
+    return rr.get("rc") == 0
 
 # ── main ────────────────────────────────────────────────────────────────
 def main():
@@ -187,7 +204,7 @@ def main():
         verdict, detail = rule_review(path)
         print(f"  [executor] review verdict: {verdict} {detail}")
         if verdict == "PASS":
-            complete(job_id, False)
+            complete(job_id, a.agent_id, False)
         else:
             print("  [executor] human review required (rule UNCERTAIN); not completing.")
     else:

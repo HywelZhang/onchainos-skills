@@ -17,8 +17,8 @@ okx-a2a(@okxweb3/a2a-node) 闭源不可改 → 包装不改造自建 watch-host�
 ### OQ-4 通知通道 — [已答 2026-09-03]
 console（v1）。telegram 等留适配器扩展点（06 §5 --notify）。
 
-### OQ-5 L2(Rust) 改动意愿 — [已答 2026-09-03]
-允许改 Rust。⚠ 本机暂无 cargo/rustup —— L2 开工前置: 安装 Rust 工具链（Windows 默认 MSVC target，需 VS Build Tools 或选 GNU 工具链），约 1-2GB，动手前确认安装方式。
+### OQ-5 L2(Rust) 改动意愿 — [已答 2026-09-03 + 工具链已装]
+允许改 Rust。✅ 工具链已装（2026-09-03）: rustup + stable 1.98.0 minimal profile, cargo/rustc 在 ~/.cargo/bin（PATH 未自动改, 用 ~/.cargo/bin/cargo 或自行加 PATH）。⚠ 首次 cargo build 需 MSVC link.exe（VS Build Tools C++ workload）——缺则装 vs_buildtools 或改用 GNU target。
 
 ### OQ-6 GitHub 推送凭据 — [已完成 2026-09-03]
 GCM 2.9.1 + 浏览器授权完成；dev 与 origin/dev 同步。

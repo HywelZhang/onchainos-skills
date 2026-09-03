@@ -59,6 +59,9 @@ def validate(cfg, base_dir="."):
     pm = sig.get("parseMode")
     if pm and pm not in {"strict", "loose", "notify"} and not str(pm).startswith("custom:"):
         errs.append(f"signal.parseMode invalid: {pm}")
+    for ct in cfg.get("signal", {}).get("contentTags", []):
+        if not isinstance(ct, dict) or not ct.get("kind") or not ct.get("match"):
+            errs.append(f"signal.contentTags entry needs 'kind' + 'match': {ct}")
     lim = cfg.get("limits", {})
     for venue, caps in lim.get("venueGrants", {}).items():
         if venue not in VENUES:
@@ -126,6 +129,10 @@ def classify(ev):
         node = "buyer.sub.decide"
     elif kind == "signal":
         node = "buyer.sub.signal_received"
+    elif kind == "signal_order":
+        node = "buyer.sub.signal_order"
+    elif kind == "signal_analysis":
+        node = "buyer.sub.signal_analysis"
     elif kind == "task_event":
         node = "buyer.task.terminal" if ev.get("terminal") else "buyer.task.event"
     elif kind == "notification":

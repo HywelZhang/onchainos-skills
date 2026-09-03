@@ -19,6 +19,13 @@ docs/design/01-09（节点清单/信号 schema/policy 配置/用户旅程/开放
 - [x] executor-lite 真机 n=4（escrow 0.1×4 全释放 ASP，4/4 完成）：run1 文件(修下载正则)/run2 文件全自动/run3 text 型发现→补 text 提取+resume+历史补抓/run4 文件全自动零介入；生命周期 0 LLM token
 - [x] signal-envelope（9/9）+ 信封闭环 gate（strict 无信封/无效→强制 ask，6/6）
 
+### P2 买家侧订阅流（第一阶段, 2026-09-03）
+- [x] 订阅市场勘察: ASP 8136『1M·斯巴达』高波动主流币跟单信号(serviceId abff5dbe…, 20 USDT/月, 72h 试用, sid 36563) = 真实流验证候选
+- [x] 信号内容分流: policy-engine 新 kind signal_order/signal_analysis + decision-loop contentTags 确定性打标(0 LLM); examples/policy/sub-36563.json 真 ASP 模板(analysis→notify 不打扰 / order→ask 资金确认 / 未知→ask 兜底)
+- [x] scripts/sub-sim.py 离线场景模拟 7/7 PASS(同管线可回放录制事件做校准 OQ-10)
+- [x] docs/design/10-buyer-subscription.md 一阶段手册(订阅日常命令表+分流设计+风险)
+- [ ] 真机上链订阅(72h 试用) → watch 捕获真实 analysis/order → 分流正确性校准（OQ-14, 需确认）
+
 ### 未做（如实）
 - ASP 侧执行器（09 设计已定，需 ASP 身份真机采样，见 OQ-13）
 - 真实订阅流端到端（无活跃订阅；事件分类校准 OQ-10 未做）
@@ -39,7 +46,7 @@ docs/design/01-09（节点清单/信号 schema/policy 配置/用户旅程/开放
 
 ## 3. 待办（按优先级）
 
-1. [P1] 真实订阅流端到端（需活跃订阅 → 先答 OQ-10 预算）——买家侧最后一块未验证面
+1. [P1] 真实订阅流端到端（OQ-14 待确认: 8136 跟单信号 72h 免费试用, 候选服务 sub-36563; 离线链路 sub-sim 7/7 已通）——买家侧最后一块未验证面
 2. [P1] 打包产品化: 安装器/初始化向导/默认 policy 模板包/README-as-product（对象=会用终端的开发者先行）
 3. [P2] ASP 侧执行器（OQ-13 定身份）
 4. [P2] 护栏接口化 + 内容评审规则扩展（超出食谱类任务时）

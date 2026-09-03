@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "scope": "sub-36563",
+  "signal": {
+    "parseMode": "loose",
+    "contentTags": [
+      { "kind": "signal_order", "match": "signal_type=order", "handler": "order 实单事件(资金动作, 必须确认)" },
+      { "kind": "signal_analysis", "match": "signal_type=analysis", "handler": "analysis 行情参考(约3分钟一轮, notify 不打扰)" }
+    ]
+  },
+  "nodes": {
+    "buyer.sub.signal_analysis": { "mode": "notify", "reason": "行情分析参考, 未自动下单; console 通知即可" },
+    "buyer.sub.signal_order": {
+      "mode": "ask",
+      "confirm": "always",
+      "vetoFallback": "notify",
+      "reason": "order=已真实执行单, 跟单涉及资金与杠杆; 默认人工确认。要 auto 需: 开启自动跟单授权(autotrade-consent-set auto)+配置 limits 资金上限(03 §5)"
+    },
+    "buyer.sub.signal_received": { "mode": "ask", "reason": "带标准信封(02)的信号默认 ask; strict 解析+trustAsps 后可 auto" },
+    "buyer.sub.decide": { "mode": "ask" }
+  },
+  "events": { "*": { "mode": "notify" } },
+  "notes": "ASP 8136『1M·斯巴达』高波动主流币跟单信号 (serviceId abff5dbe-5abb-4543-8a04-68c166bf1b0a, 20 USDT/月, 72h 试用)。官方 feed 无 02 信封 → parseMode loose + contentTags 按 signal_type 确定性分流。"
+}

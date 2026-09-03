@@ -64,10 +64,24 @@ def signal_check(ev, merged):
     return {"envelope": True, "valid": not issues, "issues": issues,
             "parseMode": mode, "cls": env["header"].get("signalClass")}
 
+def content_tag(ev, merged):
+    """Signal content tagging (per-sub policy signal.contentTags): raw signals are
+    classified deterministically by substring match (e.g. signal_type=order/analysis)
+    into sub-kinds so a 3-min analysis stream never spams a buyer's ask queue."""
+    tags = (merged.get("signal") or {}).get("contentTags") or []
+    if not tags or ev.get("kind") != "signal":
+        return ev
+    raw = ev.get("raw", "") or ""
+    for ct in tags:
+        if ct.get("match") and ct["match"] in raw:
+            return dict(ev, kind=ct["kind"])
+    return ev
+
 def process_event(ev, policy_dir, scope, base_dir):
     merged, srcs = pe.load_chain(policy_dir, scope)
     sig = signal_check(ev, merged)
-    d = pe.decide(ev, merged, base_dir)
+    ev2 = content_tag(ev, merged)
+    d = pe.decide(ev2, merged, base_dir)
     if sig and not sig["valid"] and d["mode"] in ("auto", "direct"):
         d = dict(d, mode="ask",
                  decision_src=d["decision_src"] + "->ask(signal invalid: %s)" % "; ".join(sig["issues"][:2]))

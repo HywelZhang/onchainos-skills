@@ -22,6 +22,9 @@ _SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("policy_engine", os.path.join(_SCRIPTS, "policy-engine.py"))
 pe = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pe)  # noqa
+_se2 = importlib.util.spec_from_file_location("signal_envelope", os.path.join(_SCRIPTS, "signal-envelope.py"))
+se = importlib.util.module_from_spec(_se2)
+_se2.loader.exec_module(se)  # noqa
 
 def run_hook(cmd, env, base_dir):
     """Execute one hook command. Returns (ok, vetoed, output)."""
@@ -46,11 +49,32 @@ def run_hook(cmd, env, base_dir):
     except subprocess.TimeoutExpired:
         return False, True, "hook timeout(30s)"
 
+def signal_check(ev, merged):
+    """Parse+validate envelope for signal events (02). Returns dict or None."""
+    if ev.get("kind") != "signal":
+        return None
+    env, raw = se.parse_envelope(ev.get("raw", "") or "")
+    if not env:
+        return {"envelope": False, "valid": False,
+                "issues": ["no envelope (loose raw)"],
+                "parseMode": merged.get("signal", {}).get("parseMode", "loose")}
+    mode = merged.get("signal", {}).get("parseMode", "loose")
+    trust = merged.get("signal", {}).get("trustAsps", [])
+    issues = se.validate(env, mode=mode, trust_asps=tuple(trust))
+    return {"envelope": True, "valid": not issues, "issues": issues,
+            "parseMode": mode, "cls": env["header"].get("signalClass")}
+
 def process_event(ev, policy_dir, scope, base_dir):
     merged, srcs = pe.load_chain(policy_dir, scope)
+    sig = signal_check(ev, merged)
     d = pe.decide(ev, merged, base_dir)
+    if sig and not sig["valid"] and d["mode"] in ("auto", "direct"):
+        d = dict(d, mode="ask",
+                 decision_src=d["decision_src"] + "->ask(signal invalid: %s)" % "; ".join(sig["issues"][:2]))
+    d["signal"] = sig
     env = {"EVENT_KIND": ev.get("kind", ""), "JOB_ID": ev.get("jobId", ""),
-           "EVENT_RAW": (ev.get("raw", "") or "")[:2000]}
+           "EVENT_RAW": (ev.get("raw", "") or "")[:2000],
+           "EVENT_SIGNAL_VALID": str(bool(sig and sig["valid"]))}
     notes = []
     # pre hooks (control)
     for h in d["hooks"].get("pre", []):
@@ -142,8 +166,10 @@ def selftest():
         open(f"{td}/scripts/audit-log.py", "w").write("print('audited')\n")
         open(f"{td}/scripts/veto.py", "w").write("import sys; sys.exit(3)\n")
         d, notes, _ = process_event(ev, "examples/policy", "sub-EXAMPLE", td)
-        check(d["node"] == "buyer.sub.signal_received" and d["mode"] == "direct",
-              "signal resolves via example policy (nodes.<id>)")
+        check(d["node"] == "buyer.sub.signal_received"
+              and "nodes.buyer.sub.signal_received" in d["decision_src"]
+              and d["mode"] == "ask" and "signal invalid" in d["decision_src"],
+              "signal resolves via example policy (nodes.<id>) but raw-only under strict -> ask")
         check(any("audit-log" in n for n in notes), "post hook executed from sub cfg")
         ev2 = {"kind": "task_event", "jobId": "", "raw": "job_created new task"}
         # veto scenario: temp policy with pre-hook on the resolved node
@@ -156,6 +182,33 @@ def selftest():
         d2, notes2, _ = process_event(ev2, veto_dir, "global", td)
         check(any("VETO" in n for n in notes2) and any("veto -> fallback ask" in n for n in notes2),
               "pre hook veto -> vetoFallback ask")
+        # signal envelope gating: strict policy, wildcard auto with limits
+        sig_dir = os.path.join(td, "sig-policy")
+        os.makedirs(sig_dir)
+        json.dump({"schemaVersion": 1, "scope": "global",
+                   "signal": {"parseMode": "strict", "trustAsps": ["Agent#12"]},
+                   "limits": {"venueGrants": {"dex": {"maxBuy": "200 USDC"}}},
+                   "events": {"*": {"mode": "auto"}}},
+                  open(f"{sig_dir}/global.json", "w"))
+        good_env = se.build_envelope("trade", "buy XXX 5%", "Agent#12", "svc_9",
+                                     "tpl", signal_id="s1",
+                                     body={"side": "buy",
+                                           "asset": {"chain": "solana", "address": "0xabc"},
+                                           "venue": {"kind": "dex"},
+                                           "amount": {"mode": "percent", "value": 5}})
+        ev_ok = {"kind": "signal", "jobId": "", "raw": se.render_deliverable(good_env)}
+        d3, _, _ = process_event(ev_ok, sig_dir, "global", td)
+        check(d3["mode"] == "auto" and d3["signal"]["valid"], "valid strict envelope keeps auto")
+        bad_env = se.build_envelope("trade", "buy XXX", "Agent#12", "svc_9", "tpl",
+                                    signal_id="s2", body={"side": "buy"})
+        ev_bad = {"kind": "signal", "jobId": "", "raw": se.render_deliverable(bad_env)}
+        d4, _, _ = process_event(ev_bad, sig_dir, "global", td)
+        check(d4["mode"] == "ask" and "signal invalid" in d4["decision_src"],
+              "strict invalid envelope downgraded to ask")
+        raw_ev = {"kind": "signal", "jobId": "", "raw": "no envelope plain text"}
+        d5, _, _ = process_event(raw_ev, sig_dir, "global", td)
+        check(d5["mode"] == "ask" and "no envelope" in d5["signal"]["issues"][0],
+              "raw-only signal in strict policy -> ask")
     print("selftest:", "OK" if not fails else f"{len(fails)} FAIL")
     return 0 if not fails else 1
 

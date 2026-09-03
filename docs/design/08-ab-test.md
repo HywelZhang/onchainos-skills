@@ -63,3 +63,26 @@ hermes -z "$(cat .ab/prompt.txt)" --in . --usage-file .ab/usage-<tag>.json --cli
 
 边界: n=1; 环境噪声(网络)存在; 但 7.6× 耗时/3× 调用差远大于单次噪声, 方向可信。复现: 同上 `--usage-file`, 提示词 .ab/probe-prompt.txt。
 
+## 实验 3: 真实付费 A2MCP(MCP 传输)任务（2026-09-03）
+
+任务: 使用 A2MCP 服务「AI饮食运动助手」(ASP 健康生活, MCP 端点 https://mcp.opcshop.xyz/mcp, 0.01 USDT/次, 服务 30754)——MCP 接入 → 付费墙在 tools/call 层 → 402 → x402 exact 付款 → 真实工具调用(健康计划)。两轮同一提示词, 各付款一次。fork 腿在 generate_plan 触发 402; 官方腿在 bmi 触发 402 后 generate_plan 命中服务端免费缓存(cached:true)。
+
+| 指标 | fork 优化 | 官方原生 | Δ |
+|---|---|---|---|
+| 墙钟耗时 | 397.9s | 354.3s | 官方快 12%(噪声, n=1) |
+| input_tokens | 35,820 | 42,639 | 官方 +19% |
+| output_tokens | 11,292 | 15,579 | 官方 +38% |
+| cache_read_tokens | 327,424 | 508,800 | 官方 +55% |
+| api_calls | 10 | 13 | 官方 +30% |
+| 估算成本 | $0.00909 | $0.01176 | fork 省 23% |
+| 业务结果 | BMI+7天计划, 1付(TD 0x3f5c…) | BMI+7天计划, 1付(0xe40cb2…) | 等价 |
+
+定性:
+- fork 在 token/调用/成本全面占优(输入-19%, 输出-38%, 缓存-55%, 调用-30%, 成本-23%); 墙钟本轮官方略快(两轮都 ~6 分钟级, MCP+内容型任务远重于实验 2 的轻量 paywall)。
+- 两轮走的付费动作路径不同(fork: generate_plan 直接付; 官方: bmi 付 + generate_plan 免费缓存)——官方轮因此多拿到一次独立 BMI 分析, 属行为方差, 但成本同(0.01)。
+- 两轮都独立发现同一 ASP 情报: ① 服务端按 default_user 缓存计划, generate_plan 对未付费匿名用户可免费命中(cached:true, 商业逻辑漏洞) ② 个性化仅由 BMI 档案驱动, "久坐/生活方式"自然语言不生效 ③ tools/list 与 intro 永久免费, 可先探后付。
+- CN 网络: 两轮都需 Clash 代理访问 OKX 余额接口(web3.okx.com 超时), 付费主流程直连正常。
+
+边界: n=1; 付费动作路径不一致引入方差; token/成本方向与实验 2 一致(fork 占优), 墙钟不一致(实验 2 fork 快 7.6×, 本实验官方快 12%)→ 墙钟受路径与网络影响大, token/调用/成本更稳定。累计两实验: fork 输入 -16~-24%、成本 -23~-41%。复现: .ab/probe2-prompt.txt。
+
+

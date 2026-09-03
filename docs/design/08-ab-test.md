@@ -40,3 +40,26 @@
 hermes -z "$(cat .ab/prompt.txt)" --in . --usage-file .ab/usage-<tag>.json --cli
 # 指标: usage-*.json + state.db sessions/messages 查询（本会话脚本见会话记录）
 ```
+
+## 实验 2: 真实付费 A2MCP 任务（2026-09-03, 同一轮内对比）
+
+任务: 使用 A2MCP 服务「TradeDesk 指标体验引流」(端 https://api-ai.online/okxai/trial, 0.1 USDT/次, 服务 39830)——GET→402→x402 exact 付款→拿回执。两轮各付款一次(0.1 USDT), fork 腿与官方腿使用同一份提示词。
+
+| 指标 | fork 优化 | 官方原生 | Δ |
+|---|---|---|---|
+| 墙钟耗时 | 37.8s | 285.9s | **7.6× 快** |
+| input_tokens | 24,892 | 30,926 | +24% |
+| output_tokens | 2,550 | 7,637 | 3.0× |
+| cache_read_tokens | 79,744 | 348,544 | 4.4× |
+| api_calls | 4 | 12 | 3.0× |
+| 估算成本 | $0.00442 | $0.00744 | +68% |
+| 业务结果 | 成功(1 付, TD-0C7ACFEE) | 成功(1 付, TD-85D63D03) | 等价 |
+
+定性:
+- fork 路径直: 调用→402→quote→pay→结果, 4 次调用无多余探索; 官方轮多次重读参考文档(缓存 348K vs 80K)、输出 3 倍长(大量错误叙述与过程说明)、含一次网络超时绕代理(web3.okx.com TCP 超时→Clash)与 balanceStatus 检查。
+- 官方轮的网络超时属环境噪声(与 skills 无关), 但正是其"先查余额再走支付"的流程让它撞上; fork 轮直接走支付无此步骤。差异被放大但仍方向一致。
+- 两轮业务等价: 各自 1 次 0.1 USDT 付款, order TD-0C7ACFEE / TD-85D63D03, register_url 相同(https://tradedesk.cn/r/RC7SLE3R)。
+- 费用合计 0.2 USDT(探针即 fork 腿); 余额 ~0.30 USD₮0。
+
+边界: n=1; 环境噪声(网络)存在; 但 7.6× 耗时/3× 调用差远大于单次噪声, 方向可信。复现: 同上 `--usage-file`, 提示词 .ab/probe-prompt.txt。
+

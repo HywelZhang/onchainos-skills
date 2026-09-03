@@ -192,9 +192,29 @@ def complete(job_id, agent_id, dryrun, source_event="job_submitted"):
     print("  [executor] resolve rc=%s %s" % (rr.get("rc"), txt[:200].replace("\n", " ")))
     return rr.get("rc") == 0
 
+def fetch_deliverable_params(job_id):
+    """Late delivery fallback: pull [Received] params from handled history."""
+    r = run(["okx-a2a", "user", "list", "--job-id", job_id, "--include-handled", "--json"],
+            False, timeout=90)
+    if r.get("rc") != 0:
+        return None
+    try:
+        d = json.loads(r.get("out", "") or "{}")
+    except Exception:
+        return None
+    for it in (d.get("items") or []):
+        uc = it.get("userContent") or ""
+        if "[Received]" in uc and "fileKey" in uc:
+            dl = extract_deliverable(uc)
+            if dl.get("fileKey") and dl.get("digest"):
+                print("  [executor] deliverable params recovered from history")
+                return dl
+    return None
+
 # ── main ────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--job-id", help="resume mode: skip publish, drive existing job to completion")
     ap.add_argument("--service-id")
     ap.add_argument("--provider-agent")
     ap.add_argument("--agent-id", help="receiver agentId for file download")
@@ -221,9 +241,15 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
     print("== executor-lite ==")
     elapsed("start")
-    job_id, _ = publish(a, a.dryrun)
+    job_id = a.job_id
     if not a.dryrun:
+        if not job_id:
+            job_id, _ = publish(a, False)
+        else:
+            print(f"  [executor] resume mode: job {job_id}")
         ok, dl = watch_until(job_id, a, False)
+        if not dl:
+            dl = fetch_deliverable_params(job_id)
         path = download(dl, a.agent_id, a.out_dir, False) if dl else None
         verdict, detail = rule_review(path)
         print(f"  [executor] review verdict: {verdict} {detail}")

@@ -1,107 +1,58 @@
 # onchainos-skills fork 优化方案（dev 分支）
 
-> 状态: 草案 v0.1（2026-09-03，待用户确认后定稿）
-> 基线: fork main == upstream main @ 17daea5（2026-09-02 sync）；本地 Hermes skills/CLI = v4.5.2（最新 stable）
-> 目标: 让 OKX.AI / onchainos 任务流程在本地（Hermes + CN 网络 + 中文）更顺畅
-> 非目标: 不做后端/合约层改动；不破坏官方安装渠道兼容性（除非决策点确认放弃）
+> 状态: v1.0（2026-09-03 夜刷新）— P0/P1 完成，P2 进行中
+> 基线: fork main == upstream main @ 17daea5（2026-09-02，本次检查无新 commit；仅 v4.8.x-beta tags，等 stable）
+> 范围（OQ-1）: 只优化 okx.ai 功能域（单次任务 + 订阅任务场景）；不做 wallet/defi/dex-market 流程优化
+> 目标: 让 OKX.AI 任务流程顺畅，最终形态 = 确定性 policy 引擎（事件直触发）替代 LLM 逐步驱动
 
-## 1. 架构速览
+## 1. 已交付（全部在 dev，已推送 origin/dev）
 
-```
-┌─────────────────────────────────────────────────────┐
-│ 宿主层: Hermes / Claude Code / OpenClaw / ...        │  ← 我们在这
-│   - skills/  = markdown 说明书（路由表/gates/模板）    │
-│   - workflows/ = 编排文档（INDEX.md 路由 → 分步文档）  │
-├─────────────────────────────────────────────────────┤
-│ CLI 层: onchainos (Rust, 单一二进制)                  │
-│   - 真实执行: token/wallet/task/agent/defi/payment   │
-│   - gate-check / next-action: 生成 playbook 文本      │
-│     硬编码引用 skills/.../references/*.md 路径        │
-│   - 内嵌 MCP server；内置 doh/ (DNS 解析辅助)         │
-├─────────────────────────────────────────────────────┤
-│ 后端: OKX 黑盒 API + XLayer 链上合约（不可改）         │
-└─────────────────────────────────────────────────────┘
-```
+### P0 — 设计 + 工具（完成）
+- docs/design/01-08: 节点清单(55 事件+审计)、信号 schema、policy 配置、用户旅程、开放问题、watch-host、policy 引擎、A/B 测试记录
+- scripts/: sync-to-hermes(.sh/.ps1)、audit-events.py、watch-host.py、policy-engine.py、install-watch-task.ps1
+- docs/cn-quickstart.md；examples/policy/
 
-体量事实（上下文成本的第一手证据）:
-- skills/*/SKILL.md: payments 36KB, dapp-discovery 28KB, okx-ai 21KB, wallet 10KB, dex-market 7KB, defi 6KB, guide 1.5KB
-- okx-ai references/ 合计 428KB；单文件最大: task-cli-reference 58KB, task-user-playbook 37KB, watch-core 31KB, identity-register 30KB
-- 中文 = 仅 7 个 keyword-glossary（关键词映射），无任何中文模板/规则
+### P1 — 文档层（完成）
+- okx-ai references 4 张 lite 卡（signal 13KB/playbook 29.2KB/watch 21.9KB/register+invariants 合并 36.8KB），零规则丢失
+- labels.zh-CN.md i18n 渲染表；SKILL.md 瘦身 22.8→20.9KB（零规则丢失下限实测 ~20KB，路由 25 行零改动）
+- SKILL.md FORK 标记补丁（lite 默认路由）；英文为主决策（OQ 已答）
 
-## 2. 问题清单
+### P2 — 引擎层（进行中）
+- watch-host: 骨架+端到端+循环稳定性(16min/8 周期)验证通过（06）
+- policy-engine: 校验器+scope 合并+classify+decide，selftest 8/8（07）
+- supervisor 脚本就绪（OQ-12=B），计划任务未实装（需密码/管理员）
 
-| # | 问题 | 证据 | 影响 | 拟定方案 | 层 |
-|---|------|------|------|---------|----|
-| P1 | 单流程上下文超重: 主 SKILL(21KB) + 30KB+ 参考文件/次 | du 数据见上 | 慢、贵、易截断 | 量化基线后瘦身/分层；高频流给 lite 入口 | L1 |
-| P2 | 中文是外挂: 全英文模板 + 语言锁现场翻译 + 禁混语 | okx-ai SKILL.md §Language Lock | 每轮翻译心智 + 出错源 | 中文变体覆盖高频流；CLI Label 中英对照小表 | L1 |
-| P3 | 路由三处漂移: SKILL 表格 / workflows INDEX / CLI playbook 硬编码路径 | pending_v2.rs 输出 watch-core.md 路径 | 文件移动即断链 | 路径稳定性=红线；收敛文档路由到一处 | L1 |
-| P4 | watch/常驻流程在 Hermes 会话难维持: 超时重进/stale-wake/重启恢复全靠 agent 自觉 | watch-core 31KB + wake-scheduling/background-recovery | 漏事件、重进失败 | 宿主封装: watch-host 脚本 + cron/后台保活 | L1+宿主 |
-| P5 | 版本三件套耦合: skill frontmatter ↔ CLI ↔ 服务端(taskMinVersion/version_notice) | preflight --skill-version; version_notice.rs | fork 改 skill 后版本线混乱 | fork 独立版本线(如 4.5.3-zh.1)，记录配套 CLI | 流程 |
-| P6 | 本地安装/同步链路坏: hermes skills install 丢 _shared/；手拷易漏；现装 4.5.2 落后 fork | china-network ref（已验证） | 断链 skill 静默失效 | sync-to-hermes 脚本(整目录 cp + 文件数校验 + 备份) | 工具 |
-| P7 | CN 网络无文档: GitHub raw 不稳、okx 域名污染、每新终端重设代理 | 记忆+setup ref | 安装/升级卡死 | CN 快速上手文档；脚本内 export；验证 CLI 是否遵守 HTTPS_PROXY | L1+工具 |
-| P8 | 配额撞墙无引导: 免费市场数据配额(MARKET_API_*_OVER_QUOTA) | setup ref（实测过） | 流程卡死无下一步 | 错误码→行动项映射文档；可选 dex-market 错误处理补丁 | L1 |
-| P9 | 防呆护栏过重(自用场景): 卡片确认/one-call rule/禁 jq/禁 poll | okx-ai SKILL.md §Gates | 每写操作多 1-2 轮往返 | 产出可放宽清单 vs 不可动清单；自用 lite profile 试点 | L1 |
-| P10 | 事件流每轮注入大段英文 playbook，中文场景还要翻译 | asp/flow.rs 内嵌 KB 级模板 | 高频事件链上下文膨胀 | 待量化后: 模板压缩或 --format 精简；宿主缓存 jobId 上下文 | L2 |
+## 2. A/B 实测结论（docs/design/08）
 
-## 3. 红线与约束（改动前必读）
+| 任务型 | fork vs 官方 (input/cache/调用/成本) | 备注 |
+|---|---|---|
+| HTTP paywall A2MCP | -24%/-77%/-67%/-41% | fork 全面占优, 墙钟快 7.6× |
+| MCP 传输 A2MCP | -19%/-55%/-30%/-23% | fork 占优, 墙钟方差 |
+| A2A 全生命周期 | -11%/+138%/+69%/+68% | n=1 被 run 方差淹没; fork=文档层未含确定性引擎 |
 
-1. skills/**/references/*.md 的相对路径被 CLI playbook/gate 硬编码引用——改名/移动必须同步改 Rust 源码，否则提示断链。默认：只增不改路径。
-2. SKILL.md frontmatter 的 name/description 是 skill 路由与"何时加载"的依据，description 改动会影响所有宿主的选择逻辑——改 description 要全量回归。
-3. 协议/资金/评审员/争议/订阅信号相关规则不改（对外履约与链上状态机耦合）。
-4. _shared/ 目录必须整目录随 skill 安装（本地同步脚本强制校验文件数）。
-5. 上游 sync 策略: main 分支只吃 upstream merge；改动全部走独立分支合入 dev；与上游同名文件的冲突要小步解、带 diff 记录。
-6. 所有改动可回滚: commit 粒度小 + 本地 Hermes skills 同步前先备份。
+结论: fork 文档层优势在有界确定性流程(实测); A2A 的预期优势在"确定性执行"(policy 引擎)而非文档——引擎未接线前 A2A 对比无意义。
 
-## 4. 分阶段路线图
+## 3. 待办（剩余优化项）
 
-### P0 — 基线与工具（0.5~1 天，零产品逻辑改动）
-- [x] 设计文档五件（docs/design/ 01-04 + docs/optimization-plan.md）: 节点清单(含 55 事件全名单+使用审计)、信号 schema、policy 配置、用户旅程
-- [x] sync-to-hermes 脚本（scripts/sync-to-hermes.sh + .ps1）: 整目录 cp + 文件数校验 + 备份(备份目录在 skills 根之外)；注意: git-bash 下 LOCALAPPDATA 反斜杠会破坏 compgen，已用 ${VAR//\\//} 归一化 + find 探测修复
-- [x] CN 快速上手文档（docs/cn-quickstart.md）: 代理 env、安装/升级、同步、配额
-- [x] scripts/audit-events.py: 事件使用审计工具(上游 sync 后重跑)，结果 54 变体: 36 active / 18 rust-only / 0 dead
-- [x] 本地切换: Hermes skills 4.5.2 → fork 4.5.3 产物（diff 校验 IDENTICAL）；原 4.5.2 可随时从官方 v4.5.2 tag 恢复
-- [x] 行为验证: ① preflight 4.5.3 skill + 4.5.2 CLI → action:null（版本配对宽容, 领先一个 patch 无碍）② 无代理 preflight 通过 → CLI 内置 DoH, API 流量免代理（代理只用于安装/更新/网页）③ preflight 会在后台清理官方废弃 skill（okx-how-to-play/okx-ai-guide/okx-x402-payment 等名单已捕获）
-- [~] 量化基线: 静态完成(单流程文档加载 47-104KB vs 优化后 1-2KB; 回合数见 04)；实时耗时需钱包登录会话, 待有登录态时补测
+### 核心（产品价值所在）
+- [ ] executor-lite: 确定性买家驱动(01 buyer 节点直连 CLI, LLM 只在需求理解+内容评判缝) —— 含幂等/journal/竞态处理
+- [ ] policy 引擎接 watch-host 事件流(事件 JSONL → decide → 动作), 形成闭环
+- [ ] hook 运行时: 执行 03 配置的 pre/post(白名单脚本, veto 语义)
+- [ ] 信号信封实现(02): ASP 模板生成器 + buyer strict/loose 解析
+- [ ] executor-lite vs 官方 LLM A/B(A2A 用户侧全自动验证, 需 ~0.2 USDT escrow, 待确认)
 
-### P1 — 文档层优化（L1，方向修订: 主体保持英文 + 精简/分层 + i18n 渲染层，不做全文中文变体）
-- [x] 决策: skill 主体保持英文（指令精度/多模型鲁棒/sync 零冲突）；中文只用于 keyword 触发、示例、用户可见文案 i18n
-- [x] 试点流(订阅信号处理): task-subscription-signal.lite.md 协议卡(13KB, 原 25.7KB, 硬规则零丢失: 非可信输入边界/流程/终态/桥/consent/排队续跑) + labels.zh-CN.md 渲染表 + SKILL.md 挂载(lite 默认, 歧义升全量)
-- [x] 其余高频流同法精简(委派 3 并行子任务, 均零规则丢失审计):
-  - identity-register.lite.md 36.8KB(合并 register+invariants 两文件 56.1KB→单次加载, 省 34.5%; 卡骨架/#id ladder/词表/A2MCP·A2A 规则/不可信字段全部保留)
-  - task-user-playbook.lite.md 29.2KB(原 37KB, 省 21%; 18 个 §锚点原样保留, SKILL 路由 §链接不受影响)
-  - watch-core.lite.md 21.9KB(原 31.2KB, 省 30%; wake prompt/时序守卫/6 条反模式/停止条件全保留)
-  - 经验: 规则密集型文档精简到 55% 会丢规则——实际 65-79%, 保规则优先; 合并多文件单次加载是更有效的省法
-- [x] labels.zh-CN.md 扩展: §8 身份域 + §9 订阅管理/设备域
-- [x] okx-ai 主 SKILL 瘦身（委派, 2026-09-03）: 22.8KB → 20.9KB(-8.4%)；子任务实测证明 ≤14KB 在零规则丢失下不可达(frontmatter 原文+引用链接+代码字面量底线 ~17-18KB)；路由表 25 行零措辞改动、Gates 8 条/UX 5 条/全部标题与 FORK 标记经抽查完整。结论: SKILL.md 是每会话加载一次的枢纽(固定 ~6K tokens/会话)，真正的每事件杠杆在 references——已由 lite 路由完成；SKILL 进一步瘦身 ROI 低，除非未来把 Gates 明细下沉 references(记录为可选)
-- [ ] 防呆护栏可放宽项试点（自用 lite profile，不动协议规则）
-- 验收: 对照 P0 基线，所选流程「加载 KB / 往返次数 / 出错率」下降，中文输出零混语
+### 验证/运维
+- [ ] 真实订阅信号端到端(需活跃订阅; 同批补 OQ-10 实时基线)
+- [ ] watch-host ≥24h 长跑; supervisor 计划任务实装
+- [ ] 上游 sync 流程实战(upstream main 未动, 暂无需; 发 stable 后: merge+FORK 冲突解+audit-events 重跑)
+- [ ] CN 代理 fallback 小工具(web3.okx.com 间歇超时, 三次实验均撞到)
+- [ ] A2A n≥3 带约束复测(若要对 A2A 定论)
 
-### P2 — 宿主与 CLI 层（按需，L1+L2）
-- [x] watch-host 骨架（docs/design/06-watch-host.md + scripts/watch-host.py）: 包装 okx-a2a CLI（OQ-3 结论: a2a-node 闭源不可改，包装不改造）；停止条件/中间态/去重按 watch-core 规则编码；离线自测 8/8 PASS；OQ-4: 通知=console
-- [x] watch-host 真机端到端（2026-09-03）: okx-a2a 0.2.10 doctor ready（daemon running, 2 agents, email login）；watch-host --once 收到真实事件并归一化落盘
-- [x] supervisor 落地（OQ-12=B cron 心跳）: scripts/install-watch-task.ps1（计划任务每 N 分钟 --once）；会话级可循环进程
-- [x] policy 引擎骨架（docs/design/07 + scripts/policy-engine.py）: 03 schema 校验器 + scope 合并 + classify + decide（events.<wire> > nodes.<id> > * > ask, fail-safe 降级）；selftest 8/8 PASS + 示例配置 examples/policy/
-- [ ] policy 引擎接 watch-host 事件流 + 真实订阅信号（待活跃订阅 + 长跑同批）
-- [ ] 执行桥接入（consent/grants/journal，后续按 02/03 设计实现）
-- [ ] 任务高频链: next-action 模板压缩评估 / 宿主缓存 jobId 上下文
-- [ ] MCP 通道评估: 类型化工具 vs 读 md 敲 CLI 的收益实测
-- 验收: watch 连续 24h 无漏事件；高频链 token 减半（实测）
+### 待确认项（详见 docs/design/05, 统一答复）
+- OQ-8 evaluator v1 范围; OQ-11 labels 扩散
+- 防呆护栏放宽试点(P1 遗留; 产品化方向建议保守保留)
+- Rust 工具链安装(L2 开工前置, ~1-2GB)
+- executor-lite 真实 escrow 测试预算(0.1×N USDT/轮)
 
-## 5. 开放决策点（请 1~6 作答）
-
-1. 常用场景排序（决定 P0/P1 先做谁）: a) OKX.AI 身份/任务市场（发任务/接单/评审） b) watch/订阅信号 c) 链上只读研究(dex-market) d) wallet/swap/defi
-2. 中文版策略: A) 新增 zh 变体文件（保住上游 sync，推荐） B) 直接改上游同名文件为中文（sync 每轮手动解冲突） C) 先只做对照小表+文档
-3. 是否必须保持官方渠道可安装（npx skills / claude plugin / marketplace）？若只 Hermes 自用，结构自由度更大
-4. L2(Rust) 可接受度: 0) 不碰 Rust 1) 只加脚本级工具 2) 可改 Rust（需本机 Rust 工具链）
-5. 是否申请 OKX API key（https://web3.okx.com/onchain-os/dev-portal）？影响 P8 优先级
-6. watch/常驻需求: 需要 Hermes cron/后台保活实现吗？
-
-## 6. 附录: 常用验证命令
-
-```
-onchainos --version                        # CLI 版本
-onchainos preflight --skill-version 4.5.3  # preflight 门（data.action=null 为通过）
-diff -rq <hermes skills>/okx <fork>/skills # 同步完整性
-find skills/okx-ai/references -type f | wc -l   # 文件数校验
-git fetch upstream && git merge upstream/main    # 上游同步
-```
+## 4. 红线（不变）
+references 路径稳定 / frontmatter description 不动 / 协议·资金·争议规则不改 / _shared 整目录同步 / main 只吃上游 / 小步提交可回滚

@@ -96,3 +96,4 @@ state/
 
 # A/B test artifacts
 .ab/
+scripts/__pycache__/

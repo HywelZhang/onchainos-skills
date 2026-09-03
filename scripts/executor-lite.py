@@ -231,10 +231,15 @@ def main():
     a = ap.parse_args()
     if a.selftest:
         sys.exit(selftest())
-    for req in ("service_id", "provider_agent", "agent_id", "description"):
-        if not getattr(a, req):
-            print(f"missing required: --{req.replace('_', '-')}")
+    if a.job_id:
+        if not a.agent_id:
+            print("resume mode requires --agent-id")
             sys.exit(2)
+    else:
+        for req in ("service_id", "provider_agent", "agent_id", "description"):
+            if not getattr(a, req):
+                print(f"missing required: --{req.replace('_', '-')}")
+                sys.exit(2)
     if not a.live and not a.dryrun:
         print("safety: pass --dryrun to preview or --live to actually run (money/chain).")
         sys.exit(2)

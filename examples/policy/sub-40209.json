@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "scope": "sub-40209",
+  "signal": { "parseMode": "loose" },
+  "nodes": {
+    "buyer.sub.signal_received": { "mode": "notify", "reason": "监测分析类信号(资金费率/基差/价差), 无资金动作, console 通知即可; 无 02 信封(parseMode loose)" },
+    "buyer.sub.decide": { "mode": "ask", "reason": "订阅期决策(拒收/续费)需人工" }
+  },
+  "events": { "*": { "mode": "notify" } },
+  "notes": "ASP Janus Research & Audit『Cross-Market Basis Monitor』(serviceId e23ed744-f7d8-427e-9d2a-f0c2d107dbd2, 5 USDT/月, 72h 试用, sid 40209)。买家订阅链路真机验证用: 成本低(钱包余额 6.95 够)、无资金动作风险低。"
+}

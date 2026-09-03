@@ -24,7 +24,7 @@ docs/design/01-09（节点清单/信号 schema/policy 配置/用户旅程/开放
 - [x] 信号内容分流: policy-engine 新 kind signal_order/signal_analysis + decision-loop contentTags 确定性打标(0 LLM); examples/policy/sub-36563.json 真 ASP 模板(analysis→notify 不打扰 / order→ask 资金确认 / 未知→ask 兜底)
 - [x] scripts/sub-sim.py 离线场景模拟 7/7 PASS(同管线可回放录制事件做校准 OQ-10)
 - [x] docs/design/10-buyer-subscription.md 一阶段手册(订阅日常命令表+分流设计+风险)
-- [ ] 真机上链订阅(72h 试用) → watch 捕获真实 analysis/order → 分流正确性校准（OQ-14, 需确认）
+- [x] 真机上链订阅(2026-09-03, ASP 3895 Janus Cross-Market Basis Monitor, 5 USDT/月 72h 试用, autoRenew=0, jobId 0x44673735…, 状态 ACTIVE, 本机接收开) → 待首条真实投递校准分流（OQ-14 已执行-低成本路线）
 
 ### 未做（如实）
 - ASP 侧执行器（09 设计已定，需 ASP 身份真机采样，见 OQ-13）

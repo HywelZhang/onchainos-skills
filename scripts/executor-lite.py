@@ -207,7 +207,15 @@ def selftest():
     check(dl["fileKey"] == "abc123" and dl["digest"] == "deadbeef", "deliverable params extracted")
     # review heuristics
     import tempfile, os
-    good = "周一 清蒸鲈鱼 蛋白质 35g 热量 380kcal\n周二 鸡胸肉炒时蔬 蛋白质 40g 热量 360kcal\n周三 番茄豆腐鱼片汤\n周四 虾仁蒸蛋\n周五 香煎三文鱼\n周六 牛肉炒芹菜\n周日 白灼虾\n建议: 少油少糖"
+    good = ("周一 晚餐: 清蒸鲈鱼150g + 糙米饭100g + 蒜蓉西兰花200g, 蛋白质约38g, 热量约380kcal\n"
+            "周二 晚餐: 鸡胸肉炒时蔬200g + 玉米半根, 蛋白质约42g, 热量约360kcal\n"
+            "周三 晚餐: 番茄豆腐鱼片汤 + 全麦馒头半个, 蛋白质约35g, 热量约350kcal\n"
+            "周四 晚餐: 虾仁蒸蛋 + 凉拌黄瓜 + 杂粮饭80g, 蛋白质约36g, 热量约370kcal\n"
+            "周五 晚餐: 香煎三文鱼120g + 烤蔬菜, 蛋白质约34g, 热量约400kcal\n"
+            "周六 晚餐: 牛肉炒芹菜 + 紫薯一个, 蛋白质约40g, 热量约390kcal\n"
+            "周日 晚餐: 白灼虾200g + 青菜豆腐汤 + 少量荞麦面, 蛋白质约45g, 热量约420kcal\n"
+            "做法均以蒸煮炖为主, 每餐用油不超过5ml, 全天控糖。\n"
+            "减脂期饮食建议: 1) 每餐先吃蔬菜再吃蛋白质最后主食; 2) 每天饮水2000ml以上; 3) 晚餐尽量在睡前3小时完成。")
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(good); p = f.name
     v, _ = rule_review(p)

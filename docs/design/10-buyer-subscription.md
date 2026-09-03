@@ -34,7 +34,9 @@ ASP 8136 真实信号两类:
 
 - [x] 离线: sub-sim 7 场景 7/7（analysis 静默/order ask/未知 ask/信封门/决策 ask/通知 notify）
 - [x] 组件: policy-engine(新 kind 支持+contentTags 校验)、decision-loop 打标、watch-host 已实装
-- [ ] 真实流: 订阅 36563 后 watch 捕获真实 analysis/order → 确认分流正确性（OQ-14 待批: 72h 免费试用, auto-renew 关闭, 试用结束自动停, 0 额外成本）
+- [x] **真机首链验证(2026-09-03)**: 试用订阅 ASP 3895 Janus Cross-Market Basis Monitor(5 USDT/月, 72h, jobId 0x44673735…, ACTIVE) → 首份自动监测投递(BTC/ETH 资金费率表) → watch 捕获归一化 → decision-loop sub-40209 裁决 → notify。真实投递原为 task_event, 已加 sub 作用域 [Received]→signal 归一化, 现走 nodes.buyer.sub.signal_received 显式路径 ✓
+- [x] 试用到期保护: cron 一次性任务 2026-09-06 18:05(CST) subscribe-cancel(防 11:07 UTC 自动扣费转付费; deliver=local, 结果可在 cronjob list 查)
+- [ ] 周期级事件校准: 拒收(subscribe-reject)/续费决策等 sub 域事件待周期出现后补验（QO-10 记录）
 
 ## 4. 风险与边界（如实）
 

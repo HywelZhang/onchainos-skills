@@ -79,6 +79,12 @@ def content_tag(ev, merged):
 
 def process_event(ev, policy_dir, scope, base_dir):
     merged, srcs = pe.load_chain(policy_dir, scope)
+    # live subscription deliveries arrive as task_event w/ [Received] payload;
+    # under a sub-* scope they ARE signals (02) -> normalize so envelope/contentTags apply
+    if scope.startswith("sub-") and ev.get("kind") == "task_event":
+        raw = ev.get("raw", "") or ""
+        if "[Received]" in raw and "Job:" in raw:
+            ev = dict(ev, kind="signal")
     sig = signal_check(ev, merged)
     ev2 = content_tag(ev, merged)
     d = pe.decide(ev2, merged, base_dir)

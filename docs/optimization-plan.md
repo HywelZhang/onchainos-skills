@@ -35,11 +35,12 @@
 ## 3. 待办（剩余优化项）
 
 ### 核心（产品价值所在）
-- [ ] executor-lite: 确定性买家驱动(01 buyer 节点直连 CLI, LLM 只在需求理解+内容评判缝) —— 含幂等/journal/竞态处理
-- [ ] policy 引擎接 watch-host 事件流(事件 JSONL → decide → 动作), 形成闭环
-- [ ] hook 运行时: 执行 03 配置的 pre/post(白名单脚本, veto 语义)
+- [x] executor-lite: 确定性买家驱动（scripts/executor-lite.py: publish/watch/download/rule-review/complete，直连官方 CLI 无 LLM；--dryrun/--live 闸门 + selftest PASS）
+- [x] 最小闭环接线（scripts/decision-loop.py）: watch 事件(JSONL/stdin) → policy decide → hook 运行时(pre veto→fallback/post observer, 白名单+扩展名解析) → console 通知；selftest 3/3
+- [ ] executor-lite 真机 --live 验证（0.1×N USDT escrow, 待确认预算）
 - [ ] 信号信封实现(02): ASP 模板生成器 + buyer strict/loose 解析
-- [ ] executor-lite vs 官方 LLM A/B(A2A 用户侧全自动验证, 需 ~0.2 USDT escrow, 待确认)
+- [ ] 闭环接真实订阅事件流（需活跃订阅; 同批补 OQ-10 实时基线）
+- [ ] executor-lite vs 官方 LLM A/B（A2A 用户侧全自动验证, 待确认）
 
 ### 验证/运维
 - [ ] 真实订阅信号端到端(需活跃订阅; 同批补 OQ-10 实时基线)

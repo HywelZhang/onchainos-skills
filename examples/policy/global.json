@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "scope": "global",
+  "signal": { "parseMode": "notify", "defaultWhenNoRule": "notify" },
+  "events": { "*": { "mode": "ask" } },
+  "notes": "global defaults: unknown events always ask (safety). Copy per role/sub and override."
+}

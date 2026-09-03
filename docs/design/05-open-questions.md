@@ -40,5 +40,5 @@ GCM 2.9.1 + 浏览器授权完成；dev 与 origin/dev 同步。
 ### OQ-11 中文 labels 覆盖范围
 labels.zh-CN.md 挂在 okx-ai/references/。OQ-1 收窄后其它 skill 大概率不做。
 
-### OQ-12 watch-host supervisor 选型（OQ-3 衍生）
-watch-host 常驻方式: A) Hermes 后台进程 B) cron 心跳(--once 每 N 秒, 推荐 v1: 最简单可控) C) Windows 计划任务/服务。
+### OQ-12 watch-host supervisor 选型 — [已答 2026-09-03: B]
+cron 心跳: Windows 计划任务每 N 分钟跑 `watch-host.py --once`（scripts/install-watch-task.ps1）；会话级可用循环进程 `python scripts/watch-host.py`。事件延迟 ≤ 间隔；决策及时性要求高时间隔可 1 min。

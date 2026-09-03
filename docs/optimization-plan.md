@@ -78,9 +78,11 @@
 
 ### P2 — 宿主与 CLI 层（按需，L1+L2）
 - [x] watch-host 骨架（docs/design/06-watch-host.md + scripts/watch-host.py）: 包装 okx-a2a CLI（OQ-3 结论: a2a-node 闭源不可改，包装不改造）；停止条件/中间态/去重按 watch-core 规则编码；离线自测 8/8 PASS；OQ-4: 通知=console
-- [ ] watch-host 真机验证: 需 okx-a2a 安装(npm i -g @okxweb3/a2a-node) + 邮箱/钱包登录态 + 活跃订阅事件流
-- [ ] supervisor 选型（OQ-12: 建议 cron 心跳 --once）
-- [ ] policy 引擎: 事件队列 → events.<wire>/nodes.<id> 决策(03 schema) + 执行桥接入
+- [x] watch-host 真机端到端（2026-09-03）: okx-a2a 0.2.10 doctor ready（daemon running, 2 agents, email login）；watch-host --once 收到真实事件并归一化落盘
+- [x] supervisor 落地（OQ-12=B cron 心跳）: scripts/install-watch-task.ps1（计划任务每 N 分钟 --once）；会话级可循环进程
+- [x] policy 引擎骨架（docs/design/07 + scripts/policy-engine.py）: 03 schema 校验器 + scope 合并 + classify + decide（events.<wire> > nodes.<id> > * > ask, fail-safe 降级）；selftest 8/8 PASS + 示例配置 examples/policy/
+- [ ] policy 引擎接 watch-host 事件流 + 真实订阅信号（待活跃订阅 + 长跑同批）
+- [ ] 执行桥接入（consent/grants/journal，后续按 02/03 设计实现）
 - [ ] 任务高频链: next-action 模板压缩评估 / 宿主缓存 jobId 上下文
 - [ ] MCP 通道评估: 类型化工具 vs 读 md 敲 CLI 的收益实测
 - 验收: watch 连续 24h 无漏事件；高频链 token 减半（实测）

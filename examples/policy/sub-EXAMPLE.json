@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "scope": "sub-EXAMPLE",
+  "signal": { "parseMode": "strict", "trustAsps": ["Agent#12"], "defaultWhenNoRule": "notify" },
+  "limits": {
+    "venueGrants": { "dex": { "maxBuy": "200 USDC", "maxSell": "200 USDC" } },
+    "dailyCap": "1000 USDT",
+    "requireConsentSnapshot": true
+  },
+  "nodes": {
+    "buyer.sub.decide": { "mode": "auto", "confirm": "once" },
+    "buyer.sub.signal_received": { "mode": "direct" }
+  },
+  "hooks": {
+    "buyer.sub.signal_received": { "post": ["scripts/audit-log.py"] },
+    "buyer.sub.pre_execute": { "pre": ["scripts/check-drawdown.py"] }
+  },
+  "notes": "03 §5.1: trusted strict ASP + copy-trade auto execution (auto needs limits; engine fail-safes to ask if limits missing)."
+}

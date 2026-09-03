@@ -71,7 +71,14 @@ console 通知(现) / telegram 等(未来适配器)
 - 已知限制: Hermes plugin 安装需 bash/WSL（Windows 不支持）——watch-host 不依赖该 plugin，无影响
 - autostart 未装（可选，需管理员终端 `okx-a2a daemon autostart install`；现在需要时 `okx-a2a daemon start`）
 
-## 8. 待办（下一阶段）
+## 8. supervisor 落地（2026-09-03, OQ-12=B: cron 心跳）
+
+- 首选: 循环进程（前台/会话级）`python scripts/watch-host.py` —— 最简单，事件延迟 ≈ 0
+- 持久化: `scripts/install-watch-task.ps1` 注册 Windows 计划任务（默认每 5 分钟跑一次 `--once`，日志 %LOCALAPPDATA%\okx-watch-host\watch.log）。schtasks 当前用户创建可能要求密码或管理员终端——失败时用管理员 PowerShell 重跑
+- 心跳模式事件延迟 ≤ 间隔(默认 5 min)；对 decision_request 的及时性要求高时可缩短到 1 min
+- 长跑验证目标: ≥24h 无漏事件（需活跃订阅/任务流）
+
+## 9. 待办（下一阶段）
 
 - supervisor 方案: Hermes 后台进程 / 系统服务 / cron 心跳(`--once` 每 N 秒)选型（OQ-3 后续）
 - decision_request 的 ask 呈现: console 卡 + 回执通道（先 console 打印，人工在 CLI 会话回复）

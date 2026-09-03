@@ -90,3 +90,6 @@ skills/okx-agent-task-workspace/
 .codegraph/
 
 .agents/skills/onchainos-skills
+
+# local watch/policy dev state
+state/

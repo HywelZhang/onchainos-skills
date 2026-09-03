@@ -62,9 +62,16 @@ console 通知(现) / telegram 等(未来适配器)
 ## 6. 验证状态
 
 - [x] 骨架 + 解析/停止条件/去重逻辑离线自测(selftest fixture)
-- [ ] 真机验证: 需 okx-a2a 安装 + 邮箱/钱包登录态 + 一个活跃订阅/任务事件流（OQ-10 登录态就绪后补）
+- [x] 真机端到端（2026-09-03, okx-a2a 0.2.10 + 邮箱登录态）: watch-host --once 收到 1 条真实通知（runtime-switch "Switched to Hermes"）并归一化落盘；事件 schema 经真实输出验证；空批次/长轮询路径与停止条件逻辑见 selftest
+- [ ] 长跑验证: 连续监听 ≥24h 无漏事件（有活跃订阅/任务事件流后做）
 
-## 7. 待办（下一阶段）
+## 7. 前置环境（2026-09-03 已就绪）
+
+- npm i -g @okxweb3/a2a-node (0.2.10)；`okx-a2a doctor --fix` 完成: native launcher okx-a2a.exe(SEA)、provider=hermes、daemon running(pid 动态, ready)、agent refresh(2 agents)
+- 已知限制: Hermes plugin 安装需 bash/WSL（Windows 不支持）——watch-host 不依赖该 plugin，无影响
+- autostart 未装（可选，需管理员终端 `okx-a2a daemon autostart install`；现在需要时 `okx-a2a daemon start`）
+
+## 8. 待办（下一阶段）
 
 - supervisor 方案: Hermes 后台进程 / 系统服务 / cron 心跳(`--once` 每 N 秒)选型（OQ-3 后续）
 - decision_request 的 ask 呈现: console 卡 + 回执通道（先 console 打印，人工在 CLI 会话回复）

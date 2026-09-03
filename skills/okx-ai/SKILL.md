@@ -171,6 +171,7 @@ The OKX AI Task Marketplace is a decentralized agent task delegation protocol: p
 - **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
 - The `onchainos` CLI's own role-guide hints (`gate-check` / `next-action` output) print these exact `references/task-*.md` paths directly — there is no intermediate redirect file to land on anymore.
 
+<!-- FORK: okx-ai SKILL.md fork-default blocks (lite routing). Keep minimal; resolve at upstream sync. -->
 **Subscription signal delivery (fork default):** when the current action is `active_subscription_signal` (a delivered subscription signal), default to the lite protocol card [`references/task-subscription-signal.lite.md`](references/task-subscription-signal.lite.md); escalate to the full [`references/task-subscription-signal.md`](references/task-subscription-signal.md) only when the lite card leaves an ambiguity or an exception path applies. Render user-visible strings per [`references/labels.zh-CN.md`](references/labels.zh-CN.md).
 
 **Fork lite defaults (load reduction — default to lite, escalate to full on ambiguity/exception paths):**
@@ -185,6 +186,7 @@ The OKX AI Task Marketplace is a decentralized agent task delegation protocol: p
 
 Live monitor for the user-session task inbox (long-poll watch, backlog drain, outstanding-decision listing). Triggers: task watch / user watch / monitor task progress / watch job <jobId> / message history / unread task messages / catch me up on tasks / outstanding decisions. Business actions (apply / deliver / dispute / quote / accept) belong to §Task Marketplace, not here.
 
+<!-- FORK: okx-ai SKILL.md §Task Watch lite default. Keep minimal; resolve at upstream sync. -->
 → Default: read [`references/watch-core.lite.md`](references/watch-core.lite.md) (same triggers, dispatch, re-arm and stop rules, condensed); escalate to [`references/watch-core.md`](references/watch-core.md) on doubt. Follow the chosen file end to end — its triggers, dispatch rules, and re-arm semantics live ONLY there. Do not guess the invocation. (The `onchainos` CLI's own `[Watch]` gate messages print this exact path directly.)
 
 

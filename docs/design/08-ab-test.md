@@ -146,8 +146,9 @@ hermes -z "$(cat .ab/prompt.txt)" --in . --usage-file .ab/usage-<tag>.json --cli
 | run1 0xd0b4…61f | 减脂食谱 | 文件 recipe.md | 完成(评审门) | 0 | ~10 | 下载正则 bug → 手工补 recipe 后走评审流; 修复 |
 | run2 0x4753…03b | 减脂食谱 | 文件 | 完成(全自动) | 0 | ~10 | 规则词汇误判 → 校准; 全链路 0 介入 |
 | run3 0x1e01…bcb3 | 减脂食谱 | **text 内联** | 完成(评审门) | 0 | ~12 | 新发现: text 型交付无 fileKey; 交付晚于 300s watch 窗; 补 resume --job-id + 历史补抓 + text 提取后闭环 |
+| run4 0x3bc168…ddf4 | 一周减脂晚餐完整食谱 | 文件 .md (845B) | 完成(全自动) | 0 | ~11 | 发布6.7s→交付115s→规则三项 PASS→next-action 门→resolve A→completed; **零人工介入**; ASP 侧对长文规格选文件型交付 |
 
-- 确定性侧三属性: 生命周期 0 LLM token、每轮 ~10-12 次确定性 CLI 调用、失败模式全部可复现可修复(下载正则/text 型/resume)。
-- 对比官方 LLM 腿(A2A n=3 中位): input 59.6K + cache 1.59M token、33 API 调用、$0.0171/轮、成功率 2/3 → executor: 0 token / 0 LLM 成本 / ~10 CLI 调用 / 3/3 完成。
-- 墙钟: executor 主导因素=ASP 交付延迟+watch 窗(固定轮询), 非 LLM 推理; run3 端到端 ~15min 中 5min 是 watch 超时等待, 交付到达后 resume 收尾 <3min。
-- 结论: 用户侧机械节点全自动(0 LLM)成立且可扩展到 text 交付; ASP 交付延迟是唯一可变因素 → 产品上由订阅周期/通知驱动, 无需轮询(06 watch-host 已覆盖)。executor 确定性驱动 = 官方 LLM 路径成本的 ~0 倍、可靠性更高; 差异数量级在"架构选择"(LLM 路由 vs 程序路由), 与文档层优化正交叠加。
+- 确定性侧四属性: 生命周期 0 LLM token、每轮 ~10-12 次确定性 CLI 调用、失败模式全部可复现可修复(下载正则/text 型/resume)、n=4 全部完成(3 全自动 + run3 在能力补齐后由同类代码路径可复现)。text 型自动路径: run3 实证 + selftest 覆盖(提取/落盘/评审/历史补抓)。
+- 对比官方 LLM 腿(A2A n=3 中位): input 59.6K + cache 1.59M token、33 API 调用、$0.0171/轮、成功率 2/3 → executor: 0 token / 0 LLM 成本 / ~10 CLI 调用 / 4/4 完成。
+- 墙钟: executor 主导因素=ASP 交付延迟+watch 窗(固定轮询), 非 LLM 推理; run4 发布6.7s+交付115s+评审门收尾 → 端到端 ~2-3min 全自动; run3 端到端 ~15min 中 5min 是 watch 超时等待, 交付到达后 resume 收尾 <3min。
+- 结论: 用户侧机械节点全自动(0 LLM)成立且覆盖 file+text 两类交付; ASP 交付延迟是唯一可变因素 → 产品上由订阅周期/通知驱动, 无需轮询(06 watch-host 已覆盖)。executor 确定性驱动 = 官方 LLM 路径成本的 ~0 倍、可靠性更高; 差异数量级在"架构选择"(LLM 路由 vs 程序路由), 与文档层优化正交叠加。

@@ -78,9 +78,9 @@ def notify_console(ev: dict):
            (f" terminal={ev['markers']}" if ev["terminal"] else "")
     print(line, flush=True)
 
-def parse_batch(stdout: str):
+def parse_batch(stdout):
     """okx-a2a watch stdout → list of payloads. Tolerant of list / {data:...} / text."""
-    out = stdout.strip()
+    out = (stdout or "").strip()
     if not out:
         return []
     try:
@@ -99,15 +99,36 @@ def parse_batch(stdout: str):
         return [d]
     return [out]
 
+def resolve_a2a(exe):
+    """Find the okx-a2a binary. Scheduled-task PATH may miss npm global dir."""
+    import shutil
+    found = shutil.which(exe)
+    if found:
+        return found
+    for cand in (os.path.expandvars(r"%APPDATA%\npm\okx-a2a.exe"),
+                 os.path.expanduser("~/.local/bin/okx-a2a"),
+                 os.path.expanduser("~/AppData/Roaming/npm/okx-a2a.exe")):
+        if os.path.exists(cand):
+            return cand
+    return None
+
 def run_once(args, store: EventStore) -> int:
-    cmd = [args.cmd, "user", "watch", "--json"]
+    binary = resolve_a2a(args.cmd)
+    if not binary:
+        print(f"[{now()}] okx-a2a not found (PATH issue in this environment) -> exit 2", flush=True)
+        return 2
+    cmd = [binary, "user", "watch", "--json"]
     if args.job_id:
         cmd += ["--job-id", args.job_id]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout,
+                           encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         print(f"[{now()}] watch long-poll timeout (no events) → re-enter", flush=True)
         return 0
+    except FileNotFoundError as e:
+        print(f"[{now()}] cannot spawn {binary}: {e}", flush=True)
+        return 1
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "")[:500]
         print(f"[{now()}] watch error rc={r.returncode}: {err}", flush=True)
@@ -131,6 +152,11 @@ def run_once(args, store: EventStore) -> int:
     return 0  # otherwise: re-enter (loop)
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--job-id", default=None)

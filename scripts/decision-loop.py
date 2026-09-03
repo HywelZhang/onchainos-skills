@@ -39,7 +39,7 @@ def run_hook(cmd, env, base_dir):
     argv += rest
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=30,
-                           env={**os.environ, **env})
+                           env={**os.environ, **env}, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             return False, True, (r.stderr or r.stdout or "").strip()[:300]
         return True, False, (r.stdout or "").strip()[:200]
@@ -81,6 +81,11 @@ def consume(events, policy_dir, scope, base_dir, out):
     return out
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--event-dir", help="watch-host events dir (JSONL, tail new)")
     ap.add_argument("--stdin", action="store_true", help="read one event JSON from stdin")

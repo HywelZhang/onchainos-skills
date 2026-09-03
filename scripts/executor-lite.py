@@ -26,8 +26,9 @@ def run(cmd, dryrun=False, timeout=120):
     if dryrun:
         print("  DRYRUN>", " ".join(cmd)); return {"dryrun": True}
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return {"rc": r.returncode, "out": r.stdout, "err": r.stderr}
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
+        return {"rc": r.returncode, "out": r.stdout or "", "err": r.stderr or ""}
     except subprocess.TimeoutExpired:
         return {"rc": -1, "out": "", "err": "timeout"}
 

@@ -93,3 +93,6 @@ skills/okx-agent-task-workspace/
 
 # local watch/policy dev state
 state/
+
+# A/B test artifacts
+.ab/

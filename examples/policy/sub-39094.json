@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "scope": "sub-39094",
+  "signal": { "parseMode": "loose" },
+  "nodes": {
+    "buyer.sub.signal_received": {
+      "mode": "notify",
+      "reason": "Meme 现货 BUY 信号采集(约10s扫描/机会驱动)。无自动跟单授权 & 无 BNB/OKB 资金 → 默认只 notify 记录; 要跟单=人工决策(自动执行红线不变)"
+    },
+    "buyer.sub.decide": { "mode": "ask" }
+  },
+  "events": { "*": { "mode": "notify" } },
+  "notes": "ASP 10724『Meme Signal Trader』Meme Signal Auto Trader (serviceId 5f9989f1-78c1-44fa-a4f2-2e4db5af494d, 1 USDT/月, 72h 试用, sid 39094)。真实订阅数据采集源: 高密度信号(10s 扫描)用于分流/归一化校准与流量统计。"
+}

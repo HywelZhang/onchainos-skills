@@ -63,6 +63,7 @@ console 通知(现) / telegram 等(未来适配器)
 
 - [x] 骨架 + 解析/停止条件/去重逻辑离线自测(selftest fixture)
 - [x] 真机端到端（2026-09-03, okx-a2a 0.2.10 + 邮箱登录态）: watch-host --once 收到 1 条真实通知（runtime-switch "Switched to Hermes"）并归一化落盘；事件 schema 经真实输出验证；空批次/长轮询路径与停止条件逻辑见 selftest
+- [x] 循环稳定性（2026-09-03）: 循环进程连续 ~16min / 8 个长轮询周期对真实 daemon 无崩溃、每周期干净重进（"watch long-poll timeout → re-enter"）
 - [ ] 长跑验证: 连续监听 ≥24h 无漏事件（有活跃订阅/任务事件流后做）
 
 ## 7. 前置环境（2026-09-03 已就绪）

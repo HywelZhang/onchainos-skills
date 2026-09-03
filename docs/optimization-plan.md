@@ -37,8 +37,10 @@
 ### 核心（产品价值所在）
 - [x] executor-lite: 确定性买家驱动（scripts/executor-lite.py: publish/watch/download/rule-review/complete，直连官方 CLI 无 LLM；--dryrun/--live 闸门 + selftest PASS）
 - [x] 最小闭环接线（scripts/decision-loop.py）: watch 事件(JSONL/stdin) → policy decide → hook 运行时(pre veto→fallback/post observer, 白名单+扩展名解析) → console 通知；selftest 3/3
-- [ ] executor-lite 真机 --live 验证（0.1×N USDT escrow, 待确认预算）
-- [ ] 信号信封实现(02): ASP 模板生成器 + buyer strict/loose 解析
+- [x] executor-lite 真机 --live 验证（2026-09-03, 2 轮 escrow 0.1×2 验收后释放 ASP, 2/2 全生命周期完成; 下载正则+评审门序列已修复）
+- [x] 信号信封实现(02) 核心（scripts/signal-envelope.py）: build(header+body+raw, JSON fence 载体) + parse + validate(strict 必需字段/滑点上限 500/ttl≤86400/过期/trustAsps 门/security_alert 校验)；loose 降级 raw-only；selftest 9/9 PASS
+- [ ] 信封接入闭环: decision-loop/policy 消费解析结果 + strict/loose 路由（待订阅流真机验证同批）
+- [ ] ASP 侧执行器（设计稿 09 已定; 实现需 provider 侧事件语义真机采样）
 - [ ] 闭环接真实订阅事件流（需活跃订阅; 同批补 OQ-10 实时基线）
 - [ ] executor-lite vs 官方 LLM A/B（A2A 用户侧全自动验证, 待确认）
 

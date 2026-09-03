@@ -1,61 +1,50 @@
 # onchainos-skills fork 优化方案（dev 分支）
 
-> 状态: v1.0（2026-09-03 夜刷新）— P0/P1 完成，P2 进行中
-> 基线: fork main == upstream main @ 17daea5（2026-09-02，本次检查无新 commit；仅 v4.8.x-beta tags，等 stable）
-> 范围（OQ-1）: 只优化 okx.ai 功能域（单次任务 + 订阅任务场景）；不做 wallet/defi/dex-market 流程优化
-> 目标: 让 OKX.AI 任务流程顺畅，最终形态 = 确定性 policy 引擎（事件直触发）替代 LLM 逐步驱动
+> 状态: v1.1（2026-09-03 深夜刷新）— P0/P1 完成，P2 买家侧核心完成，产品化打包未开始
+> 基线: fork main == upstream main @ 17daea5（2026-09-02；仅 v4.8.x-beta tags，等 stable）
+> 范围（OQ-1）: 只优化 okx.ai 功能域（单次任务 + 订阅任务场景）
+> 目标: 确定性 policy 引擎（事件直触发）替代 LLM 逐步驱动；用户侧除需求理解外全自动
 
-## 1. 已交付（全部在 dev，已推送 origin/dev）
+## 1. 交付状态
 
-### P0 — 设计 + 工具（完成）
-- docs/design/01-08: 节点清单(55 事件+审计)、信号 schema、policy 配置、用户旅程、开放问题、watch-host、policy 引擎、A/B 测试记录
-- scripts/: sync-to-hermes(.sh/.ps1)、audit-events.py、watch-host.py、policy-engine.py、install-watch-task.ps1
-- docs/cn-quickstart.md；examples/policy/
+### P0 设计+工具（完成）
+docs/design/01-09（节点清单/信号 schema/policy 配置/用户旅程/开放问题/watch-host/policy 引擎/A-B/ASP 执行器设计）；scripts/ 全套（sync-to-hermes、audit-events、watch-host、policy-engine、decision-loop、executor-lite、signal-envelope、install-watch-task）；docs/cn-quickstart.md；examples/policy/
 
-### P1 — 文档层（完成）
-- okx-ai references 4 张 lite 卡（signal 13KB/playbook 29.2KB/watch 21.9KB/register+invariants 合并 36.8KB），零规则丢失
-- labels.zh-CN.md i18n 渲染表；SKILL.md 瘦身 22.8→20.9KB（零规则丢失下限实测 ~20KB，路由 25 行零改动）
-- SKILL.md FORK 标记补丁（lite 默认路由）；英文为主决策（OQ 已答）
+### P1 文档层（完成）
+4 张 lite 卡（signal 13KB/playbook 29.2KB/watch 21.9KB/register 合并 36.8KB）零规则丢失；labels.zh-CN.md；SKILL.md 瘦身 22.8→20.9KB + FORK 标记
 
-### P2 — 引擎层（进行中）
-- watch-host: 骨架+端到端+循环稳定性(16min/8 周期)验证通过（06）
-- policy-engine: 校验器+scope 合并+classify+decide，selftest 8/8（07）
-- supervisor 脚本就绪（OQ-12=B），计划任务未实装（需密码/管理员）
+### P2 买家侧引擎（完成-核心）
+- [x] watch-host + supervisor 计划任务 okx-watch-host 实装（2026-09-03，每 5 分钟 --once，日志 %LOCALAPPDATA%\okx-watch-host\watch.log；修复任务环境 PATH/gbk 解码/emoji 编码三坑，实测收到事件）
+- [x] policy-engine（校验+scope 合并+classify+decide，8/8）；decision-loop（闭环+pre/post hook veto/fallback，6/6）
+- [x] executor-lite 真机 n=4（escrow 0.1×4 全释放 ASP，4/4 完成）：run1 文件(修下载正则)/run2 文件全自动/run3 text 型发现→补 text 提取+resume+历史补抓/run4 文件全自动零介入；生命周期 0 LLM token
+- [x] signal-envelope（9/9）+ 信封闭环 gate（strict 无信封/无效→强制 ask，6/6）
 
-## 2. A/B 实测结论（docs/design/08）
+### 未做（如实）
+- ASP 侧执行器（09 设计已定，需 ASP 身份真机采样，见 OQ-13）
+- 真实订阅流端到端（无活跃订阅；事件分类校准 OQ-10 未做）
+- 执行桥护栏接口化（limits/grants 与真实资金执行绑定验证）
+- watch-host ≥24h 长跑、CN 代理 fallback、上游 stable sync、打包分发
 
-| 任务型 | fork vs 官方 (input/cache/调用/成本) | 备注 |
-|---|---|---|
-| HTTP paywall A2MCP | -24%/-77%/-67%/-41% | fork 全面占优, 墙钟快 7.6× |
-| MCP 传输 A2MCP | -19%/-55%/-30%/-23% | fork 占优, 墙钟方差 |
-| A2A 全生命周期 | -11%/+138%/+69%/+68% | n=1 被 run 方差淹没; fork=文档层未含确定性引擎 |
+## 2. A/B 实测汇总（docs/design/08，全真实付费，方法见文档）
 
-结论: fork 文档层优势在有界确定性流程(实测); A2A 的预期优势在"确定性执行"(policy 引擎)而非文档——引擎未接线前 A2A 对比无意义。
+| 流 | fork vs 官方（token/调用/成本/墙钟） | n | 成功率 |
+|---|---|---|---|
+| 只读任务（文档层） | input −4.8%、成本 −1%、墙钟 −3%（噪声级） | 1 | 1/1 |
+| A2MCP HTTP paywall | input −24%、cache −77%、调用 −67%、成本 −41%、墙钟快 7.6× | 1 | 1/1 vs 1/1 |
+| A2MCP MCP 传输 | input −19%、cache −55%、调用 −30%、成本 −23% | 1 | 1/1 vs 1/1 |
+| A2A 全生命周期（文档层） | input −3.6%、output −24%、调用 −9%、成本 −13%；墙钟 +24% 慢 | 3 | 3/3 vs 2/3 |
+| executor 确定性 vs 官方 LLM | 0 LLM token/$0 vs 59.6K+1.59M cache/33 调用/$0.0171/轮 | 4 | 4/4 vs 2/3 |
 
-## 3. 待办（剩余优化项）
+结论: 文档层优势在有界确定性流（A2MCP 类，成本 −23~−41%）；A2A 长流程文档层仅小幅占优（方差大），数量级优势在确定性执行（executor：0 LLM token、失败模式可复现可修复）。
 
-### 核心（产品价值所在）
-- [x] executor-lite: 确定性买家驱动（scripts/executor-lite.py: publish/watch/download/rule-review/complete，直连官方 CLI 无 LLM；--dryrun/--live 闸门 + selftest PASS）
-- [x] 最小闭环接线（scripts/decision-loop.py）: watch 事件(JSONL/stdin) → policy decide → hook 运行时(pre veto→fallback/post observer, 白名单+扩展名解析) → console 通知；selftest 3/3
-- [x] executor-lite 真机 --live 验证（2026-09-03, 2 轮 escrow 0.1×2 验收后释放 ASP, 2/2 全生命周期完成; 下载正则+评审门序列已修复）
-- [x] 信号信封实现(02) 核心（scripts/signal-envelope.py）: build(header+body+raw, JSON fence 载体) + parse + validate(strict 必需字段/滑点上限 500/ttl≤86400/过期/trustAsps 门/security_alert 校验)；loose 降级 raw-only；selftest 9/9 PASS
-- [x] 信封接入闭环（decision-loop 集成）: signal 事件先 parse+validate 信封; strict 下无信封/无效信封强制降级 ask(拒绝自动执行坏信号), 有效+trusted 保持 auto; EVENT_SIGNAL_VALID 入 hook 环境; selftest 6/6 PASS（真机订阅流验证待活跃订阅）
-- [ ] ASP 侧执行器（设计稿 09 已定; 实现需 provider 侧事件语义真机采样）
-- [ ] 闭环接真实订阅事件流（需活跃订阅; 同批补 OQ-10 实时基线）
-- [ ] executor-lite vs 官方 LLM A/B（A2A 用户侧全自动验证, 待确认）
+## 3. 待办（按优先级）
 
-### 验证/运维
-- [ ] 真实订阅信号端到端(需活跃订阅; 同批补 OQ-10 实时基线)
-- [ ] watch-host ≥24h 长跑; supervisor 计划任务实装
-- [ ] 上游 sync 流程实战(upstream main 未动, 暂无需; 发 stable 后: merge+FORK 冲突解+audit-events 重跑)
-- [ ] CN 代理 fallback 小工具(web3.okx.com 间歇超时, 三次实验均撞到)
-- [ ] A2A n≥3 带约束复测(若要对 A2A 定论)
-
-### 待确认项（详见 docs/design/05, 统一答复）
-- OQ-8 evaluator v1 范围; OQ-11 labels 扩散
-- 防呆护栏放宽试点(P1 遗留; 产品化方向建议保守保留)
-- Rust 工具链安装(L2 开工前置, ~1-2GB)
-- executor-lite 真实 escrow 测试预算(0.1×N USDT/轮)
+1. [P1] 真实订阅流端到端（需活跃订阅 → 先答 OQ-10 预算）——买家侧最后一块未验证面
+2. [P1] 打包产品化: 安装器/初始化向导/默认 policy 模板包/README-as-product（对象=会用终端的开发者先行）
+3. [P2] ASP 侧执行器（OQ-13 定身份）
+4. [P2] 护栏接口化 + 内容评审规则扩展（超出食谱类任务时）
+5. [P2] watch ≥24h 长跑；上游 stable sync 实战；CN 代理 fallback
 
 ## 4. 红线（不变）
+
 references 路径稳定 / frontmatter description 不动 / 协议·资金·争议规则不改 / _shared 整目录同步 / main 只吃上游 / 小步提交可回滚

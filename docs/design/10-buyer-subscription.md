@@ -36,11 +36,13 @@ ASP 8136 真实信号两类:
 - [x] 组件: policy-engine(新 kind 支持+contentTags 校验)、decision-loop 打标、watch-host 已实装
 - [x] **真机首链验证(2026-09-03)**: 试用订阅 ASP 3895 Janus Cross-Market Basis Monitor(5 USDT/月, 72h, jobId 0x44673735…, ACTIVE) → 首份自动监测投递(BTC/ETH 资金费率表) → watch 捕获归一化 → decision-loop sub-40209 裁决 → notify。真实投递原为 task_event, 已加 sub 作用域 [Received]→signal 归一化, 现走 nodes.buyer.sub.signal_received 显式路径 ✓
 - [x] 试用到期保护: cron 一次性任务 2026-09-06 18:05(CST) subscribe-cancel(防 11:07 UTC 自动扣费转付费; deliver=local, 结果可在 cronjob list 查)
+- [x] 配置回环闭环(2026-09-03): 会话直投 → ASP 配置问询(4 问) → 回复默认范围(OKX BTC/ETH-SWAP; 阈值=年化费率 Δ≥2pp / 溢价 Δ≥0.05pp / 翻号) → 基线快照回显同一阈值, 已采纳 ✓
 - [ ] 周期级事件校准: 拒收(subscribe-reject)/续费决策等 sub 域事件待周期出现后补验（QO-10 记录）
 
 ## 4. 风险与边界（如实）
 
 - contentTags 是子串匹配: ASP 改文案格式(如 signal_type= ORDER)会失配 → 落入 ask 兜底(安全侧), 需校准(OQ-10 已有计划)
+- **ASP 数值口径实测不可靠(2026-09-03)**: Janus 首份快照年化换算自洽(0.006430%/8h → 7.04%/yr, ×3×365 ✓), 但基线快照 0.0100%/8h 报 0.0375%/yr(应为 ~10.95%), 11:15 快照 Δ0.00197pp(8h) 报 0.0215%/yr(应为 2.15%, 差 100×)。→ 买家端不能盲信 ASP 计算, 需独立数值校验/展示层(fork 产品设计输入)
 - order 信号跟单若开 auto 走官方 autotrade(闭源 Trade Kit), 我们只做策略裁决不碰资金执行; 自动执行红线不变
 - 试用订阅是链上真实状态变更(需要你确认后我才执行 create-subscribe)
 - 评审/quality: 本阶段分析信号只 notify 不评判质量, 拒收靠 subscribe-reject(买家动作)

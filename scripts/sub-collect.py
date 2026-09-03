@@ -36,9 +36,15 @@ def collect(job_id, scope, policy_dir, out_path, once, deadline_s, report_every=
         if rc != 0 or not text.strip():
             continue
         payloads = _wm.parse_batch(text)
-        for raw_text in payloads:
+        for p in payloads:
             try:
-                ev = _wm.normalize(raw_text, job_id or "", sticky=False)
+                if isinstance(p, dict) and p.get("userContent"):
+                    raw_text = p["userContent"]
+                    ev_job = p.get("jobId") or job_id
+                else:
+                    raw_text = p if isinstance(p, str) else json.dumps(p, ensure_ascii=False)
+                    ev_job = job_id
+                ev = _wm.normalize(raw_text, ev_job or "", sticky=False)
             except Exception:
                 continue
             if ev.get("kind") in (None, ""):

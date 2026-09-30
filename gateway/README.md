@@ -90,3 +90,16 @@ gateway 输出中存在且相等**；忽略 CLI 自加工的展示层（`card`/`
 - **P2a 轮询 inbox** → 事件 JSONL（沿用 `docs/design/06` 的 schema）。
 - **P2b xmtp-bridge**（Node 单进程）接管交互聊天 / `user.notify`。
 - **DoH 节点再发现**：当前仅用 CLI 已缓存的节点；节点失效时的重新发现机制待实现（P1 期间补）。
+
+## 签名链验证（P1 前置，已完成）
+
+```bash
+$HPY tests/probe_signing.py      # 不广播、不花钱；退出码 0 = 全通
+```
+
+覆盖：keccak256 向量 → HPKE 解 seed（库实现与手写实现互验）→
+`pre-transaction/sign-msg` 接受我们的 `personalSign` 会话签名。
+
+> HPKE 用 `cryptography.hazmat.primitives.hpke`（RFC 9180 原生，需 ≥45），
+> 同时保留手写 Base 模式实现作为回退；两条路径已互验一致。
+> 踩坑: HKDF-**Extract** 必须单独用 HMAC-SHA256（误用 `HKDF().derive()` = Extract+Expand 会 InvalidTag）。

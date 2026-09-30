@@ -13,9 +13,10 @@
 | OQ-13 消息面 | **C + A**：轮询优先覆盖订阅信号；XMTP 保留兜底交互聊天 | P2a / P2b 两个子任务 |
 | OQ-14 运行形态 | **B 主 + A 轻量**（本地 HTTP 8788 + 仓库内库脚本） | agent 侧只需 `fetch` |
 | OQ-15 语言栈 | **Python 主 + Node 仅 XMTP** | Node 退化为宿主侧 xmtp-bridge 单进程 |
-| OQ-16 CLI shim | **v1.1 修订：不做兼容层**（无 shim、无形态 D/MCP 并存） | 无并行期；基准改为**录制型 golden fixtures**（§7 P0.0） |
+| OQ-16 CLI shim | v1.1 曾定为"不做兼容层"；**v1.2 修订见 OQ-19** | — |
 | OQ-17 P2 范围 | **交互式 + 信号都做** | P2a 轮询信号 / P2b bridge 交互 |
 | OQ-18（新增） | 运行依赖 = 0 个 CLI；**基准数据**与**应急二进制**另行保留 | 见 §4.4 |
+| **OQ-19（v1.2 修订）** | **签名/私钥/钱包/登录保持在官方 CLI，不在改造范围**；gateway 只管 okx-ai 任务与订阅**流程** | 写操作 = gateway 组参 + **CLI 执行**（宿主侧内部调用）；agent 侧仍无二进制；上游漂移面收窄（见 §12） |
 
 ---
 
@@ -295,3 +296,71 @@ dev 现状 **37 文件 / 499,220 字符**，其中纯 CLI 机械面：
 - `task.active` 的非空分支（有未终态任务时的 `tasks[]` 标注）只实现了形状，**未经真实数据校验**。
 - `gate.check` 的通信项固定为 not-ready（消息面 P2b 才接入），因此 `ready` 语义与 CLI 一致但成因不同。
 - DoH 节点再发现、写路径（P1）与消息面（P2）未做。
+
+---
+
+## 12. v1.2 边界修订：签名/钱包/登录留在官方 CLI（OQ-19）
+
+**用户决策（2026-09-30）**：私钥管理、钱包、登录、签名保持现状 CLI，不算改造范围；
+本方案只管 **okx.AI 任务与订阅流程**。
+
+### 12.1 执行体划分（谁干什么）
+
+| 层 | 归属 | 说明 |
+|---|---|---|
+| 会话/钱包/私钥/签名/广播 | **官方 CLI（保留）** | 宿主侧内部调用；agent 不可见。链上写操作的真实执行者 |
+| 任务/订阅**流程**：路由、状态机、nextAction、文案、幂等、事件、审计 | **gateway**（本仓库） | 原 CLI 的 L3，也是产品差异化的所在 |
+| 查询（读） | **gateway 直连 HTTP** | P0 已完成：16 verb / 16 契约通过 |
+| 无签名的后端写（设备路由、离线标记、可见性、serviceParam） | **gateway 直连 HTTP** | 本来就是纯 REST，无需 CLI |
+| 需要签名的写（创建任务/订阅、接单、交付、验收、退款、评分、收益领取…） | **gateway 组参 → CLI 执行 → gateway 规范化** | 等价于早先对 okx-a2a 的"包装不改造" |
+
+### 12.2 对早先结论的影响（如实修订）
+
+- §4.1/§8 里"运行依赖 = 0 个 CLI"**仅对 agent 侧成立**；**宿主侧仍需官方 CLI**（写路径）。
+  这一点此前写在 v1.1，现按新边界显式修正。
+- **收益不变的部分**：agent 侧不再需要二进制/全局安装；skill 瘦身（-92%）不变；
+  身份/心跳类调用（实测占 58%）被 gateway 的会话缓存消除这一项**完全不受影响**。
+- **收益收窄的部分**：写路径不再验证"去 CLI"，而是"CLI 只做执行器"。
+  上游漂移风险随之**下降**：接口变化时，被委托的命令跟着上游升级即可修复，
+  我们在写路径上没有自建协议实现。
+- **已投入且保留的资产**：`gateway/okxai/crypto.py`（HPKE/Ed25519/EIP-191，真机 sign-msg 验证通过）
+  与 `tests/probe_signing.py`。当前**不作为主路径**，作为"将来若要彻底去 CLI"的现成地基保留。
+- **契约测试反而更强**：CLI 仍在本地，写路径可以直接"gateway 结果 vs CLI 原生命令"双跑对照。
+
+### 12.3 P1 写 verb 与执行体
+
+| verb | 执行体 | 对应命令/端点 |
+|---|---|---|
+| `task.create` | CLI | `agent create-task` |
+| `task.accept`（买家确认并付款） | CLI | `agent set-payment-mode` → `agent confirm-accept` |
+| `task.apply` / `task.deliver`（ASP） | CLI | `agent apply` / `agent deliver` |
+| `task.complete` / `task.reject` / `task.close` | CLI | `agent complete` / `reject` / `close` |
+| `task.claimAutoRefund` | CLI | `agent claim-auto-refund` |
+| `sub.create` | CLI | `agent create-subscribe` |
+| `sub.cancel` / `sub.autorenew` | CLI | `agent subscribe-cancel` / `start-autorenew` |
+| `sub.device` / `sub.offline` | gateway（HTTP） | `.../subscribe/{subId}/` 设备与离线标记端点 |
+| `sub.aspClaim` / `sub.agreeRefund` / `sub.dispute` | CLI | `agent subscribe-asp-claim` / `subscribe-agree-refund` / `subscribe-dispute` |
+| `refund.*` | CLI | `agent refund-prepare` / `refund-execute` / `refund-confirm` |
+| `rating.submit` / `feedback.submit` | CLI | `agent feedback-submit` / `task-feedback` |
+| `task.visibility` / `task.setAsp` / `task.userReject` | gateway（HTTP） | 对应的 off-chain 端点 |
+
+### 12.4 P1 进展（2026-09-30）
+
+**已实现**：`gateway/okxai/delegate.py`（CLI 委托执行器：argv 列表传参、命令白名单、
+统一超时、UTF-8 解码、审计）+ `gateway/okxai/verbs_write.py`（19 个写 verb，见 §12.3 表）。
+
+**已实测验证（不花钱、可逆）** — `gateway/tests/probe_writes.py` → PASS：
+- `sub.offline` 真实往返：写 1 → 服务端读回 1；写 0 → 读回 0（真状态变更，非自述）
+- `sub.device` 清空语义幂等
+- 委托执行器：`agent get-my-agents` 经委托成功（154ms，executor=cli:*）；越权命令被拒绝
+- 传输层补强：GET 自动重试 2 次 + 节点再发现（重读缓存 / 可选 `OKXAI_ALLOW_CLI_DOH_REFRESH=1` 让 CLI 刷缓存）
+- P0 契约回归：**16/16 仍全过**
+
+**踩坑（已固化为语义约定 + 测试）**：
+- `deviceList: null` = **所有设备都收**；`deviceList: []` = **没有任何设备收**（会静默停掉该订阅的信号投递）。
+  官方 CLI 把"空/省略"解释为清空；gateway 采用同一约定，并把"真正的空列表"改为显式 `explicit_empty=True` 才发出。
+  ⚠️ 这条直接影响产品主线的信号交付，属于必须回归验证的字段。
+- `setOfflineReceiveFlag` 的字段名是 `offlineReceiveFlag`（传 `flag` → `code=1001`）。
+
+**待办**：需要签名的写操作（`task.create` / `sub.create` 等）尚未做**付费端到端**验证；
+CLI 4.5.2 的 `create-task` 参数面与 dev 文档（4.6.x）不同——以实装 CLI 为准（`gateway/reference/cli-help.txt`）。

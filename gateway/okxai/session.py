@@ -208,12 +208,14 @@ class Session:
         return unwrap(body, path)
 
     def post(self, path: str, *, body: dict[str, Any] | None = None, agent_id: str | None = None,
-             auth: bool = True, inject_cert: bool = False) -> Any:
+             auth: bool = True, inject_cert: bool = False, retry: bool | None = None) -> Any:
+        """POST。`retry=True` 只用于**幂等**的纯后端写（设备列表、离线标记）；
+        涉及资金的写操作由官方 CLI 执行，不走这里。"""
         payload = dict(body or {})
         if inject_cert and self.session_cert and "sessionCert" not in payload:
             payload["sessionCert"] = self.session_cert
         raw = self.client.request(
-            "POST", path, body=payload, headers=self.headers(agent_id) if auth else None
+            "POST", path, body=payload, headers=self.headers(agent_id) if auth else None, retry=retry
         )
         return unwrap(raw, path)
 

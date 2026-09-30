@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from . import verbs
+from . import verbs_write  # noqa: F401 - 注册 P1 写 verb
 from .session import ApiError, NotLoggedIn, Session
 from .transport import HttpError, TransportError
 

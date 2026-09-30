@@ -138,13 +138,24 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 
 class Client:
-    """最小 HTTP 客户端：JSON in / JSON out，Host 头固定为 web3.okx.com。"""
+    """最小 HTTP 客户端：JSON in / JSON out，Host 头固定为 web3.okx.com。
+
+    可靠性策略（2026-09-30 实测补强）:
+      * 连接级失败（RemoteDisconnected/超时）在**幂等方法**上重试（默认 GET/HEAD 2 次）；
+        POST 默认不重试——写操作结果未知时重试可能造成重复出资，交由上层用状态核对处理。
+      * 每个客户端实例记录连续失败数；达到阈值就尝试**节点再发现**：
+        重读 `doh-cache.json`（可能被官方 CLI 刷新过），必要时（`OKXAI_ALLOW_CLI_DOH_REFRESH=1`）
+        调一次官方 CLI 让它刷新缓存——CLI 在本方案里保留，用于基础设施类动作是允许的。
+    """
+
+    MAX_CONSECUTIVE_FAILURES = 2
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT, log_audit: bool = True):
         self.timeout = timeout
         self.log_audit = log_audit
         self.node = load_doh_node()
         self.proxy = _proxy_from_env()
+        self._failures = 0
 
     # ---- 描述 ----
     def describe(self) -> dict[str, Any]:
@@ -158,6 +169,59 @@ class Client:
 
     # ---- 请求 ----
     def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, str] | None = None,
+        body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        expect_json: bool = True,
+        retry: bool | None = None,
+    ) -> Any:
+        attempts = self._attempts_for(method, retry)
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                result = self._request_once(method, path, query=query, body=body,
+                                            headers=headers, expect_json=expect_json)
+                self._failures = 0
+                return result
+            except (TransportError,) as exc:
+                last_error = exc
+                self._failures += 1
+                if self._failures >= self.MAX_CONSECUTIVE_FAILURES:
+                    self._rediscover_node()
+                if attempt + 1 < attempts:
+                    time.sleep(0.6 * (attempt + 1))
+                    continue
+                raise last_error
+        raise last_error if last_error else TransportError("unreachable")
+
+    def _attempts_for(self, method: str, retry: bool | None) -> int:
+        if retry is not None:
+            return 3 if retry else 1
+        return 3 if method.upper() in ("GET", "HEAD") else 1
+
+    def _rediscover_node(self) -> None:
+        """节点再发现：重读缓存；必要时让官方 CLI 刷新一次缓存（基础设施动作）。"""
+        previous = (self.node.mode, self.node.ip, self.node.host)
+        self.node = load_doh_node()
+        if (self.node.mode, self.node.ip, self.node.host) != previous:
+            self._failures = 0
+            return
+        if os.environ.get("OKXAI_ALLOW_CLI_DOH_REFRESH") != "1":
+            return
+        try:
+            from . import delegate  # 延迟导入，避免循环依赖
+
+            delegate.run(["agent", "get-my-agents"], timeout=60)  # 触发 CLI 内部 DoH 选路并回写缓存
+            self.node = load_doh_node()
+            self._failures = 0
+        except Exception:  # noqa: BLE001 - 再发现失败不改写原始错误
+            pass
+
+    def _request_once(
         self,
         method: str,
         path: str,

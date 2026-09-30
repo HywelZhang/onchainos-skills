@@ -72,4 +72,13 @@ Node（唯一能内嵌 XMTP 生态）/ Python（与 scripts/*.py 一致）/ 混�
 ### OQ-17 P2 是否纳入交互式聊天
 否，P2 只做"订阅信号交付 + 任务事件"（主线产品）；交互式澄清/peer chat 延后 / 是，一并做。
 方案倾向: 否。
+**已答 2026-09-30: 是——交互式 + 信号都做（P2 拆 P2a 轮询信号 / P2b Node bridge 交互）。**
+
+### OQ-18 是否保留官方 CLI/MCP 兼容层 — [已答 2026-09-30: 不做兼容层]
+决策: 不实现官方 CLI/MCP 并存形态（v1.0 的形态 C/D 取消），只实现自身方案（形态 A/B）；运行依赖 = 0 个 CLI。
+必补两个替代物（否则验收退化为自证）:
+1. **录制型 golden 基准**: `scripts/record-golden.py` 已录 16/18 条读路径命令 → 原始输出在 `$ONCHAINOS_HOME/golden/cli/20260930-180440/`（不入 git）；仓库内 `tests/cli-golden/manifest.redacted.json` + README（比对口径）。
+2. **应急二进制归档**: `$ONCHAINOS_HOME/archive/20260930/`（onchainos 4.5.2 + a2a-node 0.2.10 dist + SHA256SUMS；二进制 sha256 与 CLI 自记 `binary_identity.json` 一致）。
+收益: 无并行期 ⇒ 消除"同账号两客户端同时刷新 JWT 互相踢"的竞态；无映射层与双路径测试。
+代价: 失去"上游改接口→升级 CLI 即修复"的通道 ⇒ golden 回归 + 版本探测升级为方案成立前提（docs/design/11 §8.2）。
 

@@ -1,0 +1,232 @@
+{
+  "kind": "cli-golden-baseline",
+  "plan": "docs/design/11-cli-to-api-refactor.md §4.4/§7 P0.0",
+  "cli_version": "onchainos 4.5.2",
+  "recorded_at": "2026-09-30T18:04:40+08:00",
+  "raw_location": "$ONCHAINOS_HOME/golden/cli/<ts>/ (not in git)",
+  "script": "scripts/record-golden.py",
+  "entries": [
+    {
+      "name": "session.wallet_status",
+      "argv": [
+        "wallet",
+        "status"
+      ],
+      "exit": 0,
+      "duration_ms": 93,
+      "stdout_bytes": 398,
+      "stdout_sha256": "95762d6ba70c79c608f0fecf3e2628acf67d4f3997ba7569d59e970fb99c1152"
+    },
+    {
+      "name": "session.device_list",
+      "argv": [
+        "agent",
+        "device-list"
+      ],
+      "exit": 0,
+      "duration_ms": 174,
+      "stdout_bytes": 784,
+      "stdout_sha256": "927ab395c29dff3c4fb8f8a0eff01ca5095a8afba50a1098c360aa7cf6cec983"
+    },
+    {
+      "name": "agent.mine",
+      "argv": [
+        "agent",
+        "get-my-agents"
+      ],
+      "exit": 0,
+      "duration_ms": 173,
+      "stdout_bytes": 3709,
+      "stdout_sha256": "95f00b4014d2b8a1867e955d629cdd5dd0cb4feeb459deeab5342e032211ff10"
+    },
+    {
+      "name": "agent.mine_role_user",
+      "argv": [
+        "agent",
+        "get-my-agents",
+        "--role",
+        "user"
+      ],
+      "exit": 0,
+      "duration_ms": 135,
+      "stdout_bytes": 1522,
+      "stdout_sha256": "426837daac4b245b25bfa8c649a00be84b7990d3074b962a7ce4c3c781075a6f"
+    },
+    {
+      "name": "agent.flat",
+      "argv": [
+        "agent",
+        "my-agents"
+      ],
+      "exit": 0,
+      "duration_ms": 151,
+      "stdout_bytes": 3621,
+      "stdout_sha256": "9c4e203832229d22bb2378c67a30f582e40caad32bf30be5091bd69052ff02bb"
+    },
+    {
+      "name": "agent.get",
+      "argv": [
+        "agent",
+        "get-agents",
+        "--agent-ids",
+        "<agent_id>"
+      ],
+      "exit": 0,
+      "duration_ms": 78,
+      "stdout_bytes": 1060,
+      "stdout_sha256": "665633f030a702442cf0f0fa991663e01f16b7b445e1c817cb3d5e99932c0603"
+    },
+    {
+      "name": "agent.profile",
+      "argv": [
+        "agent",
+        "profile",
+        "--agent-id",
+        "<agent_id>"
+      ],
+      "exit": 2,
+      "duration_ms": 11,
+      "stdout_bytes": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "gate.check",
+      "argv": [
+        "agent",
+        "gate-check",
+        "--role",
+        "user"
+      ],
+      "exit": 0,
+      "duration_ms": 15372,
+      "stdout_bytes": 876,
+      "stdout_sha256": "b81d4ac3bdd92ec552926b76ac16fa2d0be6a7582d16f89f96974d522ff3ccc1"
+    },
+    {
+      "name": "task.mine",
+      "argv": [
+        "agent",
+        "tasks"
+      ],
+      "exit": 0,
+      "duration_ms": 217,
+      "stdout_bytes": 1856,
+      "stdout_sha256": "4a46eeeea7ba094236ff801e3c3a620ce3eaa924a19c56196fce1e65b9990e03"
+    },
+    {
+      "name": "task.active",
+      "argv": [
+        "agent",
+        "active-tasks"
+      ],
+      "exit": 0,
+      "duration_ms": 10080,
+      "stdout_bytes": 63,
+      "stdout_sha256": "520311a22e2295d3df5f0afbb102b7ee03c10d2e542a02c1e4c4323ce3de2c58"
+    },
+    {
+      "name": "task.status",
+      "argv": [
+        "agent",
+        "status",
+        "<hash>"
+      ],
+      "exit": 0,
+      "duration_ms": 203,
+      "stdout_bytes": 197,
+      "stdout_sha256": "d748b18daea4e9321a986aaf267fe674ea2cade0f60b0d8f3035a7f6844b4a4f"
+    },
+    {
+      "name": "task.deliverables",
+      "argv": [
+        "agent",
+        "task-deliverable-list",
+        "--job-id",
+        "<hash>",
+        "--role",
+        "user"
+      ],
+      "exit": 0,
+      "duration_ms": 27,
+      "stdout_bytes": 1008,
+      "stdout_sha256": "39143dc35d48320902f0c25251f8340d2687eafee1e2176dd398e586b61f4365"
+    },
+    {
+      "name": "sub.list",
+      "argv": [
+        "agent",
+        "my-subscriptions"
+      ],
+      "exit": 0,
+      "duration_ms": 198,
+      "stdout_bytes": 1997,
+      "stdout_sha256": "98d9965cd1278d760a6028b17c0c37e13f22f2e9f4faa4ce3206295b19f1fcc8"
+    },
+    {
+      "name": "sub.detail",
+      "argv": [
+        "agent",
+        "subscribe-detail",
+        "<hash>"
+      ],
+      "exit": 0,
+      "duration_ms": 221,
+      "stdout_bytes": 477,
+      "stdout_sha256": "6b292577d5a68b3e4e0fa865fdb04f7f1f5fef3847bc16f7bdae2e1859abaa39"
+    },
+    {
+      "name": "sub.cost",
+      "argv": [
+        "agent",
+        "subscribe-cost"
+      ],
+      "exit": 0,
+      "duration_ms": 191,
+      "stdout_bytes": 120,
+      "stdout_sha256": "b44baa7b5ce6b46899100de0f5e6a1e9037a42984d959398921182fbf3e420fd"
+    },
+    {
+      "name": "flow.pending_decisions",
+      "argv": [
+        "agent",
+        "pending-decisions-v2",
+        "list"
+      ],
+      "exit": 0,
+      "duration_ms": 18,
+      "stdout_bytes": 86,
+      "stdout_sha256": "d0ef9748bd6ac8114c8006d8dd6d70396171ff13cc0a5c5980f87f82e37d8841"
+    },
+    {
+      "name": "service.match",
+      "argv": [
+        "agent",
+        "service-match",
+        "--keywords",
+        "signal"
+      ],
+      "exit": 0,
+      "duration_ms": 218,
+      "stdout_bytes": 922,
+      "stdout_sha256": "395eb1fec44f803dea299e2f310bc12e57235da2f340a19fa944c6b9625e895d"
+    },
+    {
+      "name": "agent.search",
+      "argv": [
+        "agent",
+        "search",
+        "--keywords",
+        "signal"
+      ],
+      "exit": 2,
+      "duration_ms": 18,
+      "stdout_bytes": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "summary": {
+    "total": 18,
+    "ok": 16,
+    "failed": 2
+  }
+}

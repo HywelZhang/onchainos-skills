@@ -35,7 +35,7 @@ ASP 8136 真实信号两类:
 - [x] 离线: sub-sim 7 场景 7/7（analysis 静默/order ask/未知 ask/信封门/决策 ask/通知 notify）
 - [x] 组件: policy-engine(新 kind 支持+contentTags 校验)、decision-loop 打标、watch-host 已实装
 - [x] **真机首链验证(2026-09-03)**: 试用订阅 ASP 3895 Janus Cross-Market Basis Monitor(5 USDT/月, 72h, jobId 0x44673735…, ACTIVE) → 首份自动监测投递(BTC/ETH 资金费率表) → watch 捕获归一化 → decision-loop sub-40209 裁决 → notify。真实投递原为 task_event, 已加 sub 作用域 [Received]→signal 归一化, 现走 nodes.buyer.sub.signal_received 显式路径 ✓
-- [x] 试用到期保护: cron 一次性任务 2026-09-06 18:05(CST) subscribe-cancel(防 11:07 UTC 自动扣费转付费; deliver=local, 结果可在 cronjob list 查)
+- [ ] ❌ **试用到期保护失败(2026-09-06 实测, 2026-09-30 复盘)**: 两条一次性 cancel cron(007facb80e7f Janus 18:05 / ebd39aea092d meme 18:20 CST)均未触发——调度器/host 越过 120s 宽限, 09-07 15:52 被判定"不会触发"并移除(证据: hermes cron/output/<jobid>/2026-09-07_15-52-17.md)。两笔试用已自动转付费扣款: **5 USDT**(Janus 3895, tx 0x60c0dc98a501…fab3, 09-06 18:08 CST) + **1 USDT**(Meme Signal Auto Trader 10724, tx 0x8d98fcbc38e5…f8f6, 09-06 18:17 CST), 合计 6 USDT 真实成本。当前两订阅均 ACTIVE, 付费期 2026-09-06 → 10-06 19:07/19:16 CST, autoRenew=0(不再续费)。教训: 一次性本地 cron 不构成时限保护(需补跑/常驻/后端侧机制, 见 OQ-19)。
 - [x] 配置回环闭环(2026-09-03): 会话直投 → ASP 配置问询(4 问) → 回复默认范围(OKX BTC/ETH-SWAP; 阈值=年化费率 Δ≥2pp / 溢价 Δ≥0.05pp / 翻号) → 基线快照回显同一阈值, 已采纳 ✓
 - [ ] 周期级事件校准: 拒收(subscribe-reject)/续费决策等 sub 域事件待周期出现后补验（QO-10 记录）
 
@@ -43,6 +43,7 @@ ASP 8136 真实信号两类:
 
 - contentTags 是子串匹配: ASP 改文案格式(如 signal_type= ORDER)会失配 → 落入 ask 兜底(安全侧), 需校准(OQ-10 已有计划)
 - **ASP 数值口径实测不可靠(2026-09-03)**: Janus 首份快照年化换算自洽(0.006430%/8h → 7.04%/yr, ×3×365 ✓), 但基线快照 0.0100%/8h 报 0.0375%/yr(应为 ~10.95%), 11:15 快照 Δ0.00197pp(8h) 报 0.0215%/yr(应为 2.15%, 差 100×)。→ 买家端不能盲信 ASP 计算, 需独立数值校验/展示层(fork 产品设计输入)
+- **试用保护机制实测失效 + 信号陈旧度(2026-09-30 复盘)**: 见 §3——一次性本地 cron 未触发, 造成 6 USDT 实际扣款; 且第二笔 cron(18:20)本身就晚于扣款时刻(18:17), 时限保护须按"截止前 ≥30min"设计并支持补跑。另: 2026-09-03T17:10Z 的快照直到 09-30 才补投(滞后 27 天), 客户端必须按 content 时间戳打"陈旧"标记, 否则买家会按失效行情决策。
 - order 信号跟单若开 auto 走官方 autotrade(闭源 Trade Kit), 我们只做策略裁决不碰资金执行; 自动执行红线不变
 - 试用订阅是链上真实状态变更(需要你确认后我才执行 create-subscribe)
 - 评审/quality: 本阶段分析信号只 notify 不评判质量, 拒收靠 subscribe-reject(买家动作)

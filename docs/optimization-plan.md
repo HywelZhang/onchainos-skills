@@ -1,5 +1,8 @@
 # onchainos-skills fork 优化方案（dev 分支）
 
+> **去 CLI 化重构（gateway/）的进度与 TODO 见 [`docs/design/13-status-and-todo.md`](design/13-status-and-todo.md)**（读路径已完成并验证；写路径与 skill 重写进行中）。
+
+
 > 状态: v1.1（2026-09-03 深夜刷新）— P0/P1 完成，P2 买家侧核心完成，产品化打包未开始
 > 基线: fork main == upstream main @ 17daea5（2026-09-02；仅 v4.8.x-beta tags，等 stable）
 > 范围（OQ-1）: 只优化 okx.ai 功能域（单次任务 + 订阅任务场景）

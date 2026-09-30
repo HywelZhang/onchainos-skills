@@ -19,6 +19,14 @@ design docs under `docs/design/` (01 node inventory … 10 buyer subscription ha
 Deterministic engine scripts live in `scripts/` with selftests; example per-subscription
 policies live in `examples/policy/`.
 
+**If you are continuing the "okx-ai 去 CLI 化" refactor (gateway/): read
+`docs/design/13-status-and-todo.md` FIRST** — it is the single authoritative status +
+plan + TODO document (what works today, what is blocked, what to do next, and the exact
+three regression commands to prove nothing broke). Supporting detail:
+`docs/design/11-cli-to-api-refactor.md` (plan + measurements), `docs/design/12-linux-write-path.md`
+(write-path migration to Linux/WSL). Note the scope boundary: signing/wallet/login stay on
+the official CLI (OQ-21); the gateway owns only the okx-ai task/subscription flow.
+
 Money/chain actions in this repo's scripts are gated behind `--dryrun` (default) and
 `--live` (explicit confirmation). Keep that default. Never sign or move funds without
 the user's explicit go-ahead.

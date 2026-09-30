@@ -101,3 +101,9 @@ Node（唯一能内嵌 XMTP 生态）/ Python（与 scripts/*.py 一致）/ 混�
 方案倾向: 需用户拍板（涉及运行时托管方式与机器，不宜自行决定）。
 **已答 2026-09-30: 选项 2 —— 写路径搬到 Linux/macOS/WSL 执行。**
 落地: docs/design/12-linux-write-path.md + scripts/setup-linux-writepath.sh（本机 WSL 未安装，需管理员+重启）。
+
+### OQ-22 新流程的 agent 面向形态（待确认；详见 docs/design/13 §8）
+1. 调用形态: 本地 HTTP 服务(127.0.0.1:8788, 宿主守护)为主 / `python -m okxai` 为主 / 两者都写进 skill。
+   倾向: HTTP 为主, 命令行作兜底。
+2. 重写后的 skill 是否保留 CLI 回退路径: 保留(稳但更厚; 旧流程在 4.6.x 上写路径本就断) / 不保留(最薄, 无 gateway 则不可用)。
+   倾向: 不保留, 由"gateway 不可用时报错并指向安装文档"替代。

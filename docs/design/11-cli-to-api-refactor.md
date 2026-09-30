@@ -364,3 +364,32 @@ dev 现状 **37 文件 / 499,220 字符**，其中纯 CLI 机械面：
 
 **待办**：需要签名的写操作（`task.create` / `sub.create` 等）尚未做**付费端到端**验证；
 CLI 4.5.2 的 `create-task` 参数面与 dev 文档（4.6.x）不同——以实装 CLI 为准（`gateway/reference/cli-help.txt`）。
+
+### 12.5 P1 验收受阻：版本闸门 + Windows 平台限制（2026-09-30 实测链）
+
+一次真实付费 E2E 尝试，暴露了两道**上游强制的门槛**（都不是 gateway 自身问题）：
+
+1. **写操作有客户端版本闸门**。CLI 4.5.2 的 `create-task` 在创建任何东西之前被后端拒绝：
+   `code=1001 OnchainOS update required before task creation can continue`（读操作不受影响）。
+   → 已按官方路径升级到 **4.6.3**（GitHub release + `checksums.txt` sha256 校验通过，
+   `77d9fe87…`；安装器自带的 PowerShell 下载在本机失败，改用 curl 走官方 release）。
+   **升级后读路径契约零漂移：golden（4.5.2 录制）仍 16/16 全过** —— 直连 HTTP 的读层是版本稳健的。
+2. **4.6.x 的创建流程要求把任务绑定到本地 AI 运行时**：`okx-a2a job-provider bind-current`。
+   CLI 内部给该调用约 5 秒，本机每次 `create-task` 都在这一步超时：
+   `cannot bind task to the current AI runtime; creation was not broadcast`。
+   根因是 **Hermes 的 okx-a2a 网关插件在 Windows 上无法安装**（官方明确：
+   `okx-a2a setup hermes` → *"Hermes setup/update is not supported on Windows yet. The Hermes
+   gateway installer requires bash. Use WSL, or run setup on macOS/Linux, or choose the
+   codex/claude provider on Windows."*），没有插件 → 守护进程无法确认 provider readiness →
+   绑定调用超时。手工执行同一条 `bind-current` 会立即返回 `already_bound`（但 readiness 仍为空）。
+
+**未产生资金动作**：每次失败都在"broadcast 之前"中止。副作用是留下 3 条 `status=-1`（INIT）
+未出资任务记录（`0x151334bc…`、`0x7dd798b4…`、`0x5ffe5d58…`）；V2 任务禁止直接 `close`
+（`direct close is disabled for V2 tasks`），且无资金可退，属惰性记录。
+
+**写路径 verb 已按 4.6.3 参数面更新**（`--provider-agent-id/--payment-token-*` 取代 4.5.2 的
+`--provider/--budget`），参考面重抓至 `gateway/reference/cli-help.txt`。
+
+**结论（对方案的影响）**：v1.2 的"签名类写操作委托 CLI"决策**被这次实测反向证实是必要的**：
+后端用版本闸门强制客户端保持最新，任何自建客户端都得跟着服务端节奏走；把写路径留给官方 CLI，
+等于把"跟随上游"这件事继续外包给上游自己。**Windows 上的写路径解除阻塞需要三选一**（见 OQ-20）。

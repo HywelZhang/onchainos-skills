@@ -87,3 +87,15 @@ Node（唯一能内嵌 XMTP 生态）/ Python（与 scripts/*.py 一致）/ 混�
 待定: (a) 保护机制选型——周期轮询+补跑(catch-up) / 常驻 supervisor / 后端侧取消(与 OQ-13/14、P0-11 方向一致, 倾向轮询+补跑); (b) 时限余量(建议扣款前 ≥30min 触发且失败重试, 本例第二笔 18:20 本身就晚于扣款 18:17); (c) "信号陈旧度标记"是否列为客户端必备字段(建议是, content 时间戳 vs 本地时间)。
 现状: 两订阅 autoRenew=0, 付费期至 2026-10-06; 是否现在显式 subscribe-cancel 由用户决定。
 
+
+### OQ-20 Windows 上写路径解除阻塞（三选一）— 待用户决策
+背景: CLI 4.6.3 的创建流程要求 `okx-a2a job-provider bind-current`，而 Hermes 的 okx-a2a 网关插件
+在 Windows 上无法安装（官方: Hermes setup/update not supported on Windows yet, requires bash）→
+每次 create-task 在绑定步超时（未广播、未花钱）。读路径与所有无签名写路径不受影响。
+选项:
+  A. 在 Windows 上把 okx-a2a 的 AI provider 切到 **codex 或 claude**（官方推荐的 Windows 路径）；
+     需先安装对应 CLI（本机 codex/claude/gemini 均未安装）——会改变现有 A2A 会话由 Hermes 托管的现状。
+  B. 写路径改到 **Linux/macOS（或 WSL）** 环境执行（技能/仓库可共用，宿主侧跑 gateway + CLI）。
+  C. Windows 上暂时**只做读 + 无签名写**（当前已可用的 19 个写 verb 中，CLI 委托类暂不可用），
+     等官方补齐 Windows 支持。
+方案倾向: 需用户拍板（涉及运行时托管方式与机器，不宜自行决定）。

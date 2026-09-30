@@ -33,30 +33,44 @@ def _delegated(command: list[str], flags: dict[str, Any], *, timeout: int = 240,
 # ─────────────────────────── 任务（委托） ───────────────────────────
 
 
-@verb("task.create", "创建任务（含出资，链上写）", args=("description", "budget", "provider", "service_id"))
-def task_create(s: Session, description: str | None = None, budget: str | None = None,
-                provider: str | None = None, service_id: str | None = None,
-                max_budget: str | None = None, currency: str = "USDT", title: str | None = None,
-                payment_mode: str = "escrow", service_params: str | None = None,
-                service_token_amount: str | None = None, service_token_address: str | None = None,
-                endpoint: str | None = None, files: Any = None, **_: Any) -> dict[str, Any]:
-    missing = [k for k, v in (("description", description), ("budget", budget),
-                              ("provider", provider), ("service_id", service_id)) if not v]
+@verb("task.create", "创建任务（含出资，链上写）", args=("title", "description", "provider_agent_id", "service_id"))
+def task_create(s: Session, title: str | None = None, description: str | None = None,
+                provider_agent_id: str | None = None, service_id: str | None = None,
+                payment_token_symbol: str = "USDT", payment_token_amount: str | None = None,
+                service_token_address: str | None = None, service_token_amount: str | None = None,
+                description_summary: str | None = None, service_params: str | None = None,
+                category_code: str | None = None, min_credit_score: Any = None,
+                visibility: str = "private", chain_id: str = "196", service_guide: str | None = None,
+                service_guide_hash: str | None = None, files: Any = None, **_: Any) -> dict[str, Any]:
+    """参数面按 **CLI 4.6.3** 实测（`gateway/reference/cli-help.txt`）。
+
+    注意: 4.5.2 的 `--budget/--max-budget/--currency/--provider/--payment-mode` 已被
+    4.6.3 的 `--payment-token-*` / `--provider-agent-id` 取代 —— 参数面随上游版本会变，
+    这正是"写路径委托 CLI"的价值：变的是 CLI 的入参，我们只改这一处映射。
+    """
+    missing = [k for k, v in (("title", title), ("description", description),
+                              ("provider_agent_id", provider_agent_id), ("service_id", service_id),
+                              ("service_token_address", service_token_address),
+                              ("service_token_amount", service_token_amount)) if not v]
     if missing:
         raise VerbError(f"task.create 缺少必填参数: {', '.join(missing)}")
     return _delegated(["agent", "create-task"], {
-        "description": description,
-        "budget": budget,
-        "max_budget": max_budget or budget,
-        "currency": currency,
-        "provider": provider,
-        "payment_mode": payment_mode,
-        "service_id": service_id,
         "title": title,
-        "service_params": service_params,
-        "service_token_amount": service_token_amount,
+        "description": description,
+        "description_summary": description_summary,
+        "provider_agent_id": provider_agent_id,
+        "payment_token_symbol": payment_token_symbol,
+        "payment_token_amount": payment_token_amount or service_token_amount,
+        "service_id": service_id,
+        "service_params": service_params or "{}",
         "service_token_address": service_token_address,
-        "endpoint": endpoint,
+        "service_token_amount": service_token_amount,
+        "category_code": category_code,
+        "min_credit_score": min_credit_score,
+        "visibility": visibility,
+        "chain_id": chain_id,
+        "service_guide": service_guide,
+        "service_guide_hash": service_guide_hash,
         "file": files,
     })
 
@@ -191,8 +205,9 @@ def sub_create(s: Session, service_id: str | None = None, service_token_amount: 
                autotrade_mode: str | None = None, autotrade_amount: str | None = None,
                autotrade_cap: str | None = None, autotrade_quote: str | None = None,
                **_: Any) -> dict[str, Any]:
+    # 4.6.3 要求 provider_agent_id 为必填（4.5.2 是可选的 --provider-agent-id）
     missing = [k for k, v in (("service_id", service_id), ("service_token_amount", service_token_amount),
-                              ("title", title)) if not v]
+                              ("title", title), ("provider_agent_id", provider_agent_id)) if not v]
     if missing:
         raise VerbError(f"sub.create 缺少必填参数: {', '.join(missing)}")
     if not service_token_address:

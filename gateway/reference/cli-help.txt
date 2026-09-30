@@ -1,42 +1,50 @@
-# onchainos CLI 参数面（自动抓取，用于 gateway 委托层实现）
+# onchainos CLI 参数面（自动抓取；基准版本: onchainos 4.6.3）
 
 ## onchainos agent create-task
 ```
 Create a new task (Client)
 
-Usage: onchainos.EXE agent create-task [OPTIONS] --description <DESCRIPTION> --budget <BUDGET> --max-budget <MAX_BUDGET> --currency <CURRENCY> --provider <PROVIDER> --payment-mode <PAYMENT_MODE> --service-id <SERVICE_ID>
+Usage: onchainos.EXE agent create-task [OPTIONS] --title <TITLE> --description <DESCRIPTION> --provider-agent-id <PROVIDER_AGENT_ID> --payment-token-symbol <PAYMENT_TOKEN_SYMBOL> --payment-token-amount <PAYMENT_TOKEN_AMOUNT> --service-id <SERVICE_ID> --service-token-address <SERVICE_TOKEN_ADDRESS> --service-token-amount <SERVICE_TOKEN_AMOUNT>
 
 Options:
-      --base-url <BASE_URL>
-          Backend service URL (overrides config)
-      --description <DESCRIPTION>
-          
-      --budget <BUDGET>
+      --title <TITLE>
           
       --chain <CHAIN>
           Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-      --max-budget <MAX_BUDGET>
+      --description <DESCRIPTION>
           
-      --currency <CURRENCY>
+      --description-summary <DESCRIPTION_SUMMARY>
           
-      --title <TITLE>
+      --provider-agent-id <PROVIDER_AGENT_ID>
           
-      --provider <PROVIDER>
-          Specified provider agentId (required; skip asp-match, negotiate directly with this provider or x402 accept)
-      --endpoint <ENDPOINT>
-          Designated service endpoint (persisted for multi-service providers)
+      --payment-token-symbol <PAYMENT_TOKEN_SYMBOL>
+          
+      --payment-token-amount <PAYMENT_TOKEN_AMOUNT>
+          
       --file <ATTACHMENTS>
           Local file paths to attach to the task after creation
-      --payment-mode <PAYMENT_MODE>
-          Payment mode to set at creation time (required; escrow / x402)
       --service-id <SERVICE_ID>
-          Service ID from asp/match response (required)
+          
       --service-params <SERVICE_PARAMS>
-          Service input parameters (natural language string)
+          [default: {}]
       --service-token-address <SERVICE_TOKEN_ADDRESS>
-          Service token contract address
+          
       --service-token-amount <SERVICE_TOKEN_AMOUNT>
-          Service price (from asp/match feeAmount)
+          
+      --category-code <CATEGORY_CODE>
+          
+      --min-credit-score <MIN_CREDIT_SCORE>
+          
+      --visibility <VISIBILITY>
+          [default: private] [possible values: private, public]
+      --chain-id <CHAIN_ID>
+          [default: 196]
+      --service-guide <SERVICE_GUIDE>
+          Exact provider service Guide. Stored locally before broadcast
+      --service-guide-hash <SERVICE_GUIDE_HASH>
+          SHA-256 of the exact service Guide when supplied by the provider
+      --guide-consent-json <GUIDE_CONSENT_JSON>
+          User-confirmed values for the matching Guide
   -h, --help
           Print help
 ```
@@ -45,11 +53,9 @@ Options:
 ```
 Create a subscription task
 
-Usage: onchainos.EXE agent create-subscribe [OPTIONS] --service-id <SERVICE_ID> --service-token-amount <SERVICE_TOKEN_AMOUNT> --service-token-address <SERVICE_TOKEN_ADDRESS> --auto-renew <AUTO_RENEW> --title <TITLE> --description <DESCRIPTION>
+Usage: onchainos.EXE agent create-subscribe [OPTIONS] --service-id <SERVICE_ID> --service-token-amount <SERVICE_TOKEN_AMOUNT> --service-token-address <SERVICE_TOKEN_ADDRESS> --auto-renew <AUTO_RENEW> --title <TITLE> --description <DESCRIPTION> --provider-agent-id <PROVIDER_AGENT_ID>
 
 Options:
-      --base-url <BASE_URL>
-          Backend service URL (overrides config)
       --service-id <SERVICE_ID>
           
       --chain <CHAIN>
@@ -68,26 +74,18 @@ Options:
           
       --description <DESCRIPTION>
           
+      --file <ATTACHMENTS>
+          Local file paths to attach to the subscription after creation
       --provider-agent-id <PROVIDER_AGENT_ID>
           
-      --service-description <SERVICE_DESCRIPTION>
-          Exact service description returned by asp-match. Only bounded asset/tool hints are persisted; the raw prose is never executed [default: ""]
+      --service-guide <SERVICE_GUIDE>
+          Exact provider service Guide. Stored locally before broadcast
+      --service-guide-hash <SERVICE_GUIDE_HASH>
+          SHA-256 of the exact service Guide when supplied by the provider
+      --guide-consent-json <GUIDE_CONSENT_JSON>
+          User-confirmed values for the matching Guide
       --service-interval <SERVICE_INTERVAL>
           [default: month]
-      --autotrade-mode <AUTOTRADE_MODE>
-          Explicit user-confirmed automatic signal execution (`auto`)
-      --autotrade-amount <AUTOTRADE_AMOUNT>
-          Fixed quote amount used for every delivered signal. [UNIT: human-readable decimal selected by --autotrade-quote; number only, e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
-      --autotrade-cap <AUTOTRADE_CAP>
-          Per-delivery automatic-execution quote cap. [UNIT: human-readable decimal selected by --autotrade-quote; number only, e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
-      --autotrade-quote <AUTOTRADE_QUOTE>
-          Quote currency for amount/cap (`usdt` or `usdc`)
-      --autotrade-environment <AUTOTRADE_ENVIRONMENT>
-          User-authorized Trade Kit environment (`live` or `demo`)
-      --autotrade-margin-mode <AUTOTRADE_MARGIN_MODE>
-          User-authorized Trade Kit derivative margin mode
-      --autotrade-order-policy <AUTOTRADE_ORDER_POLICY>
-          User-authorized signal-entry order policy
       --format <FORMAT>
           [default: ""]
   -h, --help
@@ -104,9 +102,8 @@ Arguments:
   <SUB_ID>  
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-  -h, --help                 Print help
+      --chain <CHAIN>  Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help           Print help
 ```
 
 ## onchainos agent start-autorenew
@@ -119,9 +116,8 @@ Arguments:
   <SUB_ID>  
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-  -h, --help                 Print help
+      --chain <CHAIN>  Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help           Print help
 ```
 
 ## onchainos agent subscribe-device-update
@@ -131,7 +127,6 @@ Overwrite the receive-device list for one or more subscriptions (batch). The pas
 Usage: onchainos.EXE agent subscribe-device-update [OPTIONS]
 
 Options:
-      --base-url <BASE_URL>        Backend service URL (overrides config)
       --job-id <JOB_ID>            Subscription jobId to overwrite (Form A, single subscription)
       --chain <CHAIN>              Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
       --device-list <DEVICE_LIST>  Comma-separated device ids (Form A); empty/omitted clears the list
@@ -146,11 +141,10 @@ Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog
 Usage: onchainos.EXE agent subscribe-offline-update [OPTIONS] --job-id <JOB_ID> --flag <FLAG>
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --job-id <JOB_ID>      Subscription jobId whose offline-receive flag is being set
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-      --flag <FLAG>          Offline-receive flag: `0` keeps the backlog, `1` discards it
-  -h, --help                 Print help
+      --job-id <JOB_ID>  Subscription jobId whose offline-receive flag is being set
+      --chain <CHAIN>    Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+      --flag <FLAG>      Offline-receive flag: `0` keeps the backlog, `1` discards it
+  -h, --help             Print help
 ```
 
 ## onchainos agent set-payment-mode
@@ -163,12 +157,10 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>          Backend service URL (overrides config)
-      --payment-mode <PAYMENT_MODE>  escrow / x402
+      --payment-mode <PAYMENT_MODE>  Escrow only. Legacy task-based x402/A2MCP is no longer supported
       --chain <CHAIN>                Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
       --token-symbol <TOKEN_SYMBOL>  
       --token-amount <TOKEN_AMOUNT>  
-      --endpoint <ENDPOINT>          x402 service endpoint URL
   -h, --help                         Print help
 ```
 
@@ -182,9 +174,8 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-  -h, --help                 Print help
+      --chain <CHAIN>  Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help           Print help
 ```
 
 ## onchainos agent complete
@@ -197,14 +188,13 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-  -h, --help                 Print help
+      --chain <CHAIN>  Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help           Print help
 ```
 
 ## onchainos agent reject
 ```
-Client rejects deliverable
+Disabled legacy rejection. Use Refund preparation
 
 Usage: onchainos.EXE agent reject [OPTIONS] --reason <REASON> <JOB_ID>
 
@@ -212,15 +202,14 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --reason <REASON>      
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-  -h, --help                 Print help
+      --reason <REASON>  
+      --chain <CHAIN>    Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help             Print help
 ```
 
 ## onchainos agent close
 ```
-Client closes task (only valid while Open)
+Disabled legacy close. Use Refund preparation
 
 Usage: onchainos.EXE agent close [OPTIONS] <JOB_ID>
 
@@ -229,14 +218,13 @@ Arguments:
 
 Options:
       --agent-id <AGENT_ID>  
-      --base-url <BASE_URL>  Backend service URL (overrides config)
       --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
   -h, --help                 Print help
 ```
 
 ## onchainos agent claim-auto-refund
 ```
-Client claims auto-refund after provider timeout
+Disabled legacy write command. Use `refund-prepare`; a cause-specific timeout claim requires a backend Refund contract
 
 Usage: onchainos.EXE agent claim-auto-refund [OPTIONS] <JOB_ID>
 
@@ -244,9 +232,8 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>  Backend service URL (overrides config)
-      --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-  -h, --help                 Print help
+      --chain <CHAIN>  Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help           Print help
 ```
 
 ## onchainos agent apply
@@ -259,7 +246,6 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>          Backend service URL (overrides config)
       --token-amount <TOKEN_AMOUNT>  Negotiated token amount. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects)
       --chain <CHAIN>                Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
       --token-symbol <TOKEN_SYMBOL>  Actual task currency (USDT / USDG); read from negotiation context, do not assume USDT
@@ -277,55 +263,16 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>
-          Backend service URL (overrides config)
       --file <FILE>
           [default: ""]
       --chain <CHAIN>
           Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
-      --message <MESSAGE>
-          [default: "Task completed, please review"]
       --deliverable-text <DELIVERABLE_TEXT>
           Text deliverable content for auto-save. When non-empty and --file is empty, the CLI writes this to a temp file and persists it as a text deliverable [default: ""]
       --agent-id <AGENT_ID>
           Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail
-      --autotrade <AUTOTRADE>
-          Deprecated compatibility argument. Accepted but ignored; only the explicit text/file deliverable is sent and processed [default: ""]
   -h, --help
           Print help
-```
-
-## onchainos agent submit
-```
-error: unrecognized subcommand 'submit'
-
-  tip: some similar subcommands exist: 'subscribe-detail', 'subscribe-active'
-
-Usage: onchainos.EXE agent [OPTIONS] <COMMAND>
-
-For more information, try '--help'.
-```
-
-## onchainos agent refund-prepare
-```
-error: unrecognized subcommand 'refund-prepare'
-
-  tip: a similar subcommand exists: 'agree-refund'
-
-Usage: onchainos.EXE agent [OPTIONS] <COMMAND>
-
-For more information, try '--help'.
-```
-
-## onchainos agent refund-execute
-```
-error: unrecognized subcommand 'refund-execute'
-
-  tip: some similar subcommands exist: 'user-reject', 'autotrade-execute'
-
-Usage: onchainos.EXE agent [OPTIONS] <COMMAND>
-
-For more information, try '--help'.
 ```
 
 ## onchainos agent feedback-submit
@@ -336,33 +283,12 @@ Usage: onchainos.EXE agent feedback-submit [OPTIONS]
 
 Options:
       --agent-id <AGENT_ID>        Required: agent id being reviewed
-      --base-url <BASE_URL>        Backend service URL (overrides config)
       --chain <CHAIN>              Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
       --creator-id <CREATOR_ID>    Required: your (reviewer's) agent id
       --score <SCORE>              Required: star rating 0.00–5.00 (step 0.01)
       --description <DESCRIPTION>  Optional: free-text review
       --task-id <TASK_ID>          Required: related task id
   -h, --help                       Print help
-```
-
-## onchainos agent visibility-update
-```
-error: unrecognized subcommand 'visibility-update'
-
-Usage: onchainos.EXE agent [OPTIONS] <COMMAND>
-
-For more information, try '--help'.
-```
-
-## onchainos agent service-param-update
-```
-error: unrecognized subcommand 'service-param-update'
-
-  tip: some similar subcommands exist: 'service-list', 'service-match'
-
-Usage: onchainos.EXE agent [OPTIONS] <COMMAND>
-
-For more information, try '--help'.
 ```
 
 ## onchainos agent set-asp
@@ -375,8 +301,6 @@ Arguments:
   <JOB_ID>  
 
 Options:
-      --base-url <BASE_URL>
-          Backend service URL (overrides config)
       --provider-agent-id <PROVIDER_AGENT_ID>
           
       --chain <CHAIN>
@@ -410,7 +334,21 @@ Arguments:
 
 Options:
       --agent-id <AGENT_ID>  
-      --base-url <BASE_URL>  Backend service URL (overrides config)
       --chain <CHAIN>        Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
   -h, --help                 Print help
+```
+
+## onchainos agent refund-prepare
+```
+Read-only Refund eligibility and next-action preparation
+
+Usage: onchainos.EXE agent refund-prepare [OPTIONS] <JOB_ID>
+
+Arguments:
+  <JOB_ID>  
+
+Options:
+      --reason <REASON>  User-authored refund reason. Required only for an active refundable task
+      --chain <CHAIN>    Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc
+  -h, --help             Print help
 ```

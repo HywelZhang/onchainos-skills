@@ -82,6 +82,17 @@ gateway 输出中存在且相等**；忽略 CLI 自加工的展示层（`card`/`
 | 展示字段 | `statusName`/`approvalLabel`/`isThisDevice` 等不在服务端 | 在 gateway 内用 `labels.py` + 行级加工补齐（与 golden 逐字段一致） |
 | 假通过 | 首版契约测试只读 manifest（无 stdout）→ 全 PASS 但 0 字段 | 改为读 `NN_<name>.json` 原始录制，并输出 matched 字段数 |
 
+## 跨平台与写路径位置（v1.2 边界）
+
+- **读路径 + 无签名写**：Windows / Linux 均可（本机 Windows 已实测 16 读 verb + 2 无签名写）。
+- **签名类写**（`task.create` / `sub.create` / 验收 / 退款 / 评分）：委托官方 CLI 执行，需与 CLI 同机同用户。
+  **Windows 上不可用**：4.6.x 要求 `okx-a2a job-provider bind-current`，而 Hermes 的 okx-a2a 网关插件
+  官方不支持 Windows（"requires bash"）→ 绑定超时，创建不会广播（不花钱）。
+  按 OQ-20 决策，写路径放 **Linux/WSL**：见 `docs/design/12-linux-write-path.md`
+  与 `scripts/setup-linux-writepath.sh`（含 Node/CLI 下载+校验、okx-a2a 安装、登录与自检步骤）。
+- 本包已做跨平台保护：`wincreds` 在非 Windows 自动降级（改用 `keyring.enc` 文件回退）；
+  `delegate.cli_path()` 兼容 POSIX 下的 `onchainos`。
+
 ## 未做（后续阶段）
 
 - **P1 写路径**：`task.create`（createAndFund → gen-msg-hash → sign-msg → broadcast）、

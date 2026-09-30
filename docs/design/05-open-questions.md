@@ -99,3 +99,5 @@ Node（唯一能内嵌 XMTP 生态）/ Python（与 scripts/*.py 一致）/ 混�
   C. Windows 上暂时**只做读 + 无签名写**（当前已可用的 19 个写 verb 中，CLI 委托类暂不可用），
      等官方补齐 Windows 支持。
 方案倾向: 需用户拍板（涉及运行时托管方式与机器，不宜自行决定）。
+**已答 2026-09-30: 选项 2 —— 写路径搬到 Linux/macOS/WSL 执行。**
+落地: docs/design/12-linux-write-path.md + scripts/setup-linux-writepath.sh（本机 WSL 未安装，需管理员+重启）。

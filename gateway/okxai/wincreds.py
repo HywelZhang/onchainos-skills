@@ -9,50 +9,60 @@
 gateway 必须按同样顺序读取，否则会拿到陈旧 token 并得到 `10008 access token invalid`。
 
 实现用 ctypes 直接调 Win32 API，不引入第三方依赖。
+**非 Windows 平台本模块自动降级为不可用**（Linux/macOS 上由官方 CLI 走 libsecret /
+文件回退，gateway 侧则读文件或交给 CLI 委托），因此这里对导入做了平台保护。
 """
 
 from __future__ import annotations
 
 import ctypes
 import json
-from ctypes import wintypes
+import sys
 from typing import Any
 
-CRED_TYPE_GENERIC = 1
+IS_WINDOWS = sys.platform == "win32"
 SERVICE = "onchainos"
 USER = "agentic-wallet"
+CRED_TYPE_GENERIC = 1
 
+if IS_WINDOWS:  # 仅在 Windows 上导入 wintypes，避免其它平台导入即崩
+    from ctypes import wintypes
 
-class _FILETIME(ctypes.Structure):
-    _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+    class _FILETIME(ctypes.Structure):
+        _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
 
+    class _CREDENTIALW(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+            ("TargetName", wintypes.LPWSTR),
+            ("Comment", wintypes.LPWSTR),
+            ("LastWritten", _FILETIME),
+            ("CredentialBlobSize", wintypes.DWORD),
+            ("CredentialBlob", ctypes.POINTER(ctypes.c_byte)),
+            ("Persist", wintypes.DWORD),
+            ("AttributeCount", wintypes.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wintypes.LPWSTR),
+            ("UserName", wintypes.LPWSTR),
+        ]
 
-class _CREDENTIALW(ctypes.Structure):
-    _fields_ = [
-        ("Flags", wintypes.DWORD),
-        ("Type", wintypes.DWORD),
-        ("TargetName", wintypes.LPWSTR),
-        ("Comment", wintypes.LPWSTR),
-        ("LastWritten", _FILETIME),
-        ("CredentialBlobSize", wintypes.DWORD),
-        ("CredentialBlob", ctypes.POINTER(ctypes.c_byte)),
-        ("Persist", wintypes.DWORD),
-        ("AttributeCount", wintypes.DWORD),
-        ("Attributes", ctypes.c_void_p),
-        ("TargetAlias", wintypes.LPWSTR),
-        ("UserName", wintypes.LPWSTR),
-    ]
-
-
-_PCREDENTIALW = ctypes.POINTER(_CREDENTIALW)
+    _PCREDENTIALW = ctypes.POINTER(_CREDENTIALW)
+else:  # pragma: no cover - 非 Windows 分支只保证可导入
+    _CREDENTIALW = None  # type: ignore[assignment]
+    _PCREDENTIALW = None  # type: ignore[assignment]
 
 
 def _advapi() -> Any:
+    if not IS_WINDOWS:
+        raise RuntimeError("Windows credential store unavailable on this platform")
     return ctypes.WinDLL("advapi32", use_last_error=True)
 
 
 def enumerate_targets(service: str = SERVICE) -> list[str]:
     """列出凭据库中与 service 相关的条目名（只返回名字）。"""
+    if not IS_WINDOWS:
+        return []
     advapi = _advapi()
     count = wintypes.DWORD(0)
     creds = ctypes.POINTER(_PCREDENTIALW)()  # CredEnumerateW 返回指针数组
@@ -109,12 +119,14 @@ def _decode(raw: bytes) -> dict[str, str] | None:
     return None
 
 
-def read_blob(service: str = SERVICE, user: str = USER) -> tuple[dict[str, str], str]:
+def read_blob(service: str = SERVICE, user: str = USER) -> tuple[dict[str, str], str]:  # noqa: D401
     """返回 (blob, 命中的 target)。找不到返回 ({}, "")。
 
     先试 keyring crate 的规范命名（`service:user` / `service.user`），
     再枚举含 service 的条目兜底。
     """
+    if not IS_WINDOWS:
+        return {}, ""
     for target in (f"{service}:{user}", f"{service}.{user}", f"{service}/{user}", user):
         raw = read_raw(target)
         if raw:

@@ -206,7 +206,7 @@ dev 现状 **37 文件 / 499,220 字符**，其中纯 CLI 机械面：
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **P0.0**（已完成 2026-09-30） | **录制 golden fixtures + 二进制归档**（改造前的最后窗口） | ✅ 16/18 读命令已录；脱敏 manifest + 归档（sha 与 `binary_identity.json` 一致）已落盘，见 §4.4 |
-| **P0**（1–2 天） | session 打通（登录/续期/device-id）+ 14 读 verb + 契约测试骨架 | gateway 输出与 golden fixtures 逐字段 diff = 0；报告落盘 |
+| **P0**（✅ 完成 2026-09-30） | session（登录/续期/device-id）+ 16 读 verb + 契约测试骨架 | ✅ **16/16 PASS / 0 FAIL / 0 ERROR**（`gateway/tests/contract_golden.py`；脱敏报告 `tests/cli-golden/contract-p0-report.redacted.json`） |
 | **P1**（3–5 天） | 12 写 verb + 签名链 + 幂等 + audit + 本地化模板接管 | 真实付费端到端 ≥1 轮；重复调用不二次出资；链上/服务端可核对；与 1 轮写操作 golden 对照 |
 | **P2a**（2–3 天） | 轮询版 inbox → 事件 JSONL | 真实订阅收到 ≥1 真信号；watch-host / policy-engine 零改动 |
 | **P2b**（2–4 天） | xmtp-bridge（Node）接管交互聊天 / 澄清 / user-notify | 同一条 `msg.send` 送达且 `session history` 与改造前一致 |
@@ -257,3 +257,41 @@ dev 现状 **37 文件 / 499,220 字符**，其中纯 CLI 机械面：
 - `scripts/watch-host.py`：输入源 → gateway 事件流（JSONL schema 不变）；
 - `policy-engine.py` / `sub-collect.py` / `decision-loop.py` / `executor-lite.py`：零改动；
 - `docs/design/01-10`：结论不变。
+
+---
+
+## 11. P0 实现记录（2026-09-30）
+
+**产出**：`gateway/`（`okxai` 包，Python 3.11 + `cryptography`）+ 入口 `python -m okxai <verb>`（形态 A）
+与 `python -m okxai serve --port 8788`（形态 B，stdlib http.server，仅监听回环）。
+
+**验收**：`gateway/tests/contract_golden.py` → **16/16 PASS / 0 FAIL / 0 ERROR**
+（对照 golden 的业务字段；忽略 CLI 自加工展示层、非确定性游标、CLI 自检器措辞）。
+单 verb 热路径 **95–260ms**（对照 CLI 同命令 p50 614ms、冷启实测 21.5s）。
+
+**验证到"不需要 CLI"这件事本身**：keyring 解密、HTTP 鉴权、token 续期、16 个读 verb
+全部在无 CLI 进程参与的情况下跑通（仅复用 CLI 已写好的本地状态与 DoH 节点缓存）。
+
+### 11.1 实现期发现的四个关键事实（都已写进代码注释与 gateway/README）
+
+1. **凭据在 Windows 凭据管理器里，不在 `keyring.enc`**：CLI 优先读 OS keyring
+   （target `agentic-wallet.onchainos`），`keyring.enc` 只是旧回退副本且内容已过期；
+   只读文件会稳定得到 `10008 access token invalid`。gateway 按同序读取，写回时两处同步。
+2. **token 续期要求"整套匿名头"**：refresh 虽声明为公开端点，但缺 `device-id` 等头会返回
+   `HTTP 400 50113 Client signature public key missing`（服务端按 device-id 找回设备公钥）。
+   补上 `ok-client-version` / `Ok-Access-Client-type` / `platform` / `device-id` / `device-name` 后成功。
+3. **DoH 节点是"SNI 路由"的**：TCP 打节点 IP、TLS SNI = 节点 host（`web3.ynhf1jp.com`）、
+   Host 头 = `web3.okx.com` 才通（curl 实测 HTTP 200；换 SNI 立即失败）。节点来自 CLI 已缓存的
+   `doh-cache.json`；**再发现机制尚未实现**（P1 补），失效时提示可用 `OKXAI_HTTP_PROXY` 或让 CLI 刷新缓存。
+4. **展示字段必须自建**：`statusName` / `statusDescription` / `approvalLabel` / `isThisDevice` /
+   `lastOnlineLocal` / 订阅行的 `thisDeviceReceives` 都不在服务端响应里，是 CLI 本地算的。
+   gateway 用 `labels.py` + 行级加工复刻（与 golden 逐字段一致）——这也再次印证 §3 的判断：
+   "功能层面 API"本就在客户端，搬运行时即可，**后端零改动**。
+
+### 11.2 P0 的偏差与已知缺口（如实记录）
+
+- `agent.profile` / `agent.search`：CLI 4.5.2 的参数面与 dev 文档不同，未能录制基准
+  （exit 2），P0 未实现对应 verb；需要时按服务端接口补。
+- `task.active` 的非空分支（有未终态任务时的 `tasks[]` 标注）只实现了形状，**未经真实数据校验**。
+- `gate.check` 的通信项固定为 not-ready（消息面 P2b 才接入），因此 `ready` 语义与 CLI 一致但成因不同。
+- DoH 节点再发现、写路径（P1）与消息面（P2）未做。

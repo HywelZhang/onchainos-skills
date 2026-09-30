@@ -1,0 +1,187 @@
+{
+  "kind": "gateway-contract-report",
+  "golden_dir": "<ONCHAINOS_HOME>/golden/cli/<ts>",
+  "cli_version": "onchainos 4.5.2",
+  "generated_at": "2026-09-30T18:17:57+0800",
+  "summary": {
+    "compared": 16,
+    "pass": 16,
+    "fail": 0,
+    "error": 0,
+    "skipped": 2
+  },
+  "source_report": "contract-20260930-181757.json",
+  "results": [
+    {
+      "golden": "session.wallet_status",
+      "verb": "wallet.status",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 14,
+      "diffs": [],
+      "elapsed_ms": 108
+    },
+    {
+      "golden": "session.device_list",
+      "verb": "session.devices",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 19,
+      "diffs": [],
+      "elapsed_ms": 238
+    },
+    {
+      "golden": "agent.mine",
+      "verb": "agent.mine",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 36,
+      "diffs": [],
+      "elapsed_ms": 131
+    },
+    {
+      "golden": "agent.mine_role_user",
+      "verb": "agent.mine",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 20,
+      "diffs": [],
+      "elapsed_ms": 174
+    },
+    {
+      "golden": "agent.flat",
+      "verb": "agent.flat",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 33,
+      "diffs": [],
+      "elapsed_ms": 136
+    },
+    {
+      "golden": "agent.get",
+      "verb": "agent.get",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 17,
+      "diffs": [],
+      "elapsed_ms": 114
+    },
+    {
+      "golden": "gate.check",
+      "verb": "gate.check",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 11,
+      "diffs": [],
+      "elapsed_ms": 147
+    },
+    {
+      "golden": "task.mine",
+      "verb": "task.mine",
+      "status": "PASS",
+      "kind": "text",
+      "matched_fields": 1,
+      "diffs": [],
+      "elapsed_ms": 122
+    },
+    {
+      "golden": "task.active",
+      "verb": "task.active",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 2,
+      "diffs": [],
+      "elapsed_ms": 116
+    },
+    {
+      "golden": "task.status",
+      "verb": "task.status",
+      "status": "PASS",
+      "kind": "text",
+      "matched_fields": 1,
+      "diffs": [],
+      "elapsed_ms": 116
+    },
+    {
+      "golden": "task.deliverables",
+      "verb": "task.deliverables",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 16,
+      "diffs": [],
+      "elapsed_ms": 0
+    },
+    {
+      "golden": "sub.list",
+      "verb": "sub.list",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 61,
+      "diffs": [],
+      "elapsed_ms": 112
+    },
+    {
+      "golden": "sub.detail",
+      "verb": "sub.detail",
+      "status": "PASS",
+      "kind": "text",
+      "matched_fields": 1,
+      "diffs": [],
+      "elapsed_ms": 82
+    },
+    {
+      "golden": "sub.cost",
+      "verb": "sub.cost",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 3,
+      "diffs": [],
+      "elapsed_ms": 95
+    },
+    {
+      "golden": "flow.pending_decisions",
+      "verb": "flow.pending_decisions",
+      "status": "PASS",
+      "kind": "text",
+      "matched_fields": 0,
+      "diffs": [],
+      "elapsed_ms": 1
+    },
+    {
+      "golden": "service.match",
+      "verb": "service.match",
+      "status": "PASS",
+      "kind": "json",
+      "matched_fields": 25,
+      "diffs": [],
+      "elapsed_ms": 257
+    }
+  ],
+  "skipped": [
+    {
+      "golden": "agent.profile",
+      "why": "golden exit=2（CLI 参数面差异）"
+    },
+    {
+      "golden": "agent.search",
+      "why": "golden exit=2（CLI 参数面差异）"
+    }
+  ],
+  "ignore_keys": [
+    "card",
+    "cells",
+    "statusLabel",
+    "statusDescription",
+    "approvalLabel",
+    "ratingStars",
+    "tip",
+    "roleLabel",
+    "displayStatus",
+    "summaryLine",
+    "shortId",
+    "source",
+    "thisDeviceName",
+    "searchAfter",
+    "hint"
+  ]
+}

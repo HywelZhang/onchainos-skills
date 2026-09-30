@@ -42,3 +42,34 @@ labels.zh-CN.md 挂在 okx-ai/references/。OQ-1 收窄后其它 skill 大概率
 
 ### OQ-12 watch-host supervisor 选型 — [已答 2026-09-03: B]
 cron 心跳: Windows 计划任务每 N 分钟跑 `watch-host.py --once`（scripts/install-watch-task.ps1）；会话级可用循环进程 `python scripts/watch-host.py`。事件延迟 ≤ 间隔；决策及时性要求高时间隔可 1 min。
+
+### OQ-13..17 来源: P0-11 CLI → 直连 API 重构（docs/design/11-cli-to-api-refactor.md, 2026-09-30）
+
+#### ✅ 已答 2026-09-30（P0-11 v1.0 定稿）
+- OQ-13 = **C + A**（轮询优先覆盖订阅信号；okx-a2a/XMTP 保留为交互聊天兜底）
+- OQ-14 = **B 主 + A 轻量**（本地 HTTP 服务 127.0.0.1:8788 宿主侧守护；仓库内库脚本作为轻量形态）
+- OQ-15 = **Python 主 + Node 仅 XMTP**（Node 退化为宿主侧 xmtp-bridge 单进程，对 agent 不可见）
+- OQ-16 = **保留** `onchainos`（迁移期回退 + 契约测试基准）
+- OQ-17 = **交互式 + 信号都做**（P2 拆 P2a 轮询信号通道 / P2b Node bridge 交互聊天）
+- 追加决策: 新增**形态 D**（非受限环境直接用官方 CLI / 已存在的 MCP serve），gateway 重实现面收敛到 **26 verb**，非产品路径命令不进 gateway。
+
+### OQ-13 消息面（XMTP）选项
+A 保留 okx-a2a（收窄为唯一 CLI 依赖）/ B 本地 Node 内嵌 a2a-node / C 轮询优先覆盖订阅信号 + A 兜底交互聊天。
+方案倾向: C + A（P2 先做轮询版 inbox，因为订阅信号本质是交付物落地，HTTP+本地盘即可），B 作长期演进。
+
+### OQ-14 gateway 运行形态
+B 本地 HTTP 服务（127.0.0.1:8788，由宿主侧守护，agent 只需 fetch）/ A 仓库内库脚本（`node scripts/okxai/*.mjs`，无全局安装）/ A+B 双形态。
+方案倾向: B 主用（对"只允许 HTTP 工具"的 agent 最友好），A 作为沙箱内解释器可用时的轻量形态。
+
+### OQ-15 语言栈
+Node（唯一能内嵌 XMTP 生态）/ Python（与 scripts/*.py 一致）/ 混合。
+方案倾向: 混合——Python 做业务层/状态机/policy 对接，Node 仅在需要消息面时启用。
+
+### OQ-16 是否保留 CLI shim
+保留（迁移期回退路径 + 契约测试基准）/ 立即移除。
+方案倾向: 保留（形态 C），契约测试直接以 `onchainos` 输出为基准比对，是最便宜的回归防线。
+
+### OQ-17 P2 是否纳入交互式聊天
+否，P2 只做"订阅信号交付 + 任务事件"（主线产品）；交互式澄清/peer chat 延后 / 是，一并做。
+方案倾向: 否。
+
